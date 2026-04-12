@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+    font-size: 13px;
+    background: #1c1c1e;
+    color: #f2f2f7;
+    width: 260px;
+    padding: 16px;
+  }
+
+  .header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+
+  .logo {
+    width: 32px;
+    height: 32px;
+    background: linear-gradient(135deg, #0a84ff, #5e5ce6);
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+  }
+
+  .title { font-size: 15px; font-weight: 600; }
+  .subtitle { font-size: 11px; color: #8e8e93; margin-top: 1px; }
+
+  .divider {
+    height: 1px;
+    background: rgba(255,255,255,0.08);
+    margin: 12px 0;
+  }
+
+  .toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 0;
+  }
+
+  .toggle-label { font-size: 13px; color: #f2f2f7; }
+  .toggle-desc { font-size: 11px; color: #8e8e93; margin-top: 2px; }
+
+  .toggle {
+    position: relative;
+    width: 40px;
+    height: 22px;
+    flex-shrink: 0;
+  }
+
+  .toggle input { opacity: 0; width: 0; height: 0; }
+
+  .toggle-track {
+    position: absolute;
+    inset: 0;
+    background: #3a3a3c;
+    border-radius: 11px;
+    transition: background 0.2s;
+    cursor: pointer;
+  }
+
+  .toggle-thumb {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 18px;
+    height: 18px;
+    background: white;
+    border-radius: 50%;
+    transition: transform 0.2s;
+    pointer-events: none;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+  }
+
+  .toggle input:checked + .toggle-track { background: #0a84ff; }
+  .toggle input:checked ~ .toggle-thumb { transform: translateX(18px); }
+
+  .status-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #30d158;
+    display: inline-block;
+    margin-right: 4px;
+  }
+
+  .status-dot.inactive { background: #8e8e93; }
+
+  .status-line {
+    font-size: 11px;
+    color: #8e8e93;
+    display: flex;
+    align-items: center;
+    margin-top: 4px;
+  }
+
+  .open-btn {
+    width: 100%;
+    margin-top: 12px;
+    padding: 8px;
+    background: rgba(10, 132, 255, 0.15);
+    color: #0a84ff;
+    border: 1px solid rgba(10, 132, 255, 0.3);
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+
+  .open-btn:hover { background: rgba(10, 132, 255, 0.25); }
+
+  .tip {
+    margin-top: 12px;
+    padding: 10px;
+    background: rgba(255,255,255,0.05);
+    border-radius: 8px;
+    font-size: 11px;
+    color: #8e8e93;
+    line-height: 1.5;
+  }
+
+  .tip b { color: #ebebf5; }
+</style>
+</head>
+<body>
+  <div class="header">
+    <div class="logo">↓</div>
+    <div>
+      <div class="title">Dispatch</div>
+      <div class="subtitle">Download Manager</div>
+    </div>
+  </div>
+
+  <div class="toggle-row">
+    <div>
+      <div class="toggle-label">Intercept Downloads</div>
+      <div class="toggle-desc">Send file downloads to Dispatch</div>
+    </div>
+    <label class="toggle">
+      <input type="checkbox" id="enableToggle">
+      <div class="toggle-track"></div>
+      <div class="toggle-thumb"></div>
+    </label>
+  </div>
+
+  <div class="status-line">
+    <span class="status-dot" id="statusDot"></span>
+    <span id="statusText">Loading…</span>
+  </div>
+
+  <div class="divider"></div>
+
+  <button class="open-btn" id="openApp">Open Dispatch App</button>
+
+  <div class="tip">
+    <b>Tip:</b> Right-click any link and choose <b>"Download with Dispatch"</b> to send it manually.
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

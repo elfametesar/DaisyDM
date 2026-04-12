@@ -1,0 +1,572 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		0A1B2C3D4E5F60718293A401 /* background.js in Resources */ = {isa = PBXBuildFile; fileRef = 0A1B2C3D4E5F60718293A301 /* background.js */; };
+		0A1B2C3D4E5F60718293A402 /* content.js in Resources */ = {isa = PBXBuildFile; fileRef = 0A1B2C3D4E5F60718293A302 /* content.js */; };
+		0A1B2C3D4E5F60718293A403 /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = 0A1B2C3D4E5F60718293A303 /* manifest.json */; };
+		0A1B2C3D4E5F60718293A404 /* popup.html in Resources */ = {isa = PBXBuildFile; fileRef = 0A1B2C3D4E5F60718293A304 /* popup.html */; };
+		53F624789BAF9FB2DB63EDBB /* SafariExtensionHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02FA831F84964C6E30740ED4 /* SafariExtensionHandler.swift */; };
+		712C631C2F8A952D00504612 /* LocalServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 712C631B2F8A952800504612 /* LocalServer.swift */; };
+		714070032F88B43700875649 /* popup.js in Resources */ = {isa = PBXBuildFile; fileRef = 714070022F88B43400875649 /* popup.js */; };
+		8DE4E266805149234A8741FE /* DaisyExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 7A117A8396344D68906886AE /* DaisyExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		94239571324F1E220C2EDA5A /* AddDownloadSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB44EE0F7D6EA3AA72232245 /* AddDownloadSheet.swift */; };
+		A632EED8E7FCE3E2E9321090 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECF7392741EE1B516970CA7B /* SettingsView.swift */; };
+		AA000001BB000001CC000001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 7108AF5B2F8974030059958D /* Assets.xcassets */; };
+		AA11BB22CC33DD44EE55FF66 /* ConfirmDownloadView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE55FF67 /* ConfirmDownloadView.swift */; };
+		B5A502C1B883ABB2001778D5 /* DownloadListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6A6721BDA522881F9B1938F /* DownloadListView.swift */; };
+		D03D0C1410EEC02AB846A437 /* DownloadDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24DFD2C04C85C517992B2C81 /* DownloadDetailView.swift */; };
+		D2841A44D4CDA47E09F5A0EA /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E16D72692BAB7622BBD388D3 /* ContentView.swift */; };
+		E6466915463132C126752D64 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0159ADC2E90F823FF4B7A57 /* AppDelegate.swift */; };
+		E83E1A8BDEBD4355E446E247 /* DownloadEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = D333474D0B94942D2F1B8D61 /* DownloadEngine.swift */; };
+		FA21961A36B68ECAA613D7DC /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2238E812354119FCD1EFFAC1 /* SidebarView.swift */; };
+		FE3349E82E4588853A8EEABD /* URLSchemeHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17671D7F8AB5C98F683D0703 /* URLSchemeHandler.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		05E5A71E0F8C2D5716A95E44 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 14AA8085D6B9BBFD53B912AB /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = B9C7A91B36C063EA80A2B376;
+			remoteInfo = DispatchExtension;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		2F76A8494432869E33E41744 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				8DE4E266805149234A8741FE /* DaisyExtension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		02FA831F84964C6E30740ED4 /* SafariExtensionHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafariExtensionHandler.swift; sourceTree = "<group>"; };
+		0A1B2C3D4E5F60718293A301 /* background.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = background.js; sourceTree = "<group>"; };
+		0A1B2C3D4E5F60718293A302 /* content.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = content.js; sourceTree = "<group>"; };
+		0A1B2C3D4E5F60718293A303 /* manifest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = manifest.json; sourceTree = "<group>"; };
+		0A1B2C3D4E5F60718293A304 /* popup.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = popup.html; sourceTree = "<group>"; };
+		17671D7F8AB5C98F683D0703 /* URLSchemeHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = URLSchemeHandler.swift; sourceTree = "<group>"; };
+		2238E812354119FCD1EFFAC1 /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
+		24DFD2C04C85C517992B2C81 /* DownloadDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadDetailView.swift; sourceTree = "<group>"; };
+		253F5E76243124E291EBAB75 /* Daisy.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Daisy.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		7108AF5B2F8974030059958D /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		712C631B2F8A952800504612 /* LocalServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalServer.swift; sourceTree = "<group>"; };
+		714070022F88B43400875649 /* popup.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = popup.js; sourceTree = "<group>"; };
+		7A117A8396344D68906886AE /* DaisyExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = DaisyExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		A0159ADC2E90F823FF4B7A57 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		AA11BB22CC33DD44EE55FF67 /* ConfirmDownloadView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfirmDownloadView.swift; sourceTree = "<group>"; };
+		CB44EE0F7D6EA3AA72232245 /* AddDownloadSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddDownloadSheet.swift; sourceTree = "<group>"; };
+		D333474D0B94942D2F1B8D61 /* DownloadEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadEngine.swift; sourceTree = "<group>"; };
+		E16D72692BAB7622BBD388D3 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		E6A6721BDA522881F9B1938F /* DownloadListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadListView.swift; sourceTree = "<group>"; };
+		ECF7392741EE1B516970CA7B /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		0A1B2C3D4E5F60718293A305 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				714070022F88B43400875649 /* popup.js */,
+				0A1B2C3D4E5F60718293A301 /* background.js */,
+				0A1B2C3D4E5F60718293A302 /* content.js */,
+				0A1B2C3D4E5F60718293A303 /* manifest.json */,
+				0A1B2C3D4E5F60718293A304 /* popup.html */,
+			);
+			name = Resources;
+			path = SafariExtension/Resources;
+			sourceTree = "<group>";
+		};
+		261B70FC90EBB0F0C3D583F8 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				253F5E76243124E291EBAB75 /* Daisy.app */,
+				7A117A8396344D68906886AE /* DaisyExtension.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		746B01343AD58FE591E8AC47 /* Daisy */ = {
+			isa = PBXGroup;
+			children = (
+				E77115DB637571F77701CAF2 /* App */,
+				C75B2CAB48984D2934A96A32 /* Core */,
+				F8B3F4C4AA7F386726B0C2B8 /* UI */,
+			);
+			name = Daisy;
+			path = Sources/Daisy;
+			sourceTree = "<group>";
+		};
+		7E590CAD0CB9803F64394251 /* Handler */ = {
+			isa = PBXGroup;
+			children = (
+				02FA831F84964C6E30740ED4 /* SafariExtensionHandler.swift */,
+			);
+			name = Handler;
+			path = SafariExtension/Handler;
+			sourceTree = "<group>";
+		};
+		BDA84CECE8EE0829C694EAFC = {
+			isa = PBXGroup;
+			children = (
+				712C631B2F8A952800504612 /* LocalServer.swift */,
+				7108AF5B2F8974030059958D /* Assets.xcassets */,
+				746B01343AD58FE591E8AC47 /* Daisy */,
+				7E590CAD0CB9803F64394251 /* Handler */,
+				0A1B2C3D4E5F60718293A305 /* Resources */,
+				261B70FC90EBB0F0C3D583F8 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		C75B2CAB48984D2934A96A32 /* Core */ = {
+			isa = PBXGroup;
+			children = (
+				17671D7F8AB5C98F683D0703 /* URLSchemeHandler.swift */,
+				D333474D0B94942D2F1B8D61 /* DownloadEngine.swift */,
+			);
+			path = Core;
+			sourceTree = "<group>";
+		};
+		CBA556BC1FD09F5332CA266B /* Screens */ = {
+			isa = PBXGroup;
+			children = (
+				CB44EE0F7D6EA3AA72232245 /* AddDownloadSheet.swift */,
+				AA11BB22CC33DD44EE55FF67 /* ConfirmDownloadView.swift */,
+				E16D72692BAB7622BBD388D3 /* ContentView.swift */,
+				24DFD2C04C85C517992B2C81 /* DownloadDetailView.swift */,
+				E6A6721BDA522881F9B1938F /* DownloadListView.swift */,
+				ECF7392741EE1B516970CA7B /* SettingsView.swift */,
+				2238E812354119FCD1EFFAC1 /* SidebarView.swift */,
+			);
+			path = Screens;
+			sourceTree = "<group>";
+		};
+		E77115DB637571F77701CAF2 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				A0159ADC2E90F823FF4B7A57 /* AppDelegate.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		F8B3F4C4AA7F386726B0C2B8 /* UI */ = {
+			isa = PBXGroup;
+			children = (
+				CBA556BC1FD09F5332CA266B /* Screens */,
+			);
+			path = UI;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		B9C7A91B36C063EA80A2B376 /* DaisyExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1A09297BAFDC14608D49F8C9 /* Build configuration list for PBXNativeTarget "DaisyExtension" */;
+			buildPhases = (
+				C85943C9F4D150BB52787F15 /* Sources */,
+				0A1B2C3D4E5F60718293A306 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = DaisyExtension;
+			packageProductDependencies = (
+			);
+			productName = DispatchExtension;
+			productReference = 7A117A8396344D68906886AE /* DaisyExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		F8D4C25F8FF1C76660AEE763 /* DaisyApp */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = CFC07B7D79A07F017571DE61 /* Build configuration list for PBXNativeTarget "DaisyApp" */;
+			buildPhases = (
+				AA000002BB000002CC000002 /* Resources */,
+				1A0AE4D8A58230DA637E3F5F /* Sources */,
+				2F76A8494432869E33E41744 /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				419F39BB7FEB5AAF71E3D40A /* PBXTargetDependency */,
+			);
+			name = DaisyApp;
+			packageProductDependencies = (
+			);
+			productName = DispatchApp;
+			productReference = 253F5E76243124E291EBAB75 /* Daisy.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		14AA8085D6B9BBFD53B912AB /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 2630;
+			};
+			buildConfigurationList = FE140F6FB49B1E6BA0BB785B /* Build configuration list for PBXProject "Daisy" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = BDA84CECE8EE0829C694EAFC;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 261B70FC90EBB0F0C3D583F8 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				F8D4C25F8FF1C76660AEE763 /* DaisyApp */,
+				B9C7A91B36C063EA80A2B376 /* DaisyExtension */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		0A1B2C3D4E5F60718293A306 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				0A1B2C3D4E5F60718293A401 /* background.js in Resources */,
+				0A1B2C3D4E5F60718293A402 /* content.js in Resources */,
+				714070032F88B43700875649 /* popup.js in Resources */,
+				0A1B2C3D4E5F60718293A403 /* manifest.json in Resources */,
+				0A1B2C3D4E5F60718293A404 /* popup.html in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AA000002BB000002CC000002 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AA000001BB000001CC000001 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		1A0AE4D8A58230DA637E3F5F /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				712C631C2F8A952D00504612 /* LocalServer.swift in Sources */,
+				94239571324F1E220C2EDA5A /* AddDownloadSheet.swift in Sources */,
+				AA11BB22CC33DD44EE55FF66 /* ConfirmDownloadView.swift in Sources */,
+				E6466915463132C126752D64 /* AppDelegate.swift in Sources */,
+				D2841A44D4CDA47E09F5A0EA /* ContentView.swift in Sources */,
+				D03D0C1410EEC02AB846A437 /* DownloadDetailView.swift in Sources */,
+				E83E1A8BDEBD4355E446E247 /* DownloadEngine.swift in Sources */,
+				B5A502C1B883ABB2001778D5 /* DownloadListView.swift in Sources */,
+				A632EED8E7FCE3E2E9321090 /* SettingsView.swift in Sources */,
+				FA21961A36B68ECAA613D7DC /* SidebarView.swift in Sources */,
+				FE3349E82E4588853A8EEABD /* URLSchemeHandler.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C85943C9F4D150BB52787F15 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				53F624789BAF9FB2DB63EDBB /* SafariExtensionHandler.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		419F39BB7FEB5AAF71E3D40A /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = B9C7A91B36C063EA80A2B376 /* DaisyExtension */;
+			targetProxy = 05E5A71E0F8C2D5716A95E44 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		1ECD5D7ECC7D3D51B7CB7EA8 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
+				CODE_SIGN_ENTITLEMENTS = Sources/Daisy/Resources/Daisy.entitlements;
+				CODE_SIGN_IDENTITY = "-";
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				COMBINE_HIDPI_IMAGES = YES;
+				DEAD_CODE_STRIPPING = YES;
+				"DEVELOPMENT_TEAM[sdk=macosx*]" = RTFTQ673C9;
+				ENABLE_HARDENED_RUNTIME = YES;
+				INFOPLIST_FILE = Sources/Daisy/Resources/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Daisy;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.daisy.dm;
+				PRODUCT_MODULE_NAME = DispatchApp;
+				PRODUCT_NAME = Daisy;
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
+		715DCF11D16FD179428FCF93 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = SafariExtension/Extension.entitlements;
+				CODE_SIGN_IDENTITY = "-";
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				COMBINE_HIDPI_IMAGES = YES;
+				DEAD_CODE_STRIPPING = YES;
+				"DEVELOPMENT_TEAM[sdk=macosx*]" = RTFTQ673C9;
+				INFOPLIST_FILE = SafariExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Daisy DM";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.daisy.dm;
+				PRODUCT_MODULE_NAME = DispatchExtension;
+				PRODUCT_NAME = DaisyExtension;
+				SDKROOT = macosx;
+				SKIP_INSTALL = NO;
+			};
+			name = Release;
+		};
+		747AA0015A3F79B6A906C9F9 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = RTFTQ673C9;
+				EMBED_ASSET_PACKS_IN_PRODUCT_BUNDLE = YES;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		74D26D9FC76D06DF453B1D3D /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = SafariExtension/Extension.entitlements;
+				CODE_SIGN_IDENTITY = "-";
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				COMBINE_HIDPI_IMAGES = YES;
+				DEAD_CODE_STRIPPING = YES;
+				"DEVELOPMENT_TEAM[sdk=macosx*]" = RTFTQ673C9;
+				INFOPLIST_FILE = SafariExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Daisy DM";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.daisy.dm;
+				PRODUCT_MODULE_NAME = DispatchExtension;
+				PRODUCT_NAME = DaisyExtension;
+				SDKROOT = macosx;
+				SKIP_INSTALL = NO;
+			};
+			name = Debug;
+		};
+		C10C5BB35759E5F64D874C9B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = RTFTQ673C9;
+				EMBED_ASSET_PACKS_IN_PRODUCT_BUNDLE = YES;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		C1F669D8C40FD0D7C7343FFE /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
+				CODE_SIGN_ENTITLEMENTS = Sources/Daisy/Resources/Daisy.entitlements;
+				CODE_SIGN_IDENTITY = "-";
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				COMBINE_HIDPI_IMAGES = YES;
+				DEAD_CODE_STRIPPING = YES;
+				"DEVELOPMENT_TEAM[sdk=macosx*]" = RTFTQ673C9;
+				ENABLE_HARDENED_RUNTIME = YES;
+				INFOPLIST_FILE = Sources/Daisy/Resources/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Daisy;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.daisy.dm;
+				PRODUCT_MODULE_NAME = DispatchApp;
+				PRODUCT_NAME = Daisy;
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		1A09297BAFDC14608D49F8C9 /* Build configuration list for PBXNativeTarget "DaisyExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				74D26D9FC76D06DF453B1D3D /* Debug */,
+				715DCF11D16FD179428FCF93 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		CFC07B7D79A07F017571DE61 /* Build configuration list for PBXNativeTarget "DaisyApp" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1ECD5D7ECC7D3D51B7CB7EA8 /* Debug */,
+				C1F669D8C40FD0D7C7343FFE /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		FE140F6FB49B1E6BA0BB785B /* Build configuration list for PBXProject "Daisy" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				747AA0015A3F79B6A906C9F9 /* Debug */,
+				C10C5BB35759E5F64D874C9B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 14AA8085D6B9BBFD53B912AB /* Project object */;
+}
