@@ -121,7 +121,6 @@
 		BDA84CECE8EE0829C694EAFC = {
 			isa = PBXGroup;
 			children = (
-				712C631B2F8A952800504612 /* LocalServer.swift */,
 				7108AF5B2F8974030059958D /* Assets.xcassets */,
 				746B01343AD58FE591E8AC47 /* Daisy */,
 				7E590CAD0CB9803F64394251 /* Handler */,
@@ -135,6 +134,7 @@
 			children = (
 				17671D7F8AB5C98F683D0703 /* URLSchemeHandler.swift */,
 				D333474D0B94942D2F1B8D61 /* DownloadEngine.swift */,
+				712C631B2F8A952800504612 /* LocalServer.swift */,
 			);
 			path = Core;
 			sourceTree = "<group>";
@@ -304,6 +304,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CODE_SIGN_ENTITLEMENTS = Sources/Daisy/Resources/Daisy.entitlements;
 				CODE_SIGN_IDENTITY = "-";
@@ -514,6 +515,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CODE_SIGN_ENTITLEMENTS = Sources/Daisy/Resources/Daisy.entitlements;
 				CODE_SIGN_IDENTITY = "-";

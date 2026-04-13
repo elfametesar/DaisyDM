@@ -1,67 +1,30 @@
-// content.js - Dispatch Extension
+// content.js - Dispatch Safari/Chrome Extension
 
 const _api = typeof browser !== "undefined" ? browser : chrome;
 
-// ── Global Bypass State & Memory Buffer ──────────────────────────────────
-let bypassKey = "Alt"; 
-let isExtensionDisabled = false;
-let isKeyCurrentlyHeld = false;
-let bypassMemoryTimeout = null;
-let isBypassActive = false; 
+// ── Bypass Key Tracking ────────────────────────────────────────────────────
+let bypassKey = "altKey"; 
+let isBypassKeyHeld = false;
 
-// Load user settings from popup
-_api.storage.local.get(['bypassKey', 'isExtensionDisabled'], (res) => {
-  if (res.bypassKey) bypassKey = res.bypassKey;
-  if (res.isExtensionDisabled !== undefined) isExtensionDisabled = res.isExtensionDisabled;
+_api.runtime.sendMessage({ type: "GET_BYPASS_KEY" }, (response) => {
+    if (response && response.bypassKey) bypassKey = response.bypassKey;
 });
 
-// Listen for popup changes in real-time
-_api.storage.onChanged.addListener((changes) => {
-  if (changes.bypassKey) bypassKey = changes.bypassKey.newValue;
-  if (changes.isExtensionDisabled) isExtensionDisabled = changes.isExtensionDisabled.newValue;
+_api.runtime.onMessage.addListener((message) => {
+    if (message.type === "UPDATE_BYPASS_KEY" && message.bypassKey) bypassKey = message.bypassKey;
 });
 
-function checkKey(e) {
-  if (bypassKey === "Alt") return e.altKey || e.key === "Alt";
-  if (bypassKey === "Shift") return e.shiftKey || e.key === "Shift";
-  if (bypassKey === "Control") return e.ctrlKey || e.key === "Control";
-  if (bypassKey === "Meta") return e.metaKey || e.key === "Meta";
-  return false;
-}
+window.addEventListener("keydown", (e) => {
+    if (bypassKey && e[bypassKey]) isBypassKeyHeld = true;
+}, { capture: true });
 
-document.addEventListener("keydown", (e) => {
-  if (checkKey(e)) {
-    isKeyCurrentlyHeld = true;
-    isBypassActive = true;
-  }
-}, { capture: true, passive: true });
+window.addEventListener("keyup", (e) => {
+    if (bypassKey && !e[bypassKey]) isBypassKeyHeld = false;
+}, { capture: true });
 
-document.addEventListener("keyup", (e) => {
-  if (!checkKey(e)) {
-    isKeyCurrentlyHeld = false;
-  }
-}, { capture: true, passive: true });
+window.addEventListener("blur", () => isBypassKeyHeld = false);
 
-window.addEventListener("blur", () => {
-  isKeyCurrentlyHeld = false;
-});
-
-// Creates a 3-second blind spot where the extension ignores EVERYTHING.
-// This ensures async delayed downloads (like Claude) bypass successfully.
-function triggerBypassMemory() {
-  isBypassActive = true;
-  if (bypassMemoryTimeout) clearTimeout(bypassMemoryTimeout);
-  bypassMemoryTimeout = setTimeout(() => {
-    isBypassActive = isKeyCurrentlyHeld; 
-  }, 3000);
-}
-
-function shouldBypass() {
-  return isExtensionDisabled || isBypassActive;
-}
-
-// ─────────────────────────────────────────────────────────────────────────
-
+// ── Definitions ────────────────────────────────────────────────────────────
 const DOWNLOAD_EXTENSIONS = [
   "zip","gz","tar","rar","7z","bz2","xz","zst","cab","iso","tgz",
   "mp4","mkv","avi","mov","wmv","flv","webm","m4v","mpg","mpeg","ts",
@@ -100,7 +63,23 @@ function extractFilename(url, anchor) {
   } catch { return "download"; }
 }
 
+// ── Send to background (Or Relay to Browser) ──────────────────────────────
 function sendToDispatch(url, filename) {
+  if (isBypassKeyHeld) {
+      // THE FIX: If bypassed, explicitly force the browser to handle the download natively.
+      console.log("[Dispatch] Bypass active. Relaying to browser natively:", url);
+      const a = document.createElement('a');
+      a.href = url;
+      if (filename) a.download = filename;
+      a.style.display = 'none';
+      a.dataset.dispatchBypass = "true"; // Tag it so our click listener ignores it
+      
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      return;
+  }
+
   _api.runtime.sendMessage({
     type:     "PREPARE_DISPATCH_DOWNLOAD",
     url:      url,
@@ -110,20 +89,21 @@ function sendToDispatch(url, filename) {
 
 // ── Click interceptor ─────────────────────────────────────────────────────
 document.addEventListener("click", (e) => {
-  if (shouldBypass() || checkKey(e) || isKeyCurrentlyHeld) {
-    triggerBypassMemory(); 
-    return;
-  }
-
   let el = e.target;
   while (el && el.tagName !== "A") el = el.parentElement;
   if (!el || !el.href || el.href.startsWith("javascript:")) return;
+
+  // 1. Ignore our own synthetic bypass clicks
+  if (el.dataset.dispatchBypass === "true") return;
+
+  // 2. If user is physically holding the bypass key, let the browser handle it naturally
+  if (bypassKey && e[bypassKey]) return;
 
   const href        = el.href;
   const hasDownload = el.hasAttribute("download");
   const isFile      = isDownloadURL(href);
 
-  if (href.startsWith("magnet:")) {
+  if (hasDownload || isFile) {
     e.preventDefault();
     e.stopImmediatePropagation();
     sendToDispatch(href, extractFilename(href, el));
@@ -134,14 +114,6 @@ document.addEventListener("click", (e) => {
     e.preventDefault();
     e.stopImmediatePropagation();
     handleBlob(href, extractFilename(href, el));
-    return;
-  }
-
-  if (hasDownload || isFile) {
-    e.preventDefault();
-    e.stopImmediatePropagation();
-    sendToDispatch(href, extractFilename(href, el));
-    return;
   }
 }, { capture: true });
 
@@ -152,16 +124,16 @@ document.createElement = function(tag, ...args) {
   if (tag.toLowerCase() === "a") {
     const _click = el.click.bind(el);
     el.click = function() {
-      if (shouldBypass()) { _click(); return; }
+      if (isBypassKeyHeld || el.dataset.dispatchBypass === "true") { _click(); return; }
 
       if (!el.href) { _click(); return; }
       if (el.href.startsWith("blob:")) {
         handleBlob(el.href, el.getAttribute("download") || "download");
-        return;
+        return; 
       }
       if (el.hasAttribute("download") || isDownloadURL(el.href)) {
         sendToDispatch(el.href, el.getAttribute("download") || extractFilename(el.href));
-        return;
+        return; 
       }
       _click();
     };
@@ -172,105 +144,69 @@ document.createElement = function(tag, ...args) {
 // ── window.open intercept ──────────────────────────────────────────────────
 const _winOpen = window.open;
 window.open = function(url, ...rest) {
-  if (shouldBypass()) return _winOpen.call(this, url, ...rest);
-
   if (url && !url.startsWith("javascript:")) {
-    if (url.startsWith("blob:"))  { handleBlob(url, "download"); return null; }
-    if (isDownloadURL(url))       { sendToDispatch(url, extractFilename(url)); return null; }
-    if (onDownloadSite)           { sendToDispatch(url, extractFilename(url)); return null; }
+      if (isBypassKeyHeld) {
+          sendToDispatch(url, extractFilename(url));
+          return null; // Stop the popup, force the native download tag
+      }
+      if (url.startsWith("blob:"))  { handleBlob(url, "download"); return null; }
+      if (isDownloadURL(url))       { sendToDispatch(url, extractFilename(url)); return null; }
+      if (onDownloadSite)           { sendToDispatch(url, extractFilename(url)); return null; }
   }
   return _winOpen.call(this, url, ...rest);
 };
 
-// ── Site-specific patches ──────────────────────────────────────────────────
-function patchDownloadButtons() {
-  if (/gofile\.io/.test(location.href)) {
-    document.querySelectorAll(
-      'a[href*="gofile.io/download"], a[href*="/d/"], button[id*="download"], [class*="download"]'
-    ).forEach(el => {
-      if (el.__dy) return; el.__dy = true;
-      el.addEventListener("click", (e) => {
-        if (shouldBypass() || checkKey(e)) triggerBypassMemory();
-      }, { capture: false });
-    });
-  }
+// ── XHR intercept ─────────────────────────────────────────────────────────
+const _xhrOpen = XMLHttpRequest.prototype.open;
+const _xhrSend = XMLHttpRequest.prototype.send;
 
-  if (/drive\.google\.com/.test(location.href)) {
-    document.querySelectorAll('[data-tooltip="Download"], [aria-label="Download"]').forEach(btn => {
-      if (btn.__dy) return; btn.__dy = true;
-      btn.addEventListener("click", (e) => {
-        if (shouldBypass() || checkKey(e)) { triggerBypassMemory(); return; }
-        e.preventDefault(); e.stopImmediatePropagation();
-        const match = location.href.match(/\/d\/([a-zA-Z0-9_-]+)/);
-        if (match) sendToDispatch(`https://drive.google.com/uc?export=download&id=${match[1]}`, "");
-      }, { capture: true });
-    });
-  }
+XMLHttpRequest.prototype.open = function(method, url, ...rest) {
+  this.__url = url;
+  return _xhrOpen.call(this, method, url, ...rest);
+};
 
-  if (/pixeldrain\.com/.test(location.href)) {
-    document.querySelectorAll('a[href*="/api/file/"], a[download]').forEach(el => {
-      if (el.__dy) return; el.__dy = true;
-      el.addEventListener("click", (e) => {
-        if (shouldBypass() || checkKey(e)) { triggerBypassMemory(); return; }
-        e.preventDefault(); e.stopImmediatePropagation();
-        sendToDispatch(el.href, el.getAttribute("download") || extractFilename(el.href));
-      }, { capture: true });
+XMLHttpRequest.prototype.send = function(...args) {
+  if (onDownloadSite) {
+    this.addEventListener("load", function() {
+      try {
+        const found = findDownloadURL(JSON.parse(this.responseText));
+        if (found) sendToDispatch(found.url, found.filename);
+      } catch (_) {}
     });
   }
+  return _xhrSend.apply(this, args);
+};
+
+// ── Fetch intercept ───────────────────────────────────────────────────────
+if (onDownloadSite) {
+  const _fetch = window.fetch;
+  window.fetch = async function(...args) {
+    const resp = await _fetch.apply(this, args);
+    resp.clone().text().then(text => {
+      try {
+        const found = findDownloadURL(JSON.parse(text));
+        if (found) sendToDispatch(found.url, found.filename);
+      } catch (_) {}
+    }).catch(() => {});
+    return resp;
+  };
 }
-
-new MutationObserver(patchDownloadButtons)
-  .observe(document.documentElement, { childList: true, subtree: true });
-document.readyState === "loading"
-  ? document.addEventListener("DOMContentLoaded", patchDownloadButtons)
-  : patchDownloadButtons();
 
 // ── Blob handling ──────────────────────────────────────────────────────────
-async function handleBlob(blobUrl, filename) {
-  try {
-    const r = await fetch(blobUrl);
-    const cd = r.headers.get("content-disposition");
-    if (cd) {
-      const m = cd.match(/filename=["']?([^"';]+)/i);
-      if (m) filename = m[1].trim();
-    }
-    const blob = await r.blob();
-    if (blob.size > 500 * 1024 * 1024) return;
-
-    const isTorrent = (filename || "").toLowerCase().endsWith(".torrent")
-                   || blob.type === "application/x-bittorrent"
-                   || blob.type === "application/octet-stream"
-                   || blob.type === "";
-    if (isTorrent) {
-      const buf = await blob.arrayBuffer();
-      for (let port = 6840; port <= 6850; port++) {
-        try {
-          const ctrl = new AbortController();
-          const t = setTimeout(() => ctrl.abort(), 1000);
-          const resp = await fetch(`http://127.0.0.1:${port}/torrent`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/octet-stream",
-              "X-Filename": filename || "download.torrent",
-              "Content-Length": buf.byteLength,
-            },
-            body: buf,
-            signal: ctrl.signal,
-          });
-          clearTimeout(t);
-          if (resp.ok) return;
-        } catch (_) {}
-      }
-      return;
-    }
-
-    const reader = new FileReader();
+function handleBlob(blobUrl, filename) {
+  if (isBypassKeyHeld) return;
+  fetch(blobUrl).then(r => {
+    const fn = r.headers.get("content-disposition")
+      ?.match(/filename=["']?([^"';]+)/i)?.[1]?.trim();
+    if (fn) filename = fn;
+    return r.blob();
+  }).then(blob => {
+    const reader  = new FileReader();
     reader.onload = () => sendToDispatch(reader.result, filename || "download");
     reader.readAsDataURL(blob);
-  } catch (_) {}
+  }).catch(() => showBanner("Couldn't read blob — right-click the download button.", "error"));
 }
 
-// ── JSON response scanner ──────────────────────────────────────────────────
 function findDownloadURL(obj, depth = 0) {
   if (!obj || depth > 6) return null;
   if (typeof obj === "string")
@@ -288,43 +224,4 @@ function findDownloadURL(obj, depth = 0) {
     if (f) return f;
   }
   return null;
-}
-
-// ── XHR / Fetch Intercepts ─────────────────────────────────────────────────
-const _xhrOpen = XMLHttpRequest.prototype.open;
-const _xhrSend = XMLHttpRequest.prototype.send;
-
-XMLHttpRequest.prototype.open = function(method, url, ...rest) {
-  this.__url = url;
-  return _xhrOpen.call(this, method, url, ...rest);
-};
-
-XMLHttpRequest.prototype.send = function(...args) {
-  const skip = shouldBypass(); // Check memory window
-  if (onDownloadSite) {
-    this.addEventListener("load", function() {
-      try {
-        if (skip) return; 
-        const found = findDownloadURL(JSON.parse(this.responseText));
-        if (found) sendToDispatch(found.url, found.filename);
-      } catch (_) {}
-    });
-  }
-  return _xhrSend.apply(this, args);
-};
-
-if (onDownloadSite) {
-  const _fetch = window.fetch;
-  window.fetch = async function(...args) {
-    const skip = shouldBypass(); // Check memory window
-    const resp = await _fetch.apply(this, args);
-    resp.clone().text().then(text => {
-      try {
-        if (skip) return; 
-        const found = findDownloadURL(JSON.parse(text));
-        if (found) sendToDispatch(found.url, found.filename);
-      } catch (_) {}
-    }).catch(() => {});
-    return resp;
-  };
 }

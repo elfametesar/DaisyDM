@@ -5,17 +5,35 @@ struct SidebarView: View {
     var engine: DownloadEngine
     let onSettings: () -> Void
 
+    @AppStorage("accentColorHex") private var accentColorHex = "#0A84FF"
+    @AppStorage("enableBackgroundTint") private var enableBackgroundTint = false
+
     var body: some View {
         VStack(spacing: 0) {
-            List(selection: $selected) {
-                Section("Library") {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("LIBRARY")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                        .padding(.horizontal, 10)
+                        .padding(.top, 16)
+                        .padding(.bottom, 4)
+                    
                     ForEach(SidebarFilter.allCases) { filter in
-                        SidebarRow(filter: filter, count: count(for: filter))
-                            .tag(filter)
+                        SidebarRow(
+                            filter: filter,
+                            count: count(for: filter),
+                            isSelected: selected == filter,
+                            accentColorHex: accentColorHex
+                        )
+                        .onTapGesture {
+                            selected = filter
+                        }
                     }
                 }
+                .padding(.horizontal, 8)
             }
-            .listStyle(.sidebar)
+            .background(enableBackgroundTint ? Color(hex: accentColorHex).opacity(0.04) : Color.clear)
 
             Divider()
 
@@ -36,11 +54,12 @@ struct SidebarView: View {
                         Text(formatBytes(Int64(engine.globalDownloadSpeed)) + "/s")
                             .font(.system(size: 11, design: .monospaced))
                     }
-                    .foregroundStyle(.blue)
+                    .foregroundStyle(Color(hex: accentColorHex))
                 }
             }
             .padding(12)
             .background(.ultraThinMaterial)
+            .background(enableBackgroundTint ? Color(hex: accentColorHex).opacity(0.04) : Color.clear)
         }
     }
 
@@ -52,19 +71,41 @@ struct SidebarView: View {
 struct SidebarRow: View {
     let filter: SidebarFilter
     let count: Int
+    let isSelected: Bool
+    let accentColorHex: String
+
+    var dynamicTextColor: Color {
+        isSelected ? Color(hex: accentColorHex).accessibleText : .primary
+    }
 
     var body: some View {
         HStack {
-            Label(filter.rawValue, systemImage: filter.icon)
+            Image(systemName: filter.icon)
+                .frame(width: 18, alignment: .center)
+            
+            Text(filter.rawValue)
+            
             Spacer()
+            
             if count > 0 {
                 Text("\(count)")
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(isSelected ? dynamicTextColor : .secondary)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 1)
-                    .background(Color.primary.opacity(0.1), in: Capsule())
+                    .background(
+                        Capsule().fill(isSelected ? dynamicTextColor.opacity(0.25) : Color.primary.opacity(0.08))
+                    )
             }
         }
+        .font(.system(size: 13))
+        .foregroundStyle(dynamicTextColor)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(isSelected ? Color(hex: accentColorHex) : Color.clear)
+        )
+        .contentShape(Rectangle())
     }
 }

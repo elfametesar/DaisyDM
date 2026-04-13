@@ -1,4 +1,4 @@
-// dispatch_out/Sources/Daisy/UI/Screens/ContentView.swift
+// MARK: - ContentView.swift
 import SwiftUI
 import AppKit
 
@@ -57,6 +57,8 @@ struct ContentView: View {
     @State private var duplicateAddRequest: DuplicateAddRequest? = nil
     
     @AppStorage("isCompactList") private var isCompactList = false
+    @AppStorage("accentColorHex") private var accentColorHex = "#0A84FF"
+    var customAccent: Color { Color(hex: accentColorHex) }
 
     @Environment(\.openWindow) private var openWindow
 
@@ -79,13 +81,14 @@ struct ContentView: View {
     var body: some View {
         mainLayout
             .sheet(isPresented: $showingAdd) { AddDownloadSheet() }
-            .sheet(isPresented: $showingSettings) { SettingsView() }
+            .sheet(isPresented: $showingSettings) { SettingsView().interactiveDismissDisabled() } // Explicitly disabled outer dismiss
             .sheet(item: $itemsToRemove) { context in
                 RemoveDialog(items: context.items) { trash, remember in
                     if remember { UserDefaults.standard.set(trash ? "trash" : "keep", forKey: "removeBehavior") }
                     context.items.forEach { engine.remove($0, trashFile: trash) }
                     itemsToRemove = nil
                 } onCancel: { itemsToRemove = nil }
+                .interactiveDismissDisabled() // Enforces strong modal blocking
             }
             .alert(duplicateAddRequest?.urls.count ?? 1 > 1 ? "Duplicate Downloads" : "Duplicate Download", isPresented: $showingDuplicateAlert) {
                 Button("Add Anyway") {
@@ -104,6 +107,7 @@ struct ContentView: View {
             .background {
                 Button("") { handlePaste() }.keyboardShortcut("v", modifiers: .command).opacity(0)
             }
+            .tint(customAccent)
     }
 
     private var mainLayout: some View {
@@ -115,6 +119,7 @@ struct ContentView: View {
             detailColumn
         }
         .onReceive(NotificationCenter.default.publisher(for: .showAddDownload)) { _ in showingAdd = true }
+        .onReceive(NotificationCenter.default.publisher(for: .showSettings)) { _ in showingSettings = true } // Injected Settings Hook
         .onReceive(NotificationCenter.default.publisher(for: .openProgressWindow)) { notif in
             if let id = notif.userInfo?["id"] as? UUID { openWindow(value: id) }
         }
@@ -138,7 +143,7 @@ struct ContentView: View {
         }
         .overlay {
             if isDropTargeted {
-                Color.accentColor.opacity(0.15).allowsHitTesting(false).border(Color.accentColor, width: 3).ignoresSafeArea()
+                customAccent.opacity(0.15).allowsHitTesting(false).border(customAccent, width: 3).ignoresSafeArea()
             }
         }
     }
@@ -209,11 +214,11 @@ struct ContentView: View {
                 EmptyDetailView()
             }
         }
-        // ADD THESE CONSTRAINTS HERE:
         .navigationSplitViewColumnWidth(min: 430, ideal: 450)
     }
 
     private func processAddRequest(urls: [URL], destination: URL? = nil, connections: Int = 16) {
+        // ... (rest exactly matches)
         if urls.count == 1 {
             let u = urls[0]
             if engine.items.contains(where: { $0.url.absoluteString == u.absoluteString }) {
@@ -337,6 +342,9 @@ struct RemoveDialog: View {
 // MARK: - Helper Views
 
 struct EmptyDetailView: View {
+    @AppStorage("enableBackgroundTint") private var enableBackgroundTint = false
+    @AppStorage("accentColorHex") private var accentColorHex = "#0A84FF"
+
     var body: some View {
         VStack(spacing: 10) {
             Image(systemName: "sidebar.trailing")
@@ -347,11 +355,15 @@ struct EmptyDetailView: View {
                 .foregroundStyle(.tertiary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(enableBackgroundTint ? Color(hex: accentColorHex).opacity(0.04) : Color(NSColor.controlBackgroundColor))
     }
 }
 
 struct MultipleSelectionView: View {
     let count: Int
+    @AppStorage("enableBackgroundTint") private var enableBackgroundTint = false
+    @AppStorage("accentColorHex") private var accentColorHex = "#0A84FF"
+
     var body: some View {
         VStack(spacing: 10) {
             Image(systemName: "square.stack.3d.up")
@@ -362,5 +374,6 @@ struct MultipleSelectionView: View {
                 .foregroundStyle(.tertiary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(enableBackgroundTint ? Color(hex: accentColorHex).opacity(0.04) : Color(NSColor.controlBackgroundColor))
     }
 }

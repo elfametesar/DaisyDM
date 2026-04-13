@@ -7,6 +7,11 @@ struct DetailView: View {
     var engine = DownloadEngine.shared
 
     let onRequestRemove: (DownloadItem) -> Void
+    
+    @AppStorage("accentColorHex") private var accentColorHex = "#0A84FF"
+    @AppStorage("progressBarColorHex") private var progressBarColorHex = "#34C759"
+    @AppStorage("matchProgressBarToAccent") private var matchProgressBarToAccent = false
+    @AppStorage("enableBackgroundTint") private var enableBackgroundTint = false
 
     var body: some View {
         ScrollView {
@@ -20,9 +25,9 @@ struct DetailView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(item.filename)
                             .font(.system(size: 14, weight: .semibold))
-                            .fixedSize(horizontal: false, vertical: true) // Replaced lineLimit(2) to prevent truncation
+                            .fixedSize(horizontal: false, vertical: true)
                         
-                        StatusPill(status: item.status)
+                        StatusPill(status: item.status, accentColorHex: accentColorHex)
                     }
                 }
                 .padding(16)
@@ -48,8 +53,8 @@ struct DetailView: View {
                     }
                     Text(item.url.absoluteString)
                         .font(.system(size: 11))
-                        .foregroundStyle(.blue)
-                        .fixedSize(horizontal: false, vertical: true) // Replaced lineLimit(2) to prevent truncation
+                        .foregroundStyle(Color(hex: accentColorHex))
+                        .fixedSize(horizontal: false, vertical: true)
                         .onTapGesture { NSWorkspace.shared.open(item.url) }
                 }
                 .padding(.horizontal, 16)
@@ -76,7 +81,7 @@ struct DetailView: View {
                     GeometryReader { geo in
                         ZStack(alignment: .leading) {
                             RoundedRectangle(cornerRadius: 4)
-                                .fill(Color.green.opacity(0.15))
+                                .fill(progressBarColor.opacity(0.15))
                                 .frame(height: 10)
                             RoundedRectangle(cornerRadius: 4)
                                 .fill(progressBarColor)
@@ -166,7 +171,7 @@ struct DetailView: View {
                         primaryButton
                         secondaryButtons
                     }
-                    .fixedSize(horizontal: true, vertical: false) // Force buttons to never shrink/truncate
+                    .fixedSize(horizontal: true, vertical: false)
                     
                     Spacer()
                 }
@@ -186,7 +191,7 @@ struct DetailView: View {
                     if let completed = item.dateCompleted {
                         Text("·").foregroundStyle(.tertiary).padding(.horizontal, 6)
                         HStack(spacing: 4) {
-                            Image(systemName: "checkmark.circle").font(.system(size: 11)).foregroundStyle(.green)
+                            Image(systemName: "checkmark.circle").font(.system(size: 11)).foregroundStyle(progressBarColor)
                             Text("Finished \(formatDate(completed))").font(.system(size: 12)).foregroundStyle(.secondary)
                         }
                     }
@@ -208,27 +213,15 @@ struct DetailView: View {
                                 path: item.destinationURL.path(percentEncoded: false))
                 }
                 .padding(16)
-
-                if let error = item.error {
-                    Divider().padding(.horizontal, 16)
-                    HStack(spacing: 8) {
-                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.red)
-                        Text(error).font(.system(size: 12)).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
-                    }
-                    .padding(16)
-                }
-
-                Spacer(minLength: 20)
             }
         }
+        .background(enableBackgroundTint ? Color(hex: accentColorHex).opacity(0.04) : Color(NSColor.controlBackgroundColor))
         .frame(minWidth: 320)
         .ignoresSafeArea(edges: .top)
     }
 
     @ViewBuilder
     var primaryButton: some View {
-        // Removed .tint(.blue) from borderedProminent buttons.
-        // This allows macOS to use the system AccentColor, which properly handles inactive window states.
         switch item.status {
         case .downloading:
             Button { engine.stop(item) } label: {
@@ -236,16 +229,18 @@ struct DetailView: View {
                     .font(.system(size: 13, weight: .semibold)).frame(minWidth: 90)
             }
             .buttonStyle(.borderedProminent)
+            .tint(Color(hex: accentColorHex))
+            .foregroundStyle(Color(hex: accentColorHex).accessibleText)
 
         case .stopped:
             Button { engine.resume(item) } label: {
                     Label("Resume", systemImage: "arrow.clockwise")
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(.white) // Keep text white always
+                        .foregroundColor(Color(hex: accentColorHex).accessibleText)
                         .frame(minWidth: 90)
                         .padding(.vertical, 3)
                         .padding(.horizontal, 12)
-                        .background(Color.blue) // Force blue color
+                        .background(Color(hex: accentColorHex))
                         .cornerRadius(6)
                 }
                 .buttonStyle(.plain)
@@ -254,11 +249,11 @@ struct DetailView: View {
             Button { engine.retry(item) } label: {
                     Label("Retry", systemImage: "arrow.clockwise")
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(.white) // Keep text white always
+                        .foregroundColor(Color(hex: accentColorHex).accessibleText)
                         .frame(minWidth: 90)
                         .padding(.vertical, 3)
                         .padding(.horizontal, 12)
-                        .background(Color.blue) // Force blue color
+                        .background(Color(hex: accentColorHex))
                         .cornerRadius(6)
                 }
                 .buttonStyle(.plain)
@@ -267,11 +262,11 @@ struct DetailView: View {
             Button { NSWorkspace.shared.open(item.destinationURL) } label: {
                     Label("Open file", systemImage: "doc")
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(.white) // Keep text white always
+                        .foregroundColor(Color(hex: accentColorHex).accessibleText)
                         .frame(minWidth: 90)
                         .padding(.vertical, 3)
                         .padding(.horizontal, 12)
-                        .background(Color.blue) // Force blue color
+                        .background(Color(hex: accentColorHex))
                         .cornerRadius(6)
                 }
                 .buttonStyle(.plain)
@@ -287,13 +282,13 @@ struct DetailView: View {
 
     @ViewBuilder
     var secondaryButtons: some View {
-
         Button {
             NSWorkspace.shared.activateFileViewerSelecting([item.destinationURL])
         } label: {
             Label("Show in Finder", systemImage: "folder").font(.system(size: 13))
         }
         .buttonStyle(.bordered)
+        .tint(nil)
 
         Menu {
             Button("Copy URL") {
@@ -322,16 +317,15 @@ struct DetailView: View {
             }
         }
         .menuStyle(.button)
+        .tint(nil)
     }
 
-    // Real file-type icon from the system
     var fileIcon: Image {
         let ext = (item.filename as NSString).pathExtension
         if !ext.isEmpty, let utType = UTType(filenameExtension: ext) {
             return Image(nsImage: NSWorkspace.shared.icon(for: utType))
         }
         if item.type == .torrent {
-            // .bittorrent is the correct UTType for .torrent files
             return Image(nsImage: NSWorkspace.shared.icon(for: UTType(filenameExtension: "torrent") ?? .data))
         }
         return Image(nsImage: NSWorkspace.shared.icon(for: .data))
@@ -339,10 +333,9 @@ struct DetailView: View {
 
     var progressBarColor: Color {
         switch item.status {
-        case .completed: return .green
-        case .failed:    return .green
-        case .stopped:   return .green
-        default:         return .green
+        case .completed, .failed, .stopped, .downloading:
+            return matchProgressBarToAccent ? Color(hex: accentColorHex) : Color(hex: progressBarColorHex)
+        default: return .secondary
         }
     }
 
@@ -479,7 +472,7 @@ struct StatCard: View {
             }
             Text(value)
                 .font(.system(size: 13, weight: .semibold))
-                .fixedSize(horizontal: false, vertical: true) // Prevents shrinking
+                .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
@@ -502,7 +495,7 @@ struct DetailRow: View {
                 .foregroundStyle(valueColor)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .fixedSize(horizontal: false, vertical: true) // Ensure detail rows wrap instead of clipping
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }
@@ -518,7 +511,7 @@ struct StorageCard: View {
                 Text(label).font(.system(size: 11)).foregroundStyle(.secondary)
                 Text(path)
                     .font(.system(size: 12))
-                    .fixedSize(horizontal: false, vertical: true) // Dropped truncation limits
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

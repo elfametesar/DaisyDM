@@ -1,21 +1,28 @@
-// dispatch_out/Sources/Daisy/App/AppDelegate.swift
 import AppKit
 import SafariServices
 import SwiftUI
 import UniformTypeIdentifiers
 
 @main
-struct DispatchApp: App {
+struct DaisyApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
 
     var body: some Scene {
-        Window("Dispatch", id: "main") {
+        Window("Daisy", id: "main") {
             ContentView()
                 .frame(minWidth: 1300, minHeight: 550)
         }
         .windowStyle(.hiddenTitleBar)
         .windowToolbarStyle(.unified)
         .commands {
+            // Overrides the native macOS Settings menu so it opens as a blocking sheet
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings…") {
+                    NotificationCenter.default.post(name: .showSettings, object: nil)
+                }
+                .keyboardShortcut(",", modifiers: .command)
+            }
+            
             CommandGroup(replacing: .newItem) {
                 Button("New Download…") {
                     NotificationCenter.default.post(name: .showAddDownload, object: nil)
@@ -31,14 +38,12 @@ struct DispatchApp: App {
             }
         }
 
-        Settings {
-            SettingsView()
-        }
+        // Removed the standalone Settings{} block because it allows background clicking
 
         WindowGroup(for: UUID.self) { $id in
             if let id = id, let item = DownloadEngine.shared.items.first(where: { $0.id == id }) {
                 ProgressWindowView(item: item)
-                    .navigationTitle(item.status == .completed ? "Download complete" : (item.status == .failed ? "Download failed" : "Dispatch"))
+                    .navigationTitle(item.status == .completed ? "Download complete" : (item.status == .failed ? "Download failed" : "Daisy"))
             }
         }
         .windowStyle(.titleBar)
@@ -319,9 +324,29 @@ struct ProgressWindowView: View {
 
             HStack(spacing: 8) {
                 if item.status == .downloading || item.status == .queued {
-                    Button("Pause") { engine.stop(item) }
+                    Button { engine.stop(item) } label: {
+                            Label("Pause", systemImage: "")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(.white)
+                                .frame(minWidth: 50)
+                                .padding(.vertical, 4)
+                                .padding(.horizontal, 12)
+                                .background(Color.accentColor)
+                                .cornerRadius(6)
+                        }
+                        .buttonStyle(.plain)
                 } else if item.status == .stopped || item.status == .failed {
-                    Button("Resume") { engine.resume(item) }
+                    Button { engine.resume(item) } label: {
+                            Label("Resume", systemImage: "")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(.white)
+                                .frame(minWidth: 50)
+                                .padding(.vertical, 4)
+                                .padding(.horizontal, 12)
+                                .background(Color.accentColor)
+                                .cornerRadius(6)
+                        }
+                        .buttonStyle(.plain)
                 } else {
                     Button("Pause") {}.disabled(true)
                 }
@@ -428,9 +453,8 @@ struct PwRow: View {
 // MARK: - AppDelegate
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private let safariExtensionBundleIdentifier = "com.dispatch.mac.Extension"
+    private let safariExtensionBundleIdentifier = "com.daisy.dm.Extension"
 
-    /// Strong reference so the panel isn't deallocated while shown.
     private var confirmPanel: NSPanel?
     private var confirmObserver: NSObjectProtocol?
 
@@ -454,7 +478,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        // ── Listen for extension-triggered download confirmation ──────────
         confirmObserver = NotificationCenter.default.addObserver(
             forName: .confirmDownload,
             object: nil,
@@ -499,7 +522,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - IDM-style confirmation panel
 
     private func presentConfirmPanel(request: ConfirmDownloadRequest) {
-        // Close any existing confirm panel first (one at a time)
         confirmPanel?.close()
         confirmPanel = nil
 
@@ -512,7 +534,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.title                  = "Download"
         panel.titlebarAppearsTransparent = false
         panel.isMovableByWindowBackground = true
-        panel.level                  = .floating          // stays above main window
+        panel.level                  = .floating // Intentionally floating (doesn't block app interactability)
         panel.isReleasedWhenClosed   = false
 
         let confirmView = ConfirmDownloadView(
@@ -559,4 +581,5 @@ extension Notification.Name {
     static let openSelectedProgressWindow = Notification.Name("openSelectedProgressWindow")
     static let requestAddDownload         = Notification.Name("requestAddDownload")
     static let confirmDownload            = Notification.Name("confirmDownload")
+    static let showSettings               = Notification.Name("showSettings") // Added
 }

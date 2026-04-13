@@ -1,8 +1,6 @@
-// dispatch_out/Sources/Daisy/UI/Screens/DownloadListView.swift
 import SwiftUI
 import AppKit
 
-// ── Custom AppKit Injector for Right-Click Highlighting ──
 struct RightClickModifier: ViewModifier {
     let action: () -> Void
     func body(content: Content) -> some View {
@@ -30,7 +28,6 @@ class RightClickCatcherView: NSView {
         super.rightMouseDown(with: event)
     }
     
-    // Bulletproof guard: only intercept right clicks so we NEVER steal a left-click
     override func hitTest(_ point: NSPoint) -> NSView? {
         guard let event = NSApp.currentEvent, event.type == .rightMouseDown else { return nil }
         return bounds.contains(point) ? self : nil
@@ -42,7 +39,6 @@ extension View {
         self.modifier(RightClickModifier(action: action))
     }
 }
-// ─────────────────────────────────────────────────────────
 
 struct DownloadListView: View {
     let items: [DownloadItem]
@@ -54,8 +50,10 @@ struct DownloadListView: View {
 
     @State private var lastSelectedIndex: Int? = nil
     @State private var propertiesItem: DownloadItem? = nil
-
     @FocusState private var isSearchFocused: Bool
+    
+    @AppStorage("accentColorHex") private var accentColorHex = "#0A84FF"
+    @AppStorage("enableBackgroundTint") private var enableBackgroundTint = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -71,9 +69,11 @@ struct DownloadListView: View {
             if items.isEmpty && search.isEmpty {
                 EmptyListPlaceholder()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(enableBackgroundTint ? Color(hex: accentColorHex).opacity(0.04) : Color(NSColor.controlBackgroundColor))
             } else if items.isEmpty && !search.isEmpty {
                 ContentUnavailableView.search(text: search)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(enableBackgroundTint ? Color(hex: accentColorHex).opacity(0.04) : Color(NSColor.controlBackgroundColor))
             } else {
                 scrollableList
             }
@@ -85,7 +85,6 @@ struct DownloadListView: View {
     }
     
     private var scrollableList: some View {
-        // GeometryReader forces the ScrollView to expand to fill the entire window
         GeometryReader { geo in
             ScrollView {
                 VStack(spacing: 0) {
@@ -97,7 +96,6 @@ struct DownloadListView: View {
                             )
                             .contentShape(Rectangle())
                             .onRightClick {
-                                // Instantly highlight the item before the context menu appears
                                 if !selected.contains(item.id) {
                                     selected = [item.id]
                                     lastSelectedIndex = index
@@ -109,11 +107,8 @@ struct DownloadListView: View {
                             Divider().padding(.leading, 12)
                         }
                     }
-                    
-                    // Spacer ensures you can scroll past the floating search bar
                     Spacer(minLength: 90)
                 }
-                // CRITICAL FIX: Stretches the clickable content area to at least the window height
                 .frame(maxWidth: .infinity, minHeight: geo.size.height, alignment: .top)
                 .contentShape(Rectangle())
                 .onTapGesture {
@@ -122,17 +117,15 @@ struct DownloadListView: View {
                 }
             }
         }
-        .background(Color(NSColor.controlBackgroundColor))
+        .background(enableBackgroundTint ? Color(hex: accentColorHex).opacity(0.04) : Color(NSColor.controlBackgroundColor))
         .sheet(item: $propertiesItem) { item in
             PropertiesSheet(item: item)
         }
-        // ── Cmd+A: select all visible items ──────────────────────────────
         .onKeyPress(.init("a"), phases: .down) { press in
             guard press.modifiers.contains(.command) else { return .ignored }
             selected = Set(items.map { $0.id })
             return .handled
         }
-        // ── Delete / Backspace: remove selected items ─────────────────────
         .onDeleteCommand {
             let toDelete = engine.items.filter { selected.contains($0.id) }
             guard !toDelete.isEmpty else { return }
@@ -228,18 +221,14 @@ struct DownloadListView: View {
             ? engine.items.filter { selected.contains($0.id) }
             : [item]
 
-        // 1. ACTIVE STATE: Show Pause (not Stop) for active downloads
         if targetItems.contains(where: { $0.status == .downloading || $0.status == .queued }) {
             Button("Stop") { targetItems.forEach { engine.stop($0) } }
         }
         
-        // 2. PAUSED/STOPPED STATE: Show Resume
-        // Use .paused for items you want to continue, and .stopped/.failed for retry logic
         if targetItems.contains(where: { $0.status == .stopped || $0.status == .failed }) {
             Button("Resume") { targetItems.forEach { engine.resume($0) } }
         }
         
-        // 3. FINISHED/FAILED STATE: Show Restart
         if targetItems.contains(where: { $0.status == .completed || $0.status == .failed }) {
             Button("Restart Download") { targetItems.forEach { engine.retry($0) } }
         }
@@ -299,39 +288,56 @@ struct DownloadListView: View {
 }
 
 struct LiquidGlassBackground: View {
-    var body: some View {
-        ZStack {
-            Capsule()
-                .fill(.ultraThinMaterial)
-                .shadow(color: .black.opacity(0.05), radius: 6, x: 0, y: 2)
-            
-            Capsule()
-                .fill(Color.primary.opacity(0.05))
-            
-            Capsule()
-                .strokeBorder(
-                    LinearGradient(
-                        colors: [.white.opacity(0.8), .white.opacity(0.1), .clear, .white.opacity(0.3)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    lineWidth: 1.5
-                )
-            
-            Capsule()
-                .fill(
-                    LinearGradient(
-                        colors: [.white.opacity(0.25), .clear, .clear],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
-                .padding(1)
+@State private var shimmerPhase: CGFloat = -1.0
+
+var body: some View {
+    ZStack {
+        Capsule().fill(.ultraThinMaterial.opacity(0.80))
+        
+        GeometryReader { geo in
+            LinearGradient(
+                stops: [
+                    .init(color: .clear, location: 0.0),
+                    .init(color: .white.opacity(0.3), location: 0.4),
+                    .init(color: .white.opacity(0.7), location: 0.5),
+                    .init(color: .white.opacity(0.3), location: 0.6),
+                    .init(color: .clear, location: 1.0)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .frame(width: geo.size.width * 2)
+            .offset(x: geo.size.width * shimmerPhase)
+            .blendMode(.plusLighter)
         }
+        .clipShape(Capsule())
+        .onAppear {
+            withAnimation(.linear(duration: 4.5).repeatForever(autoreverses: false)) {
+                shimmerPhase = 1.0
+            }
+        }
+        
+        Capsule()
+            .fill(
+                LinearGradient(colors: [.white.opacity(0.9), .white.opacity(0.1), .clear], startPoint: .top, endPoint: .bottom)
+            )
+            .padding(1.5)
+        
+        Capsule()
+            .strokeBorder(
+                LinearGradient(colors: [.white.opacity(1.0), .white.opacity(0.2), .black.opacity(0.05), .white.opacity(0.6)], startPoint: .topLeading, endPoint: .bottomTrailing),
+                lineWidth: 1.5
+            )
     }
+    .shadow(color: .black.opacity(0.08), radius: 12, x: 0, y: 6)
+    .shadow(color: .black.opacity(0.04), radius: 3, x: 0, y: 1)
+}
 }
 
 struct ColumnHeader: View {
+    @AppStorage("accentColorHex") private var accentColorHex = "#0A84FF"
+    @AppStorage("enableBackgroundTint") private var enableBackgroundTint = false
+
     var body: some View {
         HStack(spacing: 0) {
             Text("Name").frame(minWidth: 200, maxWidth: .infinity, alignment: .leading)
@@ -344,7 +350,7 @@ struct ColumnHeader: View {
         .foregroundStyle(.secondary)
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(Color(NSColor.controlBackgroundColor))
+        .background(enableBackgroundTint ? Color(hex: accentColorHex).opacity(0.04) : Color(NSColor.controlBackgroundColor))
         .overlay(alignment: .bottom) { Divider() }
     }
 }
@@ -354,6 +360,10 @@ struct DownloadRow: View {
     let isSelected: Bool
 
     @AppStorage("isCompactList") private var isCompactList = false
+    @AppStorage("accentColorHex") private var accentColorHex = "#0A84FF"
+    @AppStorage("progressBarColorHex") private var progressBarColorHex = "#34C759"
+    @AppStorage("matchProgressBarToAccent") private var matchProgressBarToAccent = false
+    
     @State private var isExpanded = false
     var engine = DownloadEngine.shared
 
@@ -367,6 +377,10 @@ struct DownloadRow: View {
     var fileIcon: NSImage {
         let ext = (item.filename as NSString).pathExtension
         return ext.isEmpty ? NSWorkspace.shared.icon(forFileType: "public.data") : NSWorkspace.shared.icon(forFileType: ext)
+    }
+
+    var dynamicTextColor: Color {
+        isSelected ? Color(hex: accentColorHex).accessibleText : .primary
     }
 
     var body: some View {
@@ -384,14 +398,14 @@ struct DownloadRow: View {
                             
                             Text(file.filename)
                                 .font(.system(size: 12))
-                                .foregroundStyle(isSelected ? .white.opacity(0.9) : .primary)
+                                .foregroundStyle(isSelected ? dynamicTextColor.opacity(0.9) : .primary)
                                 .lineLimit(1)
                                 .truncationMode(.middle)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                             
                             Text(formatBytes(file.downloadedBytes) + (file.totalBytes > 0 ? " / " + formatBytes(file.totalBytes) : ""))
                                 .font(.system(size: 10))
-                                .foregroundStyle(isSelected ? .white.opacity(0.7) : .secondary)
+                                .foregroundStyle(isSelected ? dynamicTextColor.opacity(0.7) : .secondary)
                                 .frame(width: 110, alignment: .trailing)
                             
                             if item.type == .torrent {
@@ -401,7 +415,7 @@ struct DownloadRow: View {
                                 }) {
                                     Image(systemName: file.isStopped ? "play.circle.fill" : "pause.circle.fill")
                                         .font(.system(size: 14))
-                                        .foregroundStyle(file.isStopped ? Color.orange : Color.blue)
+                                        .foregroundStyle(file.isStopped ? Color.orange : Color(hex: accentColorHex))
                                 }
                                 .buttonStyle(.plain)
                             } else {
@@ -421,7 +435,7 @@ struct DownloadRow: View {
                 .padding(.bottom, 8)
             }
         }
-        .background(isSelected ? Color.accentColor : Color.clear)
+        .background(isSelected ? Color(hex: accentColorHex) : Color.clear)
         .draggable(dragPayload)
     }
     
@@ -432,7 +446,7 @@ struct DownloadRow: View {
                     Button(action: { withAnimation(.easeInOut(duration: 0.2)) { isExpanded.toggle() } }) {
                         Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                             .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(isSelected ? .white : .secondary)
+                            .foregroundStyle(isSelected ? dynamicTextColor : .secondary)
                             .frame(width: 16, height: 16)
                     }
                     .buttonStyle(.plain)
@@ -449,16 +463,16 @@ struct DownloadRow: View {
                         .font(.system(size: 13, weight: .medium))
                         .lineLimit(1)
                         .truncationMode(.middle)
-                        .foregroundStyle(isSelected ? .white : .primary)
+                        .foregroundStyle(isSelected ? dynamicTextColor : .primary)
                     Text(item.type == .batch ? "\(item.subFiles.count) Sub-files" : (item.url.host ?? item.url.absoluteString))
                         .font(.system(size: 11))
-                        .foregroundStyle(isSelected ? .white.opacity(0.7) : .secondary)
+                        .foregroundStyle(isSelected ? dynamicTextColor.opacity(0.7) : .secondary)
                         .lineLimit(1)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            StatusPill(status: item.status, isSelected: isSelected)
+            StatusPill(status: item.status, isSelected: isSelected, accentColorHex: accentColorHex)
                 .frame(width: 105, alignment: .leading)
 
             VStack(alignment: .leading, spacing: 3) {
@@ -475,20 +489,20 @@ struct DownloadRow: View {
                 .frame(height: 4)
                 Text(item.transferLabel)
                     .font(.system(size: 10))
-                    .foregroundStyle(isSelected ? .white.opacity(0.8) : .secondary)
+                    .foregroundStyle(isSelected ? dynamicTextColor.opacity(0.8) : .secondary)
             }
             .frame(width: 140, alignment: .leading)
             .padding(.trailing, 8)
 
             Text(item.type.rawValue)
                 .font(.system(size: 12))
-                .foregroundStyle(isSelected ? .white.opacity(0.85) : .primary)
+                .foregroundStyle(isSelected ? dynamicTextColor.opacity(0.85) : .primary)
                 .lineLimit(1)
                 .frame(width: 100, alignment: .leading)
 
             Text(item.status == .downloading ? item.formattedSpeed : "–")
                 .font(.system(size: 12))
-                .foregroundStyle(isSelected ? .white.opacity(0.85) : .secondary)
+                .foregroundStyle(isSelected ? dynamicTextColor.opacity(0.85) : .secondary)
                 .frame(width: 75, alignment: .leading)
 
         }
@@ -497,54 +511,62 @@ struct DownloadRow: View {
     }
 
     var progressColor: Color {
-        if isSelected { return .white }
+        if isSelected { return Color(hex: accentColorHex).accessibleText }
         switch item.status {
-        case .downloading: return .green
-        case .completed:   return .green
-        case .failed:      return .green
-        case .stopped:     return .green   // Stopped
-        default:           return .secondary
+        case .downloading, .completed, .failed, .stopped:
+            return matchProgressBarToAccent ? Color(hex: accentColorHex) : Color(hex: progressBarColorHex)
+        default: return .secondary
         }
-    }
-
-    func relativeDateString(_ date: Date) -> String {
-        if abs(date.timeIntervalSinceNow) > 86400 * 2 {
-            let df = DateFormatter()
-            df.dateStyle = .medium
-            df.timeStyle = .short
-            return df.string(from: date)
-        }
-        let f = RelativeDateTimeFormatter()
-        f.unitsStyle = .abbreviated
-        return f.localizedString(for: date, relativeTo: Date())
     }
 }
 
+// MARK: - Updated Status Pill
 struct StatusPill: View {
     let status: DownloadStatus
     var isSelected: Bool = false
+    var accentColorHex: String = "#0A84FF"
     
+    @AppStorage("matchBadgesToAccent") private var matchBadgesToAccent = false
+    @AppStorage("completedColorHex")   private var completedColorHex   = "#34C759"
+    @AppStorage("failedColorHex")      private var failedColorHex      = "#FF3B30"
+    @AppStorage("downloadingColorHex") private var downloadingColorHex = "#0A84FF"
+    @AppStorage("stoppedColorHex")     private var stoppedColorHex     = "#FF9500"
+    
+    @Environment(\.colorScheme) private var colorScheme
+    
+    var dynamicTextColor: Color {
+        isSelected ? Color(hex: accentColorHex).accessibleText : labelColor
+    }
+
     var body: some View {
         HStack(spacing: 4) {
-            Circle().fill(isSelected ? Color.white.opacity(0.9) : dotColor).frame(width: 6, height: 6)
+            Circle().fill(isSelected ? dynamicTextColor.opacity(0.9) : dotColor).frame(width: 6, height: 6)
             Text(status.rawValue)
                 .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(isSelected ? Color.white : labelColor)
+                .foregroundStyle(dynamicTextColor)
         }
         .padding(.horizontal, 7)
         .padding(.vertical, 3)
-        .background(isSelected ? Color.white.opacity(0.2) : bgColor, in: Capsule())
+        .background(isSelected ? dynamicTextColor.opacity(0.2) : bgColor, in: Capsule())
     }
     
     var dotColor: Color {
+        let baseColor: Color
         switch status {
-        case .completed:   return .green
-        case .failed:      return .red
-        case .downloading: return .blue
-        case .stopped:     return .orange   // Stopped
-        default:           return .secondary
+        case .completed:            baseColor = Color(hex: completedColorHex)
+        case .failed:               baseColor = Color(hex: failedColorHex)
+        case .downloading, .queued: baseColor = Color(hex: downloadingColorHex)
+        case .stopped:              baseColor = Color(hex: stoppedColorHex)
+        default:                    return .secondary
         }
+        
+        let matchedColor = matchBadgesToAccent
+            ? baseColor.matchingThemeVisualWeight(of: Color(hex: accentColorHex))
+            : baseColor
+            
+        return matchedColor.adaptedForScheme(colorScheme)
     }
+    
     var labelColor: Color { dotColor }
     var bgColor: Color { dotColor.opacity(0.12) }
 }
@@ -578,6 +600,9 @@ struct PropertiesSheet: View {
 
     @State private var urlText: String = ""
     @State private var urlIsValid: Bool = true
+    
+    @AppStorage("accentColorHex") private var accentColorHex = "#0A84FF"
+    @AppStorage("enableBackgroundTint") private var enableBackgroundTint = false
 
     private var fileSize: String {
         if item.totalBytes > 0 { return formatBytes(item.totalBytes) }
@@ -717,18 +742,13 @@ struct PropertiesSheet: View {
                     if item.type != .batch, urlIsValid, let newURL = URL(string: urlText), newURL != item.url {
                         let shouldResume = (item.status != .completed)
                         
-                        // 1. Kill active engine processes
                         if item.status == .downloading || item.status == .queued {
                             engine.stop(item)
                         }
                         
-                        // 2. Nuke old files entirely so curl doesn't try to resume a mismatch
                         try? FileManager.default.removeItem(at: item.tempDirURL)
                         try? FileManager.default.removeItem(at: item.destinationURL)
                         
-                        // 3. Re-derive filename from the new URL.
-                        //    The URL path component is the best we can do without hitting the network;
-                        //    Content-Disposition will further refine it once the download starts.
                         let newFilename: String = {
                             var c = URLComponents(url: newURL, resolvingAgainstBaseURL: false)
                             c?.query = nil
@@ -738,7 +758,6 @@ struct PropertiesSheet: View {
                         }()
                         let destDir = item.destinationURL.deletingLastPathComponent()
 
-                        // 4. Reset state for a completely fresh download
                         item.url            = newURL
                         item.filename       = newFilename
                         item.destinationURL = destDir.appendingPathComponent(newFilename)
@@ -752,7 +771,6 @@ struct PropertiesSheet: View {
                         
                         engine.persist()
                         
-                        // 5. Fire it back up
                         if shouldResume {
                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                                 engine.resume(item)
@@ -764,12 +782,14 @@ struct PropertiesSheet: View {
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.return)
                 .disabled(!urlIsValid)
+                .tint(Color(hex: accentColorHex))
+                .foregroundStyle(Color(hex: accentColorHex).accessibleText)
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 14)
         }
         .frame(width: 560, height: 520)
-        .background(Color(NSColor.windowBackgroundColor))
+        .background(enableBackgroundTint ? Color(hex: accentColorHex).opacity(0.04) : Color(NSColor.windowBackgroundColor))
         .onAppear { urlText = item.url.absoluteString }
     }
 

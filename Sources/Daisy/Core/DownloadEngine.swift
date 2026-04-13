@@ -202,6 +202,7 @@ public final class DownloadItem: Identifiable, Codable, Hashable {
     public var isPrepared: Bool = false
     public var supportsRanges: Bool = false
     public var speedLimit: Int = 0
+    public var retryCount: Int = 0
     
     public var cookies: String?
     public var userAgent: String?
@@ -255,8 +256,11 @@ public final class DownloadItem: Identifiable, Codable, Hashable {
         self.filename = filename
         self.destinationURL = destination.appendingPathComponent(filename)
         self.status = .queued
-        let isTorrentFile = url.isFileURL && url.pathExtension.lowercased() == "torrent"
+        
+        // Removed url.isFileURL constraint so HTTP torrent links download as Torrents properly.
+        let isTorrentFile = url.pathExtension.lowercased() == "torrent" || url.absoluteString.contains(".torrent")
         let computedType: DownloadType = (url.scheme == "magnet" || isTorrentFile) ? .torrent : .directLink
+        
         self.type = computedType
         self.totalBytes = 0
         self.downloadedBytes = 0
@@ -270,7 +274,7 @@ public final class DownloadItem: Identifiable, Codable, Hashable {
         case id, url, filename, destinationURL, status, type, totalBytes, downloadedBytes
         case error, dateAdded, dateCompleted, connectionCount, mimeType, sourceHost
         case isPrepared, supportsRanges, speedLimit, subFiles, batchURLs
-        case cookies, userAgent, referer
+        case cookies, userAgent, referer, retryCount
     }
 
     public required init(from decoder: Decoder) throws {
@@ -303,6 +307,7 @@ public final class DownloadItem: Identifiable, Codable, Hashable {
         cookies = try c.decodeIfPresent(String.self, forKey: .cookies)
         userAgent = try c.decodeIfPresent(String.self, forKey: .userAgent)
         referer = try c.decodeIfPresent(String.self, forKey: .referer)
+        retryCount = try c.decodeIfPresent(Int.self, forKey: .retryCount) ?? 0
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -329,6 +334,7 @@ public final class DownloadItem: Identifiable, Codable, Hashable {
         try c.encodeIfPresent(cookies, forKey: .cookies)
         try c.encodeIfPresent(userAgent, forKey: .userAgent)
         try c.encodeIfPresent(referer, forKey: .referer)
+        try c.encode(retryCount, forKey: .retryCount)
     }
 }
 
@@ -380,7 +386,7 @@ public final class DownloadEngine {
 
         if urls.count == 1 {
             let url = urls[0]
-            let isTorrentFile = url.isFileURL && url.pathExtension.lowercased() == "torrent"
+            let isTorrentFile = url.pathExtension.lowercased() == "torrent"
 
             let computedFilename: String
             if let provided = filename {
@@ -443,6 +449,7 @@ public final class DownloadEngine {
 
     public func resume(_ item: DownloadItem) {
         guard item.status == .stopped || item.status == .failed else { return }
+        item.retryCount = 0
         if activeCount >= maxConcurrent { item.status = .queued; persist(); return }
         startDownload(item)
     }
@@ -455,6 +462,7 @@ public final class DownloadEngine {
             try? FileManager.default.removeItem(at: item.destinationURL)
         }
         
+        item.retryCount = 0
         item.status = .queued
         item.downloadedBytes = 0
         item.totalBytes = 0
@@ -541,6 +549,18 @@ public final class DownloadEngine {
             return
         }
 
+        if item.type == .batch {
+            if let exe = aria2Path {
+                Task { await runBatch(item, executable: exe) }
+            } else {
+                item.status = .failed
+                item.error = "Missing Engine. Please run 'brew install aria2' in your Terminal."
+                persist()
+                scheduleNext()
+            }
+            return
+        }
+
         if let exe = aria2Path {
             Task { await runAria2(item, executable: exe) }
         } else if item.type == .directLink {
@@ -552,6 +572,331 @@ public final class DownloadEngine {
             scheduleNext()
         }
     }
+
+    // ── Batch Runner (Sequential Download) ──────────────────────────────────
+    private func runBatch(_ item: DownloadItem, executable: String) async {
+        await MainActor.run { item._managesOwnSpeed = true }
+
+        let tempDir = await MainActor.run { item.tempDirURL }
+        try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+
+        await MainActor.run {
+            if !item.isPrepared {
+                item.destinationURL = uniqueURL(item.destinationURL)
+                try? FileManager.default.createDirectory(at: item.destinationURL, withIntermediateDirectories: true)
+                item.isPrepared = true
+                persist()
+            }
+        }
+
+        let urlsOpt = await MainActor.run { item.batchURLs }
+        guard let urls = urlsOpt else { return }
+
+        for i in 0..<urls.count {
+            if Task.isCancelled { break }
+            let status = await MainActor.run { item.status }
+            if status != .downloading { break }
+
+            let isStopped = await MainActor.run { item.subFiles.indices.contains(i) ? item.subFiles[i].isStopped : false }
+            if isStopped { continue }
+
+            let isCompleted = await MainActor.run {
+                item.subFiles.indices.contains(i) && item.subFiles[i].totalBytes > 0 && item.subFiles[i].downloadedBytes == item.subFiles[i].totalBytes
+            }
+            if isCompleted { continue }
+
+            let targetURLStr = urls[i]
+            guard let originalURL = URL(string: targetURLStr) else { continue }
+
+            let resolvedURL = await resolveDirectLink(url: originalURL, item: item)
+
+            await downloadSingleBatchFile(item: item, index: i, url: resolvedURL, executable: executable, tempDir: tempDir)
+
+            let newStatus = await MainActor.run { item.status }
+            if newStatus != .downloading { break }
+        }
+
+        let finalStatus = await MainActor.run { item.status }
+        if finalStatus == .downloading {
+            await MainActor.run {
+                item.status = .completed
+                item.dateCompleted = Date()
+                item.speed = 0
+                item._lastTickDate = nil
+                persist()
+                scheduleNext()
+            }
+        } else if finalStatus == .failed {
+            await MainActor.run {
+                if item.retryCount < 3 {
+                    item.retryCount += 1
+                    item.status = .queued
+                    item.error = nil
+                    persist()
+                    scheduleNext()
+                } else {
+                    persist()
+                    scheduleNext()
+                }
+            }
+        }
+    }
+
+    private func downloadSingleBatchFile(item: DownloadItem, index: Int, url: URL, executable: String, tempDir: URL) async {
+        let destDir = tempDir.appendingPathComponent("batch_\(index)").path
+        try? FileManager.default.createDirectory(atPath: destDir, withIntermediateDirectories: true)
+
+        let conns      = await MainActor.run { item.connectionCount }
+        let speedLimit = await MainActor.run { item.speedLimit }
+        let cookies   = await MainActor.run { item.cookies }
+        let userAgent = await MainActor.run { item.userAgent }
+        let referer   = await MainActor.run { item.referer }
+
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: executable)
+        var didLaunch = false
+
+        var args = [
+            "--dir=\(destDir)",
+            "--continue=true",
+            "--file-allocation=none",
+            "--max-connection-per-server=\(conns)",
+            "--split=\(conns)",
+            "--min-split-size=1M",
+            "--seed-time=0",
+            "--auto-file-renaming=false",
+            "--summary-interval=1",
+            "--console-log-level=notice"
+        ]
+        if speedLimit > 0 { args.append("--max-overall-download-limit=\(speedLimit)K") }
+        if let cookies = cookies, !cookies.isEmpty { args.append("--header=Cookie: \(cookies)") }
+
+        let host = url.host ?? ""
+        let resolvedReferer = (referer != nil && !referer!.isEmpty) ? referer! : "https://\(host)/"
+        let refHost = URL(string: resolvedReferer)?.host ?? host
+        let isSameOrigin = host.hasSuffix(refHost) || refHost.hasSuffix(host)
+        
+        args.append("--referer=\(resolvedReferer)")
+        args.append("--header=Origin: https://\(host)")
+        args.append("--header=Sec-Fetch-Site: \(isSameOrigin ? "same-origin" : "cross-site")")
+        args.append("--header=Sec-Fetch-Dest: document")
+        args.append("--header=Sec-Fetch-Mode: navigate")
+        args.append("--header=Sec-Fetch-User: ?1")
+        args.append("--header=Upgrade-Insecure-Requests: 1")
+        
+        let ua = (userAgent != nil && !userAgent!.isEmpty) ? userAgent! : "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+        args.append("--user-agent=\(ua)")
+        args.append("--header=Sec-Ch-Ua: \"Google Chrome\";v=\"131\", \"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"")
+        args.append("--header=Sec-Ch-Ua-Mobile: ?0")
+        args.append("--header=Sec-Ch-Ua-Platform: \"macOS\"")
+        args.append("--header=Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8")
+        args.append("--header=Accept-Language: en-US,en;q=0.9")
+
+        args.append(url.absoluteString)
+        proc.arguments = args
+
+        let stdoutPipe = Pipe()
+        proc.standardOutput = stdoutPipe
+        proc.standardError = FileHandle.nullDevice
+
+        let pollTask = Task { [weak item] in
+            guard let item else { return }
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 100_000_000)
+
+                var fileDl: Int64 = 0
+                var fileTot: Int64 = 0
+                var fileName: String?
+
+                if let enumerator = FileManager.default.enumerator(at: URL(fileURLWithPath: destDir), includingPropertiesForKeys: [.totalFileAllocatedSizeKey, .fileSizeKey]) {
+                    for case let fileURL as URL in enumerator {
+                        if fileURL.pathExtension == "aria2" { continue }
+                        fileName = fileURL.lastPathComponent
+                        if let vals = try? fileURL.resourceValues(forKeys: [.totalFileAllocatedSizeKey, .fileSizeKey]) {
+                            let physical = Int64(vals.totalFileAllocatedSize ?? 0)
+                            let logical = Int64(vals.fileSize ?? 0)
+                            fileDl = min(physical, logical)
+                            fileTot = logical
+                        }
+                    }
+                }
+
+                await MainActor.run {
+                    if item.subFiles.indices.contains(index) {
+                        if fileDl > item.subFiles[index].downloadedBytes {
+                            item.subFiles[index].downloadedBytes = fileDl
+                        }
+                        if let fn = fileName {
+                            item.subFiles[index].filename = fn
+                            item.subFiles[index].path = fn
+                        }
+                    }
+                    
+                    let sumDl = item.subFiles.map { $0.downloadedBytes }.reduce(0, +)
+                    if sumDl > item.downloadedBytes {
+                        item.downloadedBytes = sumDl
+                    }
+                    item.totalBytes = item.subFiles.map { max($0.totalBytes, $0.downloadedBytes) }.reduce(0, +)
+                }
+            }
+        }
+
+        let sizeSnifferTask = Task { [weak item] in
+            guard let item else { return }
+            for try await line in stdoutPipe.fileHandleForReading.bytes.lines {
+                if line.contains("Length: ") {
+                    if let range = line.range(of: "Length: ") {
+                        let sub = line[range.upperBound...]
+                        let bytesStr = sub.prefix(while: { $0.isNumber })
+                        if let bytes = Int64(bytesStr), bytes > 0 {
+                            await MainActor.run {
+                                if item.subFiles.indices.contains(index) {
+                                    item.subFiles[index].totalBytes = bytes
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if line.contains("[#") && line.contains("CN:") {
+                     var parsedSpeed: Double? = nil
+                     let blocks = line.components(separatedBy: "[#")
+                     for block in blocks {
+                         guard block.contains("CN:") else { continue }
+                         if let dlRange = block.range(of: "DL:") {
+                            let sub = block[dlRange.upperBound...]
+                            let speedStr = sub.prefix(while: { $0 != " " && $0 != "]" })
+                            parsedSpeed = Double(parseAriaSize(String(speedStr)))
+                         }
+                     }
+                     if let s = parsedSpeed {
+                         await MainActor.run { item.speed = s }
+                     }
+                }
+            }
+        }
+
+        await MainActor.run { item.processes.append(proc) }
+
+        await withCheckedContinuation { cont in
+            proc.terminationHandler = { _ in cont.resume() }
+            do { try proc.run(); didLaunch = true }
+            catch { cont.resume() }
+        }
+
+        pollTask.cancel()
+        sizeSnifferTask.cancel()
+        
+        let isStillTracked = await MainActor.run {
+            let tracked = item.processes.contains(where: { $0 === proc })
+            item.processes.removeAll { $0 === proc }
+            return tracked
+        }
+
+        let status = await MainActor.run { item.status }
+
+        guard didLaunch else {
+            if status == .downloading && isStillTracked {
+                await MainActor.run {
+                    item.status = .failed
+                    item.error = "Failed to launch batch sub-file."
+                }
+            }
+            return
+        }
+
+        if proc.terminationStatus == 0 {
+            if let enumerator = FileManager.default.enumerator(at: URL(fileURLWithPath: destDir), includingPropertiesForKeys: nil) {
+                let destFolder = await MainActor.run { item.destinationURL }
+                for case let fileURL as URL in enumerator {
+                    if fileURL.pathExtension == "aria2" { continue }
+                    let destPath = destFolder.appendingPathComponent(fileURL.lastPathComponent)
+                    _ = try? FileManager.default.removeItem(at: destPath)
+                    try? FileManager.default.moveItem(at: fileURL, to: destPath)
+
+                    await MainActor.run {
+                        if item.subFiles.indices.contains(index) {
+                            item.subFiles[index].path = fileURL.lastPathComponent
+                            item.subFiles[index].filename = fileURL.lastPathComponent
+                            let sz = (try? destPath.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+                            item.subFiles[index].downloadedBytes = Int64(sz)
+                            item.subFiles[index].totalBytes = Int64(sz)
+                        }
+                        
+                        let sumDl = item.subFiles.map { $0.downloadedBytes }.reduce(0, +)
+                        if sumDl > item.downloadedBytes {
+                            item.downloadedBytes = sumDl
+                        }
+                        item.totalBytes = item.subFiles.map { max($0.totalBytes, $0.downloadedBytes) }.reduce(0, +)
+                    }
+                }
+            }
+        } else if status == .downloading && isStillTracked {
+             await MainActor.run {
+                 item.status = .failed
+                 item.error = aria2HumanError(exitCode: proc.terminationStatus)
+             }
+        }
+
+        try? FileManager.default.removeItem(atPath: destDir)
+    }
+
+    private func resolveDirectLink(url: URL, item: DownloadItem) async -> URL {
+        guard url.host?.contains("fuckingfast.co") == true, !url.path.starts(with: "/dl/") else { return url }
+        
+        var request = URLRequest(url: url)
+        
+        let ua = (item.userAgent != nil && !item.userAgent!.isEmpty)
+            ? item.userAgent!
+            : "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+        
+        request.setValue(ua, forHTTPHeaderField: "User-Agent")
+        request.setValue("text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8", forHTTPHeaderField: "Accept")
+        request.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
+        request.setValue("navigate", forHTTPHeaderField: "Sec-Fetch-Mode")
+        request.setValue("document", forHTTPHeaderField: "Sec-Fetch-Dest")
+        request.setValue("none", forHTTPHeaderField: "Sec-Fetch-Site")
+        
+        if let cookies = item.cookies, !cookies.isEmpty {
+            request.setValue(cookies, forHTTPHeaderField: "Cookie")
+        }
+        
+        var attempts = 0
+        let maxAttempts = 3
+        
+        while attempts < maxAttempts {
+            attempts += 1
+            
+            guard let (data, response) = try? await URLSession.shared.data(for: request) else {
+                return url
+            }
+            
+            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 200
+            
+            if statusCode == 429 || statusCode == 503 {
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                continue
+            }
+            
+            guard let html = String(data: data, encoding: .utf8) else { return url }
+            
+            // Your exact regex implementation
+            let pattern = #"window\.open\(["'](https?://[^\s"'\)]+)"#
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else { return url }
+            
+            let range = NSRange(location: 0, length: html.utf16.count)
+            if let match = regex.firstMatch(in: html, options: [], range: range),
+               let swiftRange = Range(match.range(at: 1), in: html) {
+                let extracted = String(html[swiftRange])
+                if let finalURL = URL(string: extracted) {
+                    return finalURL
+                }
+            }
+            break
+        }
+        return url
+    }
+    // ─────────────────────────────────────────────────────────────────────────
 
     private func runAria2(_ item: DownloadItem, executable: String) async {
         await MainActor.run { item._managesOwnSpeed = true }
@@ -565,6 +910,19 @@ public final class DownloadEngine {
                 if !files.isEmpty {
                     item.subFiles = files
                     item.totalBytes = files.map { $0.totalBytes }.reduce(0, +)
+                    
+                    // UPDATE FILENAME BASED ON METADATA ROOT
+                    if files.count == 1 {
+                        item.filename = files[0].filename
+                    } else {
+                        let paths = files.map { ($0.path as NSString).pathComponents }
+                        if let firstPath = paths.first, firstPath.count > 1 {
+                            let possibleRoot = firstPath[0]
+                            if paths.allSatisfy({ $0.first == possibleRoot }) {
+                                item.filename = possibleRoot
+                            }
+                        }
+                    }
                 }
             }
             
@@ -583,16 +941,13 @@ public final class DownloadEngine {
         await MainActor.run {
             if !item.isPrepared {
                 let policy = UserDefaults.standard.string(forKey: "fileCollisionBehavior") ?? "rename"
-                if item.type != .torrent && item.type != .batch {
+                if item.type != .torrent {
                     if policy == "replace" {
                         try? FileManager.default.removeItem(at: item.destinationURL)
                     } else {
                         item.destinationURL = uniqueURL(item.destinationURL)
                     }
                     FileManager.default.createFile(atPath: item.destinationURL.path, contents: nil)
-                } else if item.type == .batch {
-                    item.destinationURL = uniqueURL(item.destinationURL)
-                    try? FileManager.default.createDirectory(at: item.destinationURL, withIntermediateDirectories: true)
                 }
                 item.isPrepared = true
                 persist()
@@ -607,9 +962,12 @@ public final class DownloadEngine {
         let fileName   = await MainActor.run { item.filename }
         let conns      = await MainActor.run { item.connectionCount }
         let type       = await MainActor.run { item.type }
-        let url        = await MainActor.run { item.url }
-        let speedLimit = await MainActor.run { item.speedLimit }
         
+        // Resolve URL before download (if direct link)
+        let originalURL = await MainActor.run { item.url }
+        let url = type == .directLink ? await resolveDirectLink(url: originalURL, item: item) : originalURL
+        
+        let speedLimit = await MainActor.run { item.speedLimit }
         let cookies   = await MainActor.run { item.cookies }
         let userAgent = await MainActor.run { item.userAgent }
         let referer   = await MainActor.run { item.referer }
@@ -628,7 +986,7 @@ public final class DownloadEngine {
         ]
 
         if speedLimit > 0 { args.append("--max-overall-download-limit=\(speedLimit)K") }
-        if type != .torrent && type != .batch { args.append("--out=\(fileName)") }
+        if type != .torrent { args.append("--out=\(fileName)") }
         
         if let cookies = cookies, !cookies.isEmpty { args.append("--header=Cookie: \(cookies)") }
         
@@ -636,7 +994,6 @@ public final class DownloadEngine {
         let host = url.host ?? ""
         let resolvedReferer = (referer != nil && !referer!.isEmpty) ? referer! : "https://\(host)/"
         
-        // Claude / Cloudflare API protection bypass dynamically resolves whether the referer matches the host
         let refHost = URL(string: resolvedReferer)?.host ?? host
         let isSameOrigin = host.hasSuffix(refHost) || refHost.hasSuffix(host)
         
@@ -669,15 +1026,6 @@ public final class DownloadEngine {
                 "--dht-listen-port=6881-6999",
                 "--bt-tracker=udp://tracker.opentrackr.org:1337/announce,udp://open.stealth.si:80/announce,udp://tracker.torrent.eu.org:451/announce,udp://open.demonii.com:1337/announce,udp://exodus.desync.com:6969/announce",
             ]
-        }
-        
-        if type == .batch {
-            let listPath = tempDir.appendingPathComponent("batch_list.txt")
-            let listContent = (await MainActor.run { item.batchURLs })?.joined(separator: "\n") ?? ""
-            try? listContent.write(to: listPath, atomically: true, encoding: .utf8)
-            args.append("-i")
-            args.append(listPath.path)
-        } else if type == .torrent {
             let activeIndices = await MainActor.run { item.subFiles.filter { !$0.isStopped }.map { String($0.index) }.joined(separator: ",") }
             if !activeIndices.isEmpty {
                 args.append("--select-file=\(activeIndices)")
@@ -685,10 +1033,9 @@ public final class DownloadEngine {
                 await MainActor.run { stop(item) }
                 return
             }
-            args.append(url.isFileURL ? url.path : url.absoluteString)
-        } else {
-            args.append(url.isFileURL ? url.path : url.absoluteString)
         }
+        
+        args.append(url.isFileURL ? url.path : url.absoluteString)
 
         proc.arguments = args
         let stdoutPipe = Pipe()
@@ -741,7 +1088,9 @@ public final class DownloadEngine {
                     
                     if foundMatch {
                         await MainActor.run {
-                            if totalDl > 0 { item.downloadedBytes = totalDl }
+                            if totalDl > item.downloadedBytes {
+                                item.downloadedBytes = totalDl
+                            }
                             if totalSz > item.totalBytes { item.totalBytes = totalSz }
                             if let s = parsedSpeed { item.speed = s }
                         }
@@ -753,7 +1102,8 @@ public final class DownloadEngine {
         let pollTask = Task { [weak item] in
             guard let item else { return }
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                // Read physical data size 10x per sec to bridge Aria2's 1-second stdout update gap
+                try? await Task.sleep(nanoseconds: 100_000_000)
                 
                 if item.type == .torrent {
                     let currentSubFiles = await MainActor.run { item.subFiles }
@@ -774,6 +1124,18 @@ public final class DownloadEngine {
                                 await MainActor.run {
                                     item.subFiles = newSubFiles
                                     item.totalBytes = newSubFiles.map { $0.totalBytes }.reduce(0, +)
+                                    // UPDATE FILENAME ON THE FLY FOR MAGNETS
+                                    if newSubFiles.count == 1 {
+                                        item.filename = newSubFiles[0].filename
+                                    } else {
+                                        let paths = newSubFiles.map { ($0.path as NSString).pathComponents }
+                                        if let firstPath = paths.first, firstPath.count > 1 {
+                                            let possibleRoot = firstPath[0]
+                                            if paths.allSatisfy({ $0.first == possibleRoot }) {
+                                                item.filename = possibleRoot
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -789,33 +1151,19 @@ public final class DownloadEngine {
                         }
                         await MainActor.run { item.subFiles = updatedSubFiles }
                     }
-                } else if item.type == .batch {
-                    var updatedSubFiles: [SubFile] = []
-                    if let enumerator = FileManager.default.enumerator(at: tempDir, includingPropertiesForKeys: [.totalFileAllocatedSizeKey, .fileSizeKey], options: [.skipsSubdirectoryDescendants]) {
-                        var index = 1
-                        for case let fileURL as URL in enumerator {
-                            let fname = fileURL.lastPathComponent
-                            if fname == "batch_list.txt" || fname.hasSuffix(".aria2") { continue }
-                            
-                            if let vals = try? fileURL.resourceValues(forKeys: [.totalFileAllocatedSizeKey, .fileSizeKey]) {
-                                let physical = vals.totalFileAllocatedSize ?? 0
-                                let logical = vals.fileSize ?? 0
-                                updatedSubFiles.append(SubFile(id: UUID(), index: index, path: fname, filename: fname, totalBytes: Int64(logical), downloadedBytes: Int64(min(physical, logical)), isStopped: false))
-                                index += 1
+                } else if item.type == .directLink {
+                    let fileName = await MainActor.run { item.filename }
+                    let fileURL = tempDir.appendingPathComponent(fileName)
+                    
+                    if let vals = try? fileURL.resourceValues(forKeys: [.totalFileAllocatedSizeKey, .fileSizeKey]) {
+                        let physical = Int64(vals.totalFileAllocatedSize ?? 0)
+                        let logical = Int64(vals.fileSize ?? 0)
+                        let currentDl = min(physical, logical)
+                        await MainActor.run {
+                            if currentDl > item.downloadedBytes {
+                                item.downloadedBytes = currentDl
                             }
                         }
-                    }
-                    await MainActor.run {
-                        var merged = item.subFiles
-                        for newSub in updatedSubFiles {
-                            if let idx = merged.firstIndex(where: { $0.filename == newSub.filename }) {
-                                merged[idx].downloadedBytes = newSub.downloadedBytes
-                                merged[idx].totalBytes = newSub.totalBytes
-                            } else {
-                                merged.append(newSub)
-                            }
-                        }
-                        item.subFiles = merged
                     }
                 }
             }
@@ -846,11 +1194,20 @@ public final class DownloadEngine {
         guard didLaunch else {
             if status == .downloading && isStillTracked {
                 await MainActor.run {
-                    item.status = .failed
-                    item.error = "Failed to launch download engine."
-                    item.speed = 0
-                    item._lastTickDate = nil
-                    persist(); scheduleNext()
+                    if item.retryCount < 3 {
+                        item.retryCount += 1
+                        item.status = .queued
+                        item.error = nil
+                        item.speed = 0
+                        item._lastTickDate = nil
+                        persist(); scheduleNext()
+                    } else {
+                        item.status = .failed
+                        item.error = "Failed to launch download engine."
+                        item.speed = 0
+                        item._lastTickDate = nil
+                        persist(); scheduleNext()
+                    }
                 }
             }
             return
@@ -864,7 +1221,7 @@ public final class DownloadEngine {
                 _ = try? FileManager.default.removeItem(at: destinationURL)
                 try? FileManager.default.moveItem(at: downloadedFile, to: destinationURL)
             } else {
-                let destDirURL = type == .batch ? destinationURL : destinationURL.deletingLastPathComponent()
+                let destDirURL = destinationURL.deletingLastPathComponent()
                 let subFiles = await MainActor.run { item.subFiles }
                 
                 if subFiles.isEmpty && type == .torrent {
@@ -913,11 +1270,20 @@ public final class DownloadEngine {
             }
         } else if status == .downloading && isStillTracked {
             await MainActor.run {
-                item.status = .failed
-                item.error = self.aria2HumanError(exitCode: proc.terminationStatus)
-                item.speed = 0
-                item._lastTickDate = nil
-                persist(); scheduleNext()
+                if item.retryCount < 3 {
+                    item.retryCount += 1
+                    item.status = .queued
+                    item.error = nil
+                    item.speed = 0
+                    item._lastTickDate = nil
+                    persist(); scheduleNext()
+                } else {
+                    item.status = .failed
+                    item.error = self.aria2HumanError(exitCode: proc.terminationStatus)
+                    item.speed = 0
+                    item._lastTickDate = nil
+                    persist(); scheduleNext()
+                }
             }
         }
     }
@@ -1053,7 +1419,10 @@ public final class DownloadEngine {
         }
 
         let destFile        = await MainActor.run { item.destinationURL.path }
-        let url             = await MainActor.run { item.url }
+        
+        let originalURL     = await MainActor.run { item.url }
+        let url             = await resolveDirectLink(url: originalURL, item: item)
+        
         let cookies         = await MainActor.run { item.cookies }
         let userAgent       = await MainActor.run { item.userAgent }
         let referer         = await MainActor.run { item.referer }
@@ -1119,12 +1488,14 @@ public final class DownloadEngine {
         let pollTask = Task { [weak item] in
             guard let item else { return }
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 200_000_000)
+                try? await Task.sleep(nanoseconds: 100_000_000)
                 
                 if let vals = try? URL(fileURLWithPath: destFile).resourceValues(forKeys: [.fileSizeKey]) {
                     let sz = Int64(vals.fileSize ?? 0)
                     await MainActor.run {
-                        item.downloadedBytes = sz
+                        if sz > item.downloadedBytes {
+                            item.downloadedBytes = sz
+                        }
                         if item.totalBytes > 0 && sz > item.totalBytes { item.totalBytes = sz }
                     }
                 }
@@ -1202,10 +1573,18 @@ public final class DownloadEngine {
         guard didLaunch else {
             if currentStatus == .downloading && isStillTracked {
                 await MainActor.run {
-                    item.status = .failed
-                    item.error = "Failed to launch curl."
-                    item.speed = 0; item._lastTickDate = nil
-                    persist(); scheduleNext()
+                    if item.retryCount < 3 {
+                        item.retryCount += 1
+                        item.status = .queued
+                        item.error = nil
+                        item.speed = 0; item._lastTickDate = nil
+                        persist(); scheduleNext()
+                    } else {
+                        item.status = .failed
+                        item.error = "Failed to launch curl."
+                        item.speed = 0; item._lastTickDate = nil
+                        persist(); scheduleNext()
+                    }
                 }
             }
             return
@@ -1220,10 +1599,18 @@ public final class DownloadEngine {
             if let status = httpStatus, status >= 400 {
                 let errorMsg = curlHumanError(exitCode: proc.terminationStatus, stderr: stderrText, stdout: stdoutText)
                 await MainActor.run {
-                    item.status = .failed
-                    item.error = errorMsg
-                    item.speed = 0; item._lastTickDate = nil
-                    persist(); scheduleNext()
+                    if item.retryCount < 3 {
+                        item.retryCount += 1
+                        item.status = .queued
+                        item.error = nil
+                        item.speed = 0; item._lastTickDate = nil
+                        persist(); scheduleNext()
+                    } else {
+                        item.status = .failed
+                        item.error = errorMsg
+                        item.speed = 0; item._lastTickDate = nil
+                        persist(); scheduleNext()
+                    }
                 }
             } else {
                 let finalDest = await MainActor.run { item.destinationURL }
@@ -1235,7 +1622,9 @@ public final class DownloadEngine {
                     if let line = stdoutText.components(separatedBy: "\n").last(where: { !$0.isEmpty }) {
                         let parts = line.split(separator: " ")
                         if parts.count >= 2, let sz = Int64(parts[1]), sz > 0 {
-                            item.downloadedBytes = sz
+                            if sz > item.downloadedBytes {
+                                item.downloadedBytes = sz
+                            }
                             if item.totalBytes == 0 { item.totalBytes = sz }
                         }
                     }
@@ -1248,10 +1637,18 @@ public final class DownloadEngine {
         } else if currentStatus == .downloading && isStillTracked {
             let errorMsg = curlHumanError(exitCode: proc.terminationStatus, stderr: stderrText, stdout: stdoutText)
             await MainActor.run {
-                item.status = .failed
-                item.error = errorMsg
-                item.speed = 0; item._lastTickDate = nil
-                persist(); scheduleNext()
+                if item.retryCount < 3 {
+                    item.retryCount += 1
+                    item.status = .queued
+                    item.error = nil
+                    item.speed = 0; item._lastTickDate = nil
+                    persist(); scheduleNext()
+                } else {
+                    item.status = .failed
+                    item.error = errorMsg
+                    item.speed = 0; item._lastTickDate = nil
+                    persist(); scheduleNext()
+                }
             }
         }
     }

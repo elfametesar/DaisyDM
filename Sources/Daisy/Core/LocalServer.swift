@@ -18,7 +18,7 @@ class LocalServer {
 
     func start(port: Int = 6840) {
         guard port <= portRange.upperBound else {
-            print("❌ Failed to find open port for Dispatch Local Server.")
+            print("❌ Failed to find open port for Daisy Local Server.")
             return
         }
 
