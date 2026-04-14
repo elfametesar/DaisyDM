@@ -41,6 +41,20 @@ extension View {
     }
 }
 
+// MARK: - Flattened Row Item for Keyboard Navigation
+enum ListRowItem: Identifiable {
+    case main(DownloadItem)
+    case sub(parent: DownloadItem, file: SubFile, index: Int)
+    
+    var id: UUID {
+        switch self {
+        case .main(let item): return item.id
+        case .sub(_, let file, _): return file.id
+        }
+    }
+}
+
+enum ArrowDirection { case up, down, left, right }
 
 struct DownloadListView: View {
     let items: [DownloadItem]
@@ -52,6 +66,8 @@ struct DownloadListView: View {
 
     @State private var lastSelectedIndex: Int? = nil
     @State private var propertiesItem: DownloadItem? = nil
+    @State private var expandedItems: Set<UUID> = []
+    
     @FocusState private var isSearchFocused: Bool
     @FocusState private var isListFocused: Bool
 
@@ -95,6 +111,19 @@ struct DownloadListView: View {
         }
     }
 
+    var flattenedRows: [ListRowItem] {
+        var rows: [ListRowItem] = []
+        for item in sortedItems {
+            rows.append(.main(item))
+            if expandedItems.contains(item.id) && (item.type == .torrent || item.type == .batch) {
+                for (index, file) in item.subFiles.enumerated() {
+                    rows.append(.sub(parent: item, file: file, index: index))
+                }
+            }
+        }
+        return rows
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             ColumnHeader(sortColumn: $sortColumn, sortAscending: $sortAscending)
@@ -126,35 +155,68 @@ struct DownloadListView: View {
     
     private var scrollableList: some View {
         GeometryReader { geo in
-            ScrollView {
-                VStack(spacing: 0) {
-                    LazyVStack(spacing: 0) {
-                        ForEach(Array(sortedItems.enumerated()), id: \.element.id) { index, item in
-                            DownloadRow(
-                                item: item,
-                                isSelected: selected.contains(item.id)
-                            )
-                            .contentShape(Rectangle())
-                            .onRightClick {
-                                if !selected.contains(item.id) {
-                                    selected = [item.id]
-                                    lastSelectedIndex = index
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(spacing: 0) {
+                        LazyVStack(spacing: 0) {
+                            ForEach(Array(flattenedRows.enumerated()), id: \.element.id) { index, rowItem in
+                                Group {
+                                    switch rowItem {
+                                    case .main(let item):
+                                        DownloadRow(
+                                            item: item,
+                                            isSelected: selected.contains(item.id),
+                                            isExpanded: Binding(
+                                                get: { expandedItems.contains(item.id) },
+                                                set: { val in
+                                                    // Removed animation here to keep it snappy during rapid repeats
+                                                    if val { expandedItems.insert(item.id) }
+                                                    else { expandedItems.remove(item.id) }
+                                                }
+                                            )
+                                        )
+                                    case .sub(let parent, let file, let subIndex):
+                                        SubFileRow(
+                                            parent: parent,
+                                            file: file,
+                                            index: subIndex,
+                                            isSelected: selected.contains(file.id)
+                                        )
+                                    }
+                                }
+                                .contentShape(Rectangle())
+                                .onRightClick {
+                                    if !selected.contains(rowItem.id) {
+                                        selected = [rowItem.id]
+                                        lastSelectedIndex = index
+                                    }
+                                }
+                                .onTapGesture { handleRowTap(rowItem: rowItem, index: index) }
+                                .contextMenu { rowContextMenu(rowItem) }
+                                .id(rowItem.id)
+
+                                if case .main = rowItem {
+                                    Divider().padding(.leading, 12)
+                                } else {
+                                    Divider().padding(.leading, 42)
                                 }
                             }
-                            .onTapGesture { handleRowTap(item: item, index: index) }
-                            .contextMenu { rowContextMenu(item) }
-
-                            Divider().padding(.leading, 12)
                         }
+                        Spacer(minLength: 90)
                     }
-                    Spacer(minLength: 90)
+                    .frame(maxWidth: .infinity, minHeight: geo.size.height, alignment: .top)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        isListFocused = true
+                        selected.removeAll()
+                        lastSelectedIndex = nil
+                    }
                 }
-                .frame(maxWidth: .infinity, minHeight: geo.size.height, alignment: .top)
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    isListFocused = true
-                    selected.removeAll()
-                    lastSelectedIndex = nil
+                .onChange(of: selected) { _, newSel in
+                    if let first = newSel.first {
+                        // REMOVED withAnimation to fix key-hold stuttering
+                        proxy.scrollTo(first, anchor: .center)
+                    }
                 }
             }
         }
@@ -167,30 +229,87 @@ struct DownloadListView: View {
         }
         .onKeyPress(.init("a"), phases: .down) { press in
             guard press.modifiers.contains(.command) else { return .ignored }
-            selected = Set(sortedItems.map { $0.id })
+            selected = Set(flattenedRows.map { $0.id })
             return .handled
         }
-        .onKeyPress(.delete, phases: .down) { _ in // Handles the standard 'Backspace' key
+        .onKeyPress(.delete, phases: .down) { _ in
             let toDelete = engine.items.filter { selected.contains($0.id) }
             if toDelete.isEmpty { return .ignored }
             onRequestRemove(toDelete)
             return .handled
         }
-        .onKeyPress(.deleteForward, phases: .down) { _ in // Handles the forward 'Delete' key
+        .onKeyPress(.deleteForward, phases: .down) { _ in
             let toDelete = engine.items.filter { selected.contains($0.id) }
             if toDelete.isEmpty { return .ignored }
             onRequestRemove(toDelete)
             return .handled
         }
-        .onDeleteCommand { // Fallback native hook
+        .onDeleteCommand {
             let toDelete = engine.items.filter { selected.contains($0.id) }
             guard !toDelete.isEmpty else { return }
             onRequestRemove(toDelete)
         }
+        // 🚨 NATIVE MACOS MOVE COMMAND (Supports continuous hardware key-repeat flawlessly)
+        .onMoveCommand { direction in
+            switch direction {
+            case .up: handleArrow(.up)
+            case .down: handleArrow(.down)
+            case .left: handleArrow(.left)
+            case .right: handleArrow(.right)
+            @unknown default: break
+            }
+        }
         .onAppear {
-            // Give the list focus when it appears so hotkeys work immediately
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                 isListFocused = true
+            }
+        }
+    }
+    
+    // MARK: - Arrow Navigation Logic
+    private func handleArrow(_ dir: ArrowDirection) {
+        guard !flattenedRows.isEmpty else { return }
+        
+        let currentSelection = selected.first
+        var currentIndex = -1
+        if let sel = currentSelection, let idx = flattenedRows.firstIndex(where: { $0.id == sel }) {
+            currentIndex = idx
+        }
+
+        switch dir {
+        case .down:
+            if currentIndex < 0 { selected = [flattenedRows[0].id] }
+            else if currentIndex < flattenedRows.count - 1 { selected = [flattenedRows[currentIndex + 1].id] }
+            
+        case .up:
+            if currentIndex < 0 { selected = [flattenedRows.last!.id] }
+            else if currentIndex > 0 { selected = [flattenedRows[currentIndex - 1].id] }
+            
+        case .right:
+            if currentIndex >= 0 {
+                if case .main(let item) = flattenedRows[currentIndex] {
+                    if (item.type == .torrent || item.type == .batch) && !item.subFiles.isEmpty {
+                        if !expandedItems.contains(item.id) {
+                            expandedItems.insert(item.id)
+                        } else if currentIndex < flattenedRows.count - 1 {
+                            // Folder is already open. Jump down into the first sub-file
+                            selected = [flattenedRows[currentIndex + 1].id]
+                        }
+                    }
+                }
+            }
+            
+        case .left:
+            if currentIndex >= 0 {
+                switch flattenedRows[currentIndex] {
+                case .main(let item):
+                    if expandedItems.contains(item.id) {
+                        expandedItems.remove(item.id)
+                    }
+                case .sub(let parent, _, _):
+                    // On a sub-file, jump back up to the parent folder
+                    selected = [parent.id]
+                }
             }
         }
     }
@@ -211,6 +330,7 @@ struct DownloadListView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
         .glassEffect(.regular.tint(Color(hex: accentColorHex).opacity(0.10)).interactive())
+        .clipShape(RoundedRectangle(cornerRadius: 12))
         .padding(.horizontal, 40)
         .padding(.bottom, 24)
     }
@@ -246,107 +366,121 @@ struct DownloadListView: View {
         .help("Start Dictation")
     }
     
-    private func handleRowTap(item: DownloadItem, index: Int) {
-        isListFocused = true // Give keyboard focus to the list
+    private func handleRowTap(rowItem: ListRowItem, index: Int) {
+        isListFocused = true
         
         let event = NSApp.currentEvent
         let flags = event?.modifierFlags ?? []
         let isDoubleClick = event?.clickCount == 2
         
         if isDoubleClick {
-            if item.status == .completed { NSWorkspace.shared.open(item.destinationURL)
-            } else {
-                propertiesItem = item
+            switch rowItem {
+            case .main(let item):
+                if item.status == .completed { NSWorkspace.shared.open(item.destinationURL) }
+                else { propertiesItem = item }
+            case .sub(let parent, _, _):
+                if parent.status == .completed { NSWorkspace.shared.open(parent.destinationURL) }
             }
             return
         }
         
         if flags.contains(.command) {
-            if selected.contains(item.id) { selected.remove(item.id) }
-            else { selected.insert(item.id) }
+            if selected.contains(rowItem.id) { selected.remove(rowItem.id) }
+            else { selected.insert(rowItem.id) }
             lastSelectedIndex = index
         } else if flags.contains(.shift) {
-            guard let last = lastSelectedIndex, last < sortedItems.count else {
-                selected = [item.id]
+            guard let last = lastSelectedIndex, last < flattenedRows.count else {
+                selected = [rowItem.id]
                 lastSelectedIndex = index
                 return
             }
             let range = min(last, index)...max(last, index)
-            selected = Set(sortedItems[range].map { $0.id })
+            selected = Set(flattenedRows[range].map { $0.id })
         } else {
-            selected = [item.id]
+            selected = [rowItem.id]
             lastSelectedIndex = index
         }
     }
 
     @ViewBuilder
-    func rowContextMenu(_ item: DownloadItem) -> some View {
-        let targetItems = selected.contains(item.id)
-            ? engine.items.filter { selected.contains($0.id) }
-            : [item]
+    func rowContextMenu(_ rowItem: ListRowItem) -> some View {
+        switch rowItem {
+        case .main(let item):
+            let targetItems = selected.contains(item.id)
+                ? engine.items.filter { selected.contains($0.id) }
+                : [item]
 
-        if targetItems.contains(where: { $0.status == .downloading || $0.status == .queued }) {
-            Button("Stop") { targetItems.forEach { engine.stop($0) } }
-        }
-        
-        if targetItems.contains(where: { $0.status == .stopped || $0.status == .failed }) {
-            Button("Resume") { targetItems.forEach { engine.resume($0) } }
-        }
-        
-        if targetItems.contains(where: { $0.status == .completed || $0.status == .failed }) {
-            Button("Restart Download") { targetItems.forEach { engine.retry($0) } }
-        }
-
-        Divider()
-
-        if targetItems.count == 1, let single = targetItems.first {
-            if single.status == .downloading || single.status == .queued {
-                Button("Show Progress Window") {
-                    NotificationCenter.default.post(name: .openProgressWindow, object: nil, userInfo: ["id": single.id])
-                }
+            if targetItems.contains(where: { $0.status == .downloading || $0.status == .queued }) {
+                Button("Stop") { targetItems.forEach { engine.stop($0) } }
             }
             
-            Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([single.destinationURL]) }
+            if targetItems.contains(where: { $0.status == .stopped || $0.status == .failed }) {
+                Button("Resume") { targetItems.forEach { engine.resume($0) } }
+            }
             
-            if single.status == .completed {
-                Button("Open File") { NSWorkspace.shared.open(single.destinationURL) }
+            if targetItems.contains(where: { $0.status == .completed || $0.status == .failed }) {
+                Button("Restart Download") { targetItems.forEach { engine.retry($0) } }
+            }
+
+            Divider()
+
+            if targetItems.count == 1, let single = targetItems.first {
+                if single.status == .downloading || single.status == .queued {
+                    Button("Show Progress Window") {
+                        NotificationCenter.default.post(name: .openProgressWindow, object: nil, userInfo: ["id": single.id])
+                    }
+                }
                 
-                Menu("Open With") {
-                    let appURLs = NSWorkspace.shared.urlsForApplications(toOpen: single.destinationURL)
-                    ForEach(appURLs, id: \.self) { appURL in
-                        Button(appURL.deletingPathExtension().lastPathComponent) {
-                            NSWorkspace.shared.open([single.destinationURL], withApplicationAt: appURL, configuration: NSWorkspace.OpenConfiguration())
+                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([single.destinationURL]) }
+                
+                if single.status == .completed {
+                    Button("Open File") { NSWorkspace.shared.open(single.destinationURL) }
+                    
+                    Menu("Open With") {
+                        let appURLs = NSWorkspace.shared.urlsForApplications(toOpen: single.destinationURL)
+                        ForEach(appURLs, id: \.self) { appURL in
+                            Button(appURL.deletingPathExtension().lastPathComponent) {
+                                NSWorkspace.shared.open([single.destinationURL], withApplicationAt: appURL, configuration: NSWorkspace.OpenConfiguration())
+                            }
                         }
-                    }
-                    Divider()
-                    Button("Other...") {
-                        let panel = NSOpenPanel()
-                        panel.allowedContentTypes = [.application]
-                        if panel.runModal() == .OK, let appURL = panel.url {
-                            NSWorkspace.shared.open([single.destinationURL], withApplicationAt: appURL, configuration: NSWorkspace.OpenConfiguration())
+                        Divider()
+                        Button("Other...") {
+                            let panel = NSOpenPanel()
+                            panel.allowedContentTypes = [.application]
+                            if panel.runModal() == .OK, let appURL = panel.url {
+                                NSWorkspace.shared.open([single.destinationURL], withApplicationAt: appURL, configuration: NSWorkspace.OpenConfiguration())
+                            }
                         }
                     }
                 }
+                
+                Button("Copy URL") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(single.url.absoluteString, forType: .string)
+                }
+                
+                Divider()
+                Button("Remove", role: .destructive) { onRequestRemove(targetItems) }
+                Divider()
+                Button("Properties") { propertiesItem = single }
+                
+            } else if targetItems.count > 1 {
+                if targetItems.allSatisfy({ $0.status == .completed }) {
+                    Button("Open Files") {
+                        targetItems.forEach { NSWorkspace.shared.open($0.destinationURL) }
+                    }
+                }
+                Divider()
+                Button("Remove Selected", role: .destructive) { onRequestRemove(targetItems) }
             }
             
-            Button("Copy URL") {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(single.url.absoluteString, forType: .string)
-            }
-            
-            Divider()
-            Button("Remove", role: .destructive) { onRequestRemove(targetItems) }
-            Divider()
-            Button("Properties") { propertiesItem = single }
-            
-        } else if targetItems.count > 1 {
-            if targetItems.allSatisfy({ $0.status == .completed }) {
-                Button("Open Files") {
-                    targetItems.forEach { NSWorkspace.shared.open($0.destinationURL) }
+        case .sub(let parent, let file, let index):
+            if parent.type == .torrent {
+                Button(file.isStopped ? "Resume File" : "Pause File") {
+                    parent.subFiles[index].isStopped.toggle()
+                    engine.updateTorrentSelection(for: parent)
                 }
             }
-            Divider()
-            Button("Remove Selected", role: .destructive) { onRequestRemove(targetItems) }
         }
     }
 }
@@ -360,7 +494,6 @@ struct ColumnHeader: View {
     @AppStorage("enableBackgroundTint") private var enableBackgroundTint = false
 
     var body: some View {
-        // MATCHING HSTACK SPACING
         HStack(spacing: 12) {
             Button(action: { sort(by: .name) }) {
                 HStack(spacing: 4) {
@@ -377,7 +510,7 @@ struct ColumnHeader: View {
                     Text("Status")
                     sortIcon(for: .status)
                 }
-                .frame(width: 100, alignment: .leading) // EXACT WIDTH
+                .frame(width: 100, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -387,7 +520,7 @@ struct ColumnHeader: View {
                     Text("Transfer")
                     sortIcon(for: .transfer)
                 }
-                .frame(width: 130, alignment: .leading) // EXACT WIDTH
+                .frame(width: 130, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -397,7 +530,7 @@ struct ColumnHeader: View {
                     Text("Type")
                     sortIcon(for: .type)
                 }
-                .frame(width: 80, alignment: .leading) // EXACT WIDTH
+                .frame(width: 80, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -407,14 +540,14 @@ struct ColumnHeader: View {
                     Text("Speed")
                     sortIcon(for: .speed)
                 }
-                .frame(width: 70, alignment: .leading) // EXACT WIDTH
+                .frame(width: 70, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
         }
         .font(.system(size: 11, weight: .medium))
         .foregroundStyle(.secondary)
-        .padding(.horizontal, 12) // MATCHING OUTER PADDING
+        .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(enableBackgroundTint ? Color(hex: accentColorHex).opacity(0.04) : Color(NSColor.controlBackgroundColor))
         .overlay(alignment: .bottom) { Divider() }
@@ -442,16 +575,17 @@ struct ColumnHeader: View {
     }
 }
 
+// ── Parent Row ──────────────────────────────────
 struct DownloadRow: View {
     let item: DownloadItem
     let isSelected: Bool
+    @Binding var isExpanded: Bool
 
     @AppStorage("isCompactList") private var isCompactList = false
     @AppStorage("accentColorHex") private var accentColorHex = "#0A84FF"
     @AppStorage("progressBarColorHex") private var progressBarColorHex = "#34C759"
     @AppStorage("matchProgressBarToAccent") private var matchProgressBarToAccent = false
     
-    @State private var isExpanded = false
     var engine = DownloadEngine.shared
 
     var dragPayload: URL {
@@ -472,69 +606,17 @@ struct DownloadRow: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            mainRow
-            
-            if isExpanded && (item.type == .torrent || item.type == .batch) && !item.subFiles.isEmpty {
-                VStack(spacing: 0) {
-                    ForEach(Array(item.subFiles.enumerated()), id: \.element.id) { index, file in
-                        HStack(spacing: 12) {
-                            Image(systemName: "doc")
-                                .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
-                                .frame(width: 20)
-                            
-                            Text(file.filename)
-                                .font(.system(size: 12))
-                                .foregroundStyle(isSelected ? dynamicTextColor.opacity(0.9) : .primary)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                            
-                            Text(formatBytes(file.downloadedBytes) + (file.totalBytes > 0 ? " / " + formatBytes(file.totalBytes) : ""))
-                                .font(.system(size: 10))
-                                .foregroundStyle(isSelected ? dynamicTextColor.opacity(0.7) : .secondary)
-                                .frame(width: 110, alignment: .trailing)
-                            
-                            if item.type == .torrent {
-                                Button(action: {
-                                    item.subFiles[index].isStopped.toggle()
-                                    engine.updateTorrentSelection(for: item)
-                                }) {
-                                    Image(systemName: file.isStopped ? "play.circle.fill" : "pause.circle.fill")
-                                        .font(.system(size: 14))
-                                        .foregroundStyle(file.isStopped ? Color.orange : Color(hex: accentColorHex))
-                                }
-                                .buttonStyle(.plain)
-                            } else {
-                                Spacer().frame(width: 14)
-                            }
-                        }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 6)
-                        .padding(.leading, 30)
-                        .background(Color.black.opacity(isSelected ? 0.1 : 0.03))
-                        
-                        if index < item.subFiles.count - 1 {
-                            Divider().padding(.leading, 42)
-                        }
-                    }
-                }
-                .padding(.bottom, 8)
-            }
-        }
-        .background(isSelected ? Color(hex: accentColorHex) : Color.clear)
-        .draggable(dragPayload)
+        mainRow
+            .background(isSelected ? Color(hex: accentColorHex) : Color.clear)
+            .draggable(dragPayload)
     }
     
     var mainRow: some View {
-        // MATCHING HSTACK SPACING
         HStack(spacing: 12) {
-            
             // 1. NAME
             HStack(spacing: 8) {
                 if (item.type == .torrent || item.type == .batch) && (!item.subFiles.isEmpty || item.status == .downloading) {
-                    Button(action: { withAnimation(.easeInOut(duration: 0.2)) { isExpanded.toggle() } }) {
+                    Button(action: { isExpanded.toggle() }) {
                         Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                             .font(.system(size: 10, weight: .bold))
                             .foregroundStyle(isSelected ? dynamicTextColor : .secondary)
@@ -564,7 +646,7 @@ struct DownloadRow: View {
 
             // 2. STATUS
             StatusPill(status: item.status, isSelected: isSelected, accentColorHex: accentColorHex)
-                .frame(width: 100, alignment: .leading) // EXACT WIDTH
+                .frame(width: 100, alignment: .leading)
 
             // 3. TRANSFER
             VStack(alignment: .leading, spacing: 3) {
@@ -584,24 +666,24 @@ struct DownloadRow: View {
                     .foregroundStyle(isSelected ? dynamicTextColor.opacity(0.8) : .secondary)
                     .lineLimit(1)
             }
-            .frame(width: 130, alignment: .leading) // EXACT WIDTH (and removed rogue padding)
+            .frame(width: 130, alignment: .leading)
 
             // 4. TYPE
             Text(item.type.rawValue)
                 .font(.system(size: 12))
                 .foregroundStyle(isSelected ? dynamicTextColor.opacity(0.85) : .primary)
                 .lineLimit(1)
-                .frame(width: 80, alignment: .leading) // EXACT WIDTH
+                .frame(width: 80, alignment: .leading)
 
             // 5. SPEED
             Text(item.status == .downloading ? item.formattedSpeed : "–")
                 .font(.system(size: 12))
                 .foregroundStyle(isSelected ? dynamicTextColor.opacity(0.85) : .secondary)
                 .lineLimit(1)
-                .frame(width: 70, alignment: .leading) // EXACT WIDTH
+                .frame(width: 70, alignment: .leading)
 
         }
-        .padding(.horizontal, 12) // MATCHING OUTER PADDING
+        .padding(.horizontal, 12)
         .padding(.vertical, isCompactList ? 4 : 9)
     }
 
@@ -612,6 +694,60 @@ struct DownloadRow: View {
             return matchProgressBarToAccent ? Color(hex: accentColorHex) : Color(hex: progressBarColorHex)
         case .queued: return .secondary
         }
+    }
+}
+
+// ── SubFile Row ──────────────────────────────────
+struct SubFileRow: View {
+    let parent: DownloadItem
+    let file: SubFile
+    let index: Int
+    let isSelected: Bool
+    var engine = DownloadEngine.shared
+
+    @AppStorage("accentColorHex") private var accentColorHex = "#0A84FF"
+
+    var dynamicTextColor: Color {
+        isSelected ? Color(hex: accentColorHex).accessibleText : .primary
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "doc")
+                .font(.system(size: 11))
+                .foregroundStyle(isSelected ? dynamicTextColor.opacity(0.8) : .secondary)
+                .frame(width: 20)
+            
+            Text(file.filename)
+                .font(.system(size: 12))
+                .foregroundStyle(isSelected ? dynamicTextColor.opacity(0.9) : .primary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            
+            Text(formatBytes(file.downloadedBytes) + (file.totalBytes > 0 ? " / " + formatBytes(file.totalBytes) : ""))
+                .font(.system(size: 10))
+                .foregroundStyle(isSelected ? dynamicTextColor.opacity(0.7) : .secondary)
+                .frame(width: 110, alignment: .trailing)
+            
+            if parent.type == .torrent {
+                Button(action: {
+                    parent.subFiles[index].isStopped.toggle()
+                    engine.updateTorrentSelection(for: parent)
+                }) {
+                    Image(systemName: file.isStopped ? "play.circle.fill" : "pause.circle.fill")
+                        .font(.system(size: 14))
+                        .foregroundStyle(file.isStopped ? Color.orange : (isSelected ? dynamicTextColor : Color(hex: accentColorHex)))
+                }
+                .buttonStyle(.plain)
+            } else {
+                Spacer().frame(width: 14)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
+        .padding(.leading, 30) // Indented
+        .background(isSelected ? Color(hex: accentColorHex) : Color.black.opacity(0.03))
     }
 }
 
