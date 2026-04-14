@@ -146,17 +146,13 @@ struct PropertiesSheet: View {
                 Button("Show in Finder") {
                     NSWorkspace.shared.activateFileViewerSelecting([item.destinationURL])
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(ActionButtonStyle(prominent: false, hex: accentColorHex))
                 Spacer()
                 Button("Done") {
                     applyURLChangeIfNeeded()
                     dismiss()
                 }
-                .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.return)
-                .disabled(!urlIsValid)
-                .tint(Color(hex: accentColorHex))
-                .foregroundStyle(Color(hex: accentColorHex).accessibleText)
+                .buttonStyle(ActionButtonStyle(prominent: true, hex: accentColorHex))
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 14)

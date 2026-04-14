@@ -117,6 +117,7 @@ struct SettingsView: View {
                         .buttonStyle(ActionButtonStyle(prominent: true, hex: accentColorHex))
                         .padding(.horizontal, 24)
                         .padding(.vertical, 16)
+                        .keyboardShortcut(.cancelAction)
                 }
                 .background(Color(NSColor.windowBackgroundColor))
             }
@@ -129,7 +130,6 @@ struct SettingsView: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .strokeBorder(Color(NSColor.separatorColor), lineWidth: 0.5)
         )
-        .shadow(color: Color.black.opacity(0.2), radius: 20, x: 0, y: 10)
         .interactiveDismissDisabled()
     }
     
@@ -153,6 +153,7 @@ struct SettingsView: View {
                                 defaultDownloadPath = url.path(percentEncoded: false)
                             }
                         }
+                        .buttonStyle(ActionButtonStyle(prominent: false, hex: accentColorHex))
                     }
                 } 
                 SettingsRow("Always pin progress windows on top", addDivider: true) {
@@ -386,17 +387,17 @@ struct SettingsTabRow: View {
             HStack(spacing: 12) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(tab.iconColor)
+                        .fill(.clear)
                         .frame(width: 26, height: 26)
                     
                     Image(systemName: tab.icon)
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.white)
+                        .tint(Color(accentColorHex).accessibleText)
                 }
                 
                 Text(tab.rawValue)
                     .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(isSelected ? Color.white : Color.primary.opacity(0.85))
+                    .foregroundStyle(isSelected ? Color(accentColorHex).accessibleText : Color.primary.opacity(0.85))
                 
                 Spacer()
             }
