@@ -210,7 +210,7 @@ struct DownloadListView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
-        .background(LiquidGlassBackground())
+        .glassEffect(.regular.tint(Color(hex: accentColorHex).opacity(0.10)).interactive())
         .padding(.horizontal, 40)
         .padding(.bottom, 24)
     }
@@ -347,68 +347,6 @@ struct DownloadListView: View {
             }
             Divider()
             Button("Remove Selected", role: .destructive) { onRequestRemove(targetItems) }
-        }
-    }
-}
-
-struct LiquidGlassBackground: View {
-    @State private var shimmerPhase: CGFloat = -1.0
-    
-    @AppStorage("accentColorHex") private var accentColorHex = "#0A84FF"
-    @AppStorage("enableBackgroundTint") private var enableBackgroundTint = false
-
-    var body: some View {
-        ZStack {
-            // This layer now correctly switches between your Accent Color and Material
-            Capsule()
-                .fill(backgroundStyle)
-            
-            let accentColor = Color(hex: accentColorHex)
-            GeometryReader { geo in
-                LinearGradient(
-                    stops: [
-                        .init(color: .clear, location: 0.0),
-                        .init(color: accentColor.opacity(0.01), location: 0.4),
-                        .init(color: accentColor.opacity(0.05), location: 0.5),
-                        .init(color: accentColor.opacity(0.10), location: 0.6),
-                        .init(color: .clear, location: 1.0)
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-                .frame(width: geo.size.width * 2)
-                .offset(x: geo.size.width * shimmerPhase)
-                .blendMode(.plusLighter)
-            }
-            .clipShape(Capsule())
-            .onAppear {
-                withAnimation(.linear(duration: 4.5).repeatForever(autoreverses: false)) {
-                    shimmerPhase = 1.0
-                }
-            }
-            
-            Capsule()
-                .fill(
-                    LinearGradient(colors: [.white.opacity(0.9), .white.opacity(0.1), .clear], startPoint: .top, endPoint: .bottom)
-                )
-                .padding(1.5)
-            
-            Capsule()
-                .strokeBorder(
-                    LinearGradient(colors: [.white.opacity(1.0), .white.opacity(0.2), .black.opacity(0.05), .white.opacity(0.6)], startPoint: .topLeading, endPoint: .bottomTrailing),
-                    lineWidth: 1.5
-                )
-        }
-        // Tint the shadow with the accent color for better integration
-        .shadow(color: enableBackgroundTint ? Color(hex: accentColorHex).opacity(0.15) : .black.opacity(0.08), radius: 12, x: 0, y: 6)
-    }
-
-    private var backgroundStyle: AnyShapeStyle {
-        if enableBackgroundTint {
-            // Apply a heavier opacity of the accent color to make the difference visible
-            return AnyShapeStyle(Color(hex: accentColorHex).opacity(0.15))
-        } else {
-            return AnyShapeStyle(.ultraThinMaterial.opacity(0.85))
         }
     }
 }

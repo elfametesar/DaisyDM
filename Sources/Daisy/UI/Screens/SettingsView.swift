@@ -119,10 +119,8 @@ struct SettingsView: View {
                         .padding(.vertical, 16)
                         .keyboardShortcut(.cancelAction)
                 }
-                .background(Color(NSColor.windowBackgroundColor))
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color(NSColor.windowBackgroundColor))
         }
         .frame(width: 760, height: 580)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))

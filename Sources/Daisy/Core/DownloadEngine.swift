@@ -1028,44 +1028,61 @@ public final class DownloadEngine {
     }
     
     private func writeDataURL(_ item: DownloadItem) async {
-        let dataURL = item.url.absoluteString
+            let dataURL = item.url.absoluteString
 
-        guard let commaIdx = dataURL.firstIndex(of: ",") else {
-            await MainActor.run { item.status = .failed; item.error = "Invalid data URL — missing comma separator."; item.speed = 0; persist(); scheduleNext() }
-            return
+            guard let commaIdx = dataURL.firstIndex(of: ",") else {
+                await MainActor.run { item.status = .failed; item.error = "Invalid data URL — missing comma separator."; item.speed = 0; persist(); scheduleNext() }
+                return
+            }
+
+            let header  = String(dataURL[dataURL.index(after: dataURL.startIndex)..<commaIdx])
+            let body    = String(dataURL[dataURL.index(after: commaIdx)...])
+            let isBase64 = header.contains("base64")
+            let mime    = header.split(separator: ";").first.map(String.init) ?? ""
+
+            guard let data = isBase64 ? Data(base64Encoded: body, options: .ignoreUnknownCharacters) : body.removingPercentEncoding?.data(using: .utf8) else {
+                await MainActor.run { item.status = .failed; item.error = "Failed to decode attachment data."; item.speed = 0; persist(); scheduleNext() }
+                return
+            }
+
+            let dest = await MainActor.run { item.destinationURL.deletingLastPathComponent() }
+            var fn   = await MainActor.run { item.filename }
+            if fn.isEmpty || fn == "download" || fn.starts(with: "download_") || fn.starts(with: "attachment_") { fn = "attachment\(mimeToExt(mime))" }
+
+            let finalDest = uniqueURL(dest.appendingPathComponent(fn))
+
+            do { try data.write(to: finalDest) }
+            catch {
+                await MainActor.run { item.status = .failed; item.error = "Failed to write file: \(error.localizedDescription)"; item.speed = 0; persist(); scheduleNext() }
+                return
+            }
+
+            await MainActor.run {
+                item.filename = fn
+                item.destinationURL = finalDest
+                
+                // Torrent Handoff: If the extension sniffed magic bytes and marked it as .torrent, route it to Aria2
+                if fn.lowercased().hasSuffix(".torrent") {
+                    item.url = finalDest
+                    item.type = .torrent
+                    item.status = .queued // Push it back into the queue so Aria2 natively grabs the file path
+                    item.downloadedBytes = 0
+                    item.totalBytes = 0
+                    item.speed = 0
+                    persist()
+                    scheduleNext()
+                } else {
+                    item.totalBytes = Int64(data.count)
+                    item.downloadedBytes = Int64(data.count)
+                    item.status = .completed
+                    item.dateCompleted = Date()
+                    item.speed = 0
+                    self.notifyCompletion(for: item)
+                    persist()
+                    scheduleNext()
+                }
+            }
         }
-
-        let header  = String(dataURL[dataURL.index(after: dataURL.startIndex)..<commaIdx])
-        let body    = String(dataURL[dataURL.index(after: commaIdx)...])
-        let isBase64 = header.contains("base64")
-        let mime    = header.split(separator: ";").first.map(String.init) ?? ""
-
-        guard let data = isBase64 ? Data(base64Encoded: body, options: .ignoreUnknownCharacters) : body.removingPercentEncoding?.data(using: .utf8) else {
-            await MainActor.run { item.status = .failed; item.error = "Failed to decode attachment data."; item.speed = 0; persist(); scheduleNext() }
-            return
-        }
-
-        let dest = await MainActor.run { item.destinationURL.deletingLastPathComponent() }
-        var fn   = await MainActor.run { item.filename }
-        if fn.isEmpty || fn == "download" || fn.starts(with: "download_") || fn.starts(with: "attachment_") { fn = "attachment\(mimeToExt(mime))" }
-
-        let finalDest = uniqueURL(dest.appendingPathComponent(fn))
-
-        do { try data.write(to: finalDest) }
-        catch {
-            await MainActor.run { item.status = .failed; item.error = "Failed to write file: \(error.localizedDescription)"; item.speed = 0; persist(); scheduleNext() }
-            return
-        }
-
-        await MainActor.run {
-            item.filename        = fn; item.destinationURL  = finalDest
-            item.totalBytes      = Int64(data.count); item.downloadedBytes = Int64(data.count)
-            item.status          = .completed; item.dateCompleted   = Date(); item.speed = 0
-            self.notifyCompletion(for: item)
-            persist(); scheduleNext()
-        }
-    }
-
     private func mimeToExt(_ mime: String) -> String {
         switch mime {
         case "video/mp4": return ".mp4"; case "video/webm": return ".webm"; case "audio/mpeg": return ".mp3"; case "audio/mp4": return ".m4a"
