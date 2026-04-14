@@ -4,11 +4,11 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 @main
-struct DispatchApp: App {
+struct DaisyApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
 
     var body: some Scene {
-        Window("Dispatch", id: "main") {
+        Window("Daisy", id: "main") {
             ContentView()
                 .frame(minWidth: 1300, minHeight: 550)
         }
@@ -46,7 +46,7 @@ struct DispatchApp: App {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private let safariExtensionBundleIdentifier = "com.dispatch.mac.Extension"
+    private let safariExtensionBundleIdentifier = "com.daisy.dm.Extension"
 
     private var confirmPanel: NSPanel?
     private var confirmObserver: NSObjectProtocol?

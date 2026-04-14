@@ -60,6 +60,7 @@ struct ConfirmDownloadView: View {
                     Text($filename.wrappedValue)
                         .font(.system(size: 13, weight: .semibold))
                         .lineLimit(1).truncationMode(.middle)
+                        .foregroundStyle(Color(hex: accentColorHex))
                     
                     HStack(spacing: 6) {
                         Text(fileExt)
@@ -95,16 +96,17 @@ struct ConfirmDownloadView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("File Name")
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(Color(hex: accentColorHex))
                     TextField("filename", text: $filename)
                         .textFieldStyle(.roundedBorder)
                         .font(.system(size: 11))
+                        .backgroundStyle(.white.opacity(0.50))
                 }
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Save To")
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(Color(hex: accentColorHex))
                     HStack {
                         Text(destination.path(percentEncoded: false))
                             .font(.system(size: 11))
@@ -131,43 +133,43 @@ struct ConfirmDownloadView: View {
                     HStack {
                         Text("Connections")
                             .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(Color(accentColorHex))
+                            .foregroundStyle(Color(hex: accentColorHex))
                         Spacer()
                         Text("\(connections)")
                             .font(.system(size: 11, weight: .bold))
-                            .foregroundStyle(Color(hex: accentColorHex).accessibleText)
+                            .foregroundStyle(Color(hex: accentColorHex))
                             .monospacedDigit()
                     }
                     HStack(spacing: 8) {
-                        Text("1").font(.system(size: 10)).foregroundStyle(.tertiary)
+                        Text("1").font(.system(size: 10)).foregroundStyle(Color(hex: accentColorHex))
                         Slider(value: Binding(get: { Double(connections) },
                                               set: { connections = Int($0) }),
                                in: 1...32, step: 1)
                         .tint(Color(hex: accentColorHex))
-                        Text("32").font(.system(size: 10)).foregroundStyle(.tertiary)
+                        Text("32").font(.system(size: 10)).foregroundStyle(Color(hex: accentColorHex))
                     }
                 }
 
                 DisclosureGroup(isExpanded: $showDetails) {
                     VStack(alignment: .leading, spacing: 6) {
-                        DetailRowView(label: "URL", value: request.url.absoluteString, labelWidth: 76)
+                        DetailRowView(label: "URL", value: request.url.absoluteString, labelWidth: 76).foregroundStyle(Color(hex: accentColorHex))
                         if !request.referer.isEmpty {
-                            DetailRowView(label: "Referer", value: request.referer, labelWidth: 76)
+                            DetailRowView(label: "Referer", value: request.referer, labelWidth: 76).foregroundStyle(Color(hex: accentColorHex))
                         }
                         if !request.cookies.isEmpty {
                             DetailRowView(label: "Cookies",
                                           value: String(request.cookies.prefix(120)) + (request.cookies.count > 120 ? "…" : ""),
-                                          labelWidth: 76)
+                                          labelWidth: 76).foregroundStyle(Color(hex: accentColorHex))
                         }
                         if !request.ua.isEmpty {
-                            DetailRowView(label: "User-Agent", value: request.ua, labelWidth: 76)
+                            DetailRowView(label: "User-Agent", value: request.ua, labelWidth: 76).foregroundStyle(Color(hex: accentColorHex))
                         }
                     }
                     .padding(.top, 8)
                 } label: {
                     Text("Advanced Details")
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(Color(hex: accentColorHex))
                 }
                 .disclosureGroupStyle(.automatic)
                 .tint(Color(hex: accentColorHex))

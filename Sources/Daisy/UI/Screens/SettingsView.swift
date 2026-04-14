@@ -253,14 +253,14 @@ struct SettingsView: View {
         VStack(spacing: 24) {
             SettingsCard(title: "Theme Customization") {
                 SettingsRow("App Accent Color", addDivider: true) {
-                    ColorPicker("", selection: accentColor).labelsHidden()
+                    ColorPicker("", selection: accentColor, supportsOpacity: false).labelsHidden()
                 }
                 SettingsRow("Match Progress Bar to Accent Color", addDivider: !matchProgressBarToAccent) {
                     Toggle("", isOn: $matchProgressBarToAccent).labelsHidden().toggleStyle(.switch)
                 }
                 if !matchProgressBarToAccent {
                     SettingsRow("Progress Bar Color", addDivider: true) {
-                        ColorPicker("", selection: progressBarColor).labelsHidden()
+                        ColorPicker("", selection: progressBarColor, supportsOpacity: false).labelsHidden()
                     }
                 }
                 SettingsRow("Slightly Tint App Background", addDivider: false) {
@@ -274,16 +274,16 @@ struct SettingsView: View {
                 }
                 if !matchBadgesToAccent {
                     SettingsRow("Downloading Status Color", addDivider: true) {
-                        ColorPicker("", selection: downloadingColor).labelsHidden()
+                        ColorPicker("", selection: downloadingColor, supportsOpacity: false).labelsHidden()
                     }
                     SettingsRow("Completed Status Color", addDivider: true) {
-                        ColorPicker("", selection: completedColor).labelsHidden()
+                        ColorPicker("", selection: completedColor, supportsOpacity: false).labelsHidden()
                     }
                     SettingsRow("Stopped Status Color", addDivider: true) {
-                        ColorPicker("", selection: stoppedColor).labelsHidden()
+                        ColorPicker("", selection: stoppedColor, supportsOpacity: false).labelsHidden()
                     }
                     SettingsRow("Failed Status Color", addDivider: false) {
-                        ColorPicker("", selection: failedColor).labelsHidden()
+                        ColorPicker("", selection: failedColor, supportsOpacity: false).labelsHidden()
                     }
                 }
             }
@@ -392,12 +392,12 @@ struct SettingsTabRow: View {
                     
                     Image(systemName: tab.icon)
                         .font(.system(size: 13, weight: .semibold))
-                        .tint(Color(accentColorHex).accessibleText)
+                        .tint(Color(hex: accentColorHex).accessibleText)
                 }
                 
                 Text(tab.rawValue)
                     .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(isSelected ? Color(accentColorHex).accessibleText : Color.primary.opacity(0.85))
+                    .foregroundStyle(isSelected ? Color(hex: accentColorHex).accessibleText : Color.primary.opacity(0.85))
                 
                 Spacer()
             }

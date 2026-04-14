@@ -196,6 +196,8 @@ struct ContentView: View {
                     Label("Sort", systemImage: "arrow.up.arrow.down")
                 }
                 .help("Sort Downloads")
+                .menuStyle(.button)
+                .tint(.primary)
 
                 Button { NotificationCenter.default.post(name: .showAddDownload, object: nil) } label: { Label("New Download", systemImage: "plus") }
                     .help("New Download (⌘N)")

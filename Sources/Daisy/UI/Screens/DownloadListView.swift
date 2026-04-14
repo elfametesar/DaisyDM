@@ -52,7 +52,8 @@ struct DownloadListView: View {
     @State private var lastSelectedIndex: Int? = nil
     @State private var propertiesItem: DownloadItem? = nil
     @FocusState private var isSearchFocused: Bool
-    
+    @FocusState private var isListFocused: Bool
+
     @AppStorage("accentColorHex") private var accentColorHex = "#0A84FF"
     @AppStorage("enableBackgroundTint") private var enableBackgroundTint = false
     
@@ -150,12 +151,16 @@ struct DownloadListView: View {
                 .frame(maxWidth: .infinity, minHeight: geo.size.height, alignment: .top)
                 .contentShape(Rectangle())
                 .onTapGesture {
+                    isListFocused = true
                     selected.removeAll()
                     lastSelectedIndex = nil
                 }
             }
         }
         .background(enableBackgroundTint ? Color(hex: accentColorHex).opacity(0.04) : Color(NSColor.controlBackgroundColor))
+        .focusable()
+        .focused($isListFocused)
+        .focusEffectDisabled()
         .sheet(item: $propertiesItem) { item in
             PropertiesSheet(item: item)
         }
@@ -164,10 +169,28 @@ struct DownloadListView: View {
             selected = Set(sortedItems.map { $0.id })
             return .handled
         }
-        .onDeleteCommand {
+        .onKeyPress(.delete, phases: .down) { _ in // Handles the standard 'Backspace' key
+            let toDelete = engine.items.filter { selected.contains($0.id) }
+            if toDelete.isEmpty { return .ignored }
+            onRequestRemove(toDelete)
+            return .handled
+        }
+        .onKeyPress(.deleteForward, phases: .down) { _ in // Handles the forward 'Delete' key
+            let toDelete = engine.items.filter { selected.contains($0.id) }
+            if toDelete.isEmpty { return .ignored }
+            onRequestRemove(toDelete)
+            return .handled
+        }
+        .onDeleteCommand { // Fallback native hook
             let toDelete = engine.items.filter { selected.contains($0.id) }
             guard !toDelete.isEmpty else { return }
             onRequestRemove(toDelete)
+        }
+        .onAppear {
+            // Give the list focus when it appears so hotkeys work immediately
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                isListFocused = true
+            }
         }
     }
     
@@ -223,6 +246,8 @@ struct DownloadListView: View {
     }
     
     private func handleRowTap(item: DownloadItem, index: Int) {
+        isListFocused = true // Give keyboard focus to the list
+        
         let event = NSApp.currentEvent
         let flags = event?.modifierFlags ?? []
         let isDoubleClick = event?.clickCount == 2
@@ -337,14 +362,14 @@ struct LiquidGlassBackground: View {
             Capsule()
                 .fill(backgroundStyle)
             
-            let accentColor = Color(accentColorHex)
+            let accentColor = Color(hex: accentColorHex)
             GeometryReader { geo in
                 LinearGradient(
                     stops: [
                         .init(color: .clear, location: 0.0),
-                        .init(color: accentColor.opacity(0.3), location: 0.4),
-                        .init(color: accentColor.opacity(0.7), location: 0.5),
-                        .init(color: accentColor.opacity(0.3), location: 0.6),
+                        .init(color: accentColor.opacity(0.01), location: 0.4),
+                        .init(color: accentColor.opacity(0.05), location: 0.5),
+                        .init(color: accentColor.opacity(0.10), location: 0.6),
                         .init(color: .clear, location: 1.0)
                     ],
                     startPoint: .topLeading,

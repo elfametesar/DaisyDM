@@ -55,7 +55,7 @@ struct AddDownloadSheet: View {
 
             VStack(alignment: .leading, spacing: 16) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("URL").font(.callout.weight(.medium))
+                    Text("URL").font(.callout.weight(.medium)).foregroundStyle(Color(hex: accentColorHex))
                     HStack(alignment: .top) {
                         Image(systemName: "link").foregroundStyle(.tertiary).font(.system(size: 13)).padding(.top, 4)
 
@@ -98,7 +98,7 @@ struct AddDownloadSheet: View {
                 }
 
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Save to").font(.callout.weight(.medium))
+                    Text("Save to").font(.callout.weight(.medium)).foregroundStyle(Color(hex: accentColorHex))
                     HStack {
                         Image(systemName: "folder").foregroundStyle(.tertiary).font(.system(size: 13))
                         Text(destination.path(percentEncoded: false))
@@ -124,25 +124,25 @@ struct AddDownloadSheet: View {
 
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
-                        Text("Connections").font(.callout.weight(.medium))
+                        Text("Connections").font(.callout.weight(.medium)).foregroundStyle(Color(hex: accentColorHex))
                         Spacer()
                         Text("\(connections)")
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(Color(hex: accentColorHex))
                     }
                     HStack(spacing: 10) {
-                        Text("1").font(.caption).foregroundStyle(.tertiary)
+                        Text("1").font(.caption).foregroundStyle(Color(hex: accentColorHex))
                         Slider(value: Binding(
                             get: { Double(connections) },
                             set: { connections = Int($0) }
                         ), in: 1...32, step: 1)
-                        .tint(Color(hex: accentColorHex))
+                        .foregroundStyle(Color(hex: accentColorHex))
                         .disabled(isResolving)
-                        Text("32").font(.caption).foregroundStyle(.tertiary)
+                        Text("32").font(.caption).foregroundStyle(Color(hex: accentColorHex))
                     }
                     Text("More connections saturate high-bandwidth servers faster. P2P (Torrent) ignores this.")
                         .font(.caption)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(Color(hex: accentColorHex))
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
