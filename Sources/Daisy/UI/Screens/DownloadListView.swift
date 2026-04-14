@@ -62,9 +62,11 @@ struct DownloadListView: View {
     @Binding var search: String
     var engine = DownloadEngine.shared
 
+    // Routes back to ContentView to trigger your custom RemoveDialog
     let onRequestRemove: ([DownloadItem]) -> Void
 
-    @State private var lastSelectedIndex: Int? = nil
+    @State private var anchorIndex: Int? = nil
+    @State private var focusedIndex: Int? = nil
     @State private var propertiesItem: DownloadItem? = nil
     @State private var expandedItems: Set<UUID> = []
     
@@ -130,6 +132,9 @@ struct DownloadListView: View {
             mainContent
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .sheet(item: $propertiesItem) { item in
+            PropertiesSheet(item: item)
+        }
     }
     
     @ViewBuilder
@@ -169,7 +174,6 @@ struct DownloadListView: View {
                                             isExpanded: Binding(
                                                 get: { expandedItems.contains(item.id) },
                                                 set: { val in
-                                                    // Removed animation here to keep it snappy during rapid repeats
                                                     if val { expandedItems.insert(item.id) }
                                                     else { expandedItems.remove(item.id) }
                                                 }
@@ -188,7 +192,8 @@ struct DownloadListView: View {
                                 .onRightClick {
                                     if !selected.contains(rowItem.id) {
                                         selected = [rowItem.id]
-                                        lastSelectedIndex = index
+                                        anchorIndex = index
+                                        focusedIndex = index
                                     }
                                 }
                                 .onTapGesture { handleRowTap(rowItem: rowItem, index: index) }
@@ -209,13 +214,13 @@ struct DownloadListView: View {
                     .onTapGesture {
                         isListFocused = true
                         selected.removeAll()
-                        lastSelectedIndex = nil
+                        anchorIndex = nil
+                        focusedIndex = nil
                     }
                 }
-                .onChange(of: selected) { _, newSel in
-                    if let first = newSel.first {
-                        // REMOVED withAnimation to fix key-hold stuttering
-                        proxy.scrollTo(first, anchor: .center)
+                .onChange(of: focusedIndex) { _, newIndex in
+                    if let idx = newIndex, idx >= 0, idx < flattenedRows.count {
+                        proxy.scrollTo(flattenedRows[idx].id)
                     }
                 }
             }
@@ -224,9 +229,7 @@ struct DownloadListView: View {
         .focusable()
         .focused($isListFocused)
         .focusEffectDisabled()
-        .sheet(item: $propertiesItem) { item in
-            PropertiesSheet(item: item)
-        }
+        // Selection & Deletion
         .onKeyPress(.init("a"), phases: .down) { press in
             guard press.modifiers.contains(.command) else { return .ignored }
             selected = Set(flattenedRows.map { $0.id })
@@ -244,12 +247,45 @@ struct DownloadListView: View {
             onRequestRemove(toDelete)
             return .handled
         }
+        // Action Keys
+        .onKeyPress(.space, phases: .down) { _ in
+            togglePlayPause()
+            return .handled
+        }
+        .onKeyPress(.return, phases: .down) { _ in
+            triggerDefaultAction()
+            return .handled
+        }
+        .onKeyPress(.init("c"), phases: .down) { press in
+            guard press.modifiers.contains(.command) else { return .ignored }
+            copySelectedURLs()
+            return .handled
+        }
+        .onKeyPress(.init("r"), phases: .down) { press in
+            guard press.modifiers.contains(.command) else { return .ignored }
+            revealSelected()
+            return .handled
+        }
+        .onKeyPress(.init("i"), phases: .down) { press in
+            guard press.modifiers.contains(.command) else { return .ignored }
+            showProperties()
+            return .handled
+        }
+        .onKeyPress(.init("p"), phases: .down) { press in
+            guard press.modifiers.contains(.command) else { return .ignored }
+            showProgressWindow()
+            return .handled
+        }
+        .onKeyPress(.init("f"), phases: .down) { press in
+            guard press.modifiers.contains(.command) else { return .ignored }
+            isSearchFocused = true
+            return .handled
+        }
         .onDeleteCommand {
             let toDelete = engine.items.filter { selected.contains($0.id) }
             guard !toDelete.isEmpty else { return }
             onRequestRemove(toDelete)
         }
-        // 🚨 NATIVE MACOS MOVE COMMAND (Supports continuous hardware key-repeat flawlessly)
         .onMoveCommand { direction in
             switch direction {
             case .up: handleArrow(.up)
@@ -266,50 +302,182 @@ struct DownloadListView: View {
         }
     }
     
+    // MARK: - Shortcut Implementations
+    
+    private func triggerDefaultAction() {
+        let selectedRows = flattenedRows.filter { selected.contains($0.id) }
+        for rowItem in selectedRows {
+            switch rowItem {
+            case .main(let item):
+                if item.status == .completed { NSWorkspace.shared.open(item.destinationURL) }
+                else { propertiesItem = item }
+            case .sub(let parent, _, _):
+                if parent.status == .completed { NSWorkspace.shared.open(parent.destinationURL) }
+            }
+        }
+    }
+    
+    private func copySelectedURLs() {
+        let selectedRows = flattenedRows.filter { selected.contains($0.id) }
+        var urls: [String] = []
+        for row in selectedRows {
+            if case .main(let item) = row {
+                urls.append(item.url.absoluteString)
+            }
+        }
+        guard !urls.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(urls.joined(separator: "\n"), forType: .string)
+    }
+    
+    private func revealSelected() {
+        let selectedRows = flattenedRows.filter { selected.contains($0.id) }
+        var fileURLs: [URL] = []
+        for row in selectedRows {
+            if case .main(let item) = row {
+                fileURLs.append(item.destinationURL)
+            } else if case .sub(let parent, _, _) = row {
+                fileURLs.append(parent.destinationURL)
+            }
+        }
+        guard !fileURLs.isEmpty else { return }
+        NSWorkspace.shared.activateFileViewerSelecting(fileURLs)
+    }
+    
+    private func showProperties() {
+        let selectedRows = flattenedRows.filter { selected.contains($0.id) }
+        if selectedRows.count == 1, case .main(let item) = selectedRows.first! {
+            propertiesItem = item
+        }
+    }
+    
+    private func showProgressWindow() {
+        let selectedRows = flattenedRows.filter { selected.contains($0.id) }
+        if selectedRows.count == 1, case .main(let item) = selectedRows.first! {
+            if item.status == .downloading || item.status == .queued {
+                NotificationCenter.default.post(name: .openProgressWindow, object: nil, userInfo: ["id": item.id])
+            }
+        }
+    }
+    
+    private func togglePlayPause() {
+        let selectedRows = flattenedRows.filter { selected.contains($0.id) }
+        guard !selectedRows.isEmpty else { return }
+        
+        var mainItems: [DownloadItem] = []
+        var subItems: [(DownloadItem, SubFile, Int)] = []
+        
+        for row in selectedRows {
+            switch row {
+            case .main(let item): mainItems.append(item)
+            case .sub(let parent, let file, let index): subItems.append((parent, file, index))
+            }
+        }
+        
+        if !mainItems.isEmpty {
+            let shouldStop = mainItems.contains { $0.status == .downloading || $0.status == .queued }
+            for item in mainItems {
+                if shouldStop { engine.stop(item) } else { engine.resume(item) }
+            }
+        }
+        
+        if !subItems.isEmpty {
+            let shouldStop = subItems.contains { !$0.1.isStopped }
+            var parentsToUpdate: Set<UUID> = []
+            
+            for (parent, _, index) in subItems {
+                if parent.type == .torrent {
+                    var updated = parent.subFiles
+                    updated[index].isStopped = shouldStop
+                    parent.subFiles = updated
+                    parentsToUpdate.insert(parent.id)
+                }
+            }
+            
+            for pid in parentsToUpdate {
+                if let p = engine.items.first(where: { $0.id == pid }) {
+                    if p.status == .stopped || p.status == .failed {
+                        if p.subFiles.contains(where: { !$0.isStopped }) {
+                            engine.resume(p, resumeSubFiles: false)
+                        } else {
+                            engine.persist()
+                        }
+                    } else {
+                        engine.updateTorrentSelection(for: p)
+                    }
+                }
+            }
+        }
+    }
+    
     // MARK: - Arrow Navigation Logic
     private func handleArrow(_ dir: ArrowDirection) {
         guard !flattenedRows.isEmpty else { return }
-        
-        let currentSelection = selected.first
-        var currentIndex = -1
-        if let sel = currentSelection, let idx = flattenedRows.firstIndex(where: { $0.id == sel }) {
-            currentIndex = idx
-        }
+
+        let flags = NSApp.currentEvent?.modifierFlags ?? []
+        let isShift = flags.contains(.shift)
+
+        var currentIndex = focusedIndex ?? anchorIndex ?? 0
+        if currentIndex >= flattenedRows.count { currentIndex = flattenedRows.count - 1 }
+        if currentIndex < 0 { currentIndex = 0 }
+
+        var nextIndex = currentIndex
 
         switch dir {
         case .down:
-            if currentIndex < 0 { selected = [flattenedRows[0].id] }
-            else if currentIndex < flattenedRows.count - 1 { selected = [flattenedRows[currentIndex + 1].id] }
-            
+            if currentIndex < flattenedRows.count - 1 { nextIndex = currentIndex + 1 }
         case .up:
-            if currentIndex < 0 { selected = [flattenedRows.last!.id] }
-            else if currentIndex > 0 { selected = [flattenedRows[currentIndex - 1].id] }
-            
+            if currentIndex > 0 { nextIndex = currentIndex - 1 }
         case .right:
-            if currentIndex >= 0 {
+            if !isShift {
                 if case .main(let item) = flattenedRows[currentIndex] {
                     if (item.type == .torrent || item.type == .batch) && !item.subFiles.isEmpty {
                         if !expandedItems.contains(item.id) {
                             expandedItems.insert(item.id)
+                            anchorIndex = currentIndex
+                            focusedIndex = currentIndex
                         } else if currentIndex < flattenedRows.count - 1 {
-                            // Folder is already open. Jump down into the first sub-file
-                            selected = [flattenedRows[currentIndex + 1].id]
+                            nextIndex = currentIndex + 1
+                            anchorIndex = nextIndex
+                            focusedIndex = nextIndex
+                            selected = [flattenedRows[nextIndex].id]
                         }
                     }
                 }
             }
-            
+            return
         case .left:
-            if currentIndex >= 0 {
+            if !isShift {
                 switch flattenedRows[currentIndex] {
                 case .main(let item):
                     if expandedItems.contains(item.id) {
                         expandedItems.remove(item.id)
+                        anchorIndex = currentIndex
+                        focusedIndex = currentIndex
                     }
                 case .sub(let parent, _, _):
-                    // On a sub-file, jump back up to the parent folder
-                    selected = [parent.id]
+                    if let pIndex = flattenedRows.firstIndex(where: { $0.id == parent.id }) {
+                        anchorIndex = pIndex
+                        focusedIndex = pIndex
+                        selected = [parent.id]
+                    }
                 }
+            }
+            return
+        }
+
+        // Apply Selection for Up/Down
+        if dir == .up || dir == .down {
+            if isShift {
+                focusedIndex = nextIndex
+                if anchorIndex == nil { anchorIndex = currentIndex }
+                let anchor = anchorIndex!
+                let range = min(anchor, nextIndex)...max(anchor, nextIndex)
+                selected = Set(flattenedRows[range].map { $0.id })
+            } else {
+                focusedIndex = nextIndex
+                anchorIndex = nextIndex
+                selected = [flattenedRows[nextIndex].id]
             }
         }
     }
@@ -329,7 +497,7 @@ struct DownloadListView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
-        .glassEffect(.regular.tint(Color(hex: accentColorHex).opacity(0.10)).interactive())
+        .glassEffect(.clear.tint(Color(hex: accentColorHex).opacity(0.20)).interactive())
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .padding(.horizontal, 40)
         .padding(.bottom, 24)
@@ -374,31 +542,29 @@ struct DownloadListView: View {
         let isDoubleClick = event?.clickCount == 2
         
         if isDoubleClick {
-            switch rowItem {
-            case .main(let item):
-                if item.status == .completed { NSWorkspace.shared.open(item.destinationURL) }
-                else { propertiesItem = item }
-            case .sub(let parent, _, _):
-                if parent.status == .completed { NSWorkspace.shared.open(parent.destinationURL) }
-            }
+            triggerDefaultAction()
             return
         }
         
         if flags.contains(.command) {
             if selected.contains(rowItem.id) { selected.remove(rowItem.id) }
             else { selected.insert(rowItem.id) }
-            lastSelectedIndex = index
+            anchorIndex = index
+            focusedIndex = index
         } else if flags.contains(.shift) {
-            guard let last = lastSelectedIndex, last < flattenedRows.count else {
+            guard let anchor = anchorIndex, anchor < flattenedRows.count else {
                 selected = [rowItem.id]
-                lastSelectedIndex = index
+                anchorIndex = index
+                focusedIndex = index
                 return
             }
-            let range = min(last, index)...max(last, index)
+            focusedIndex = index
+            let range = min(anchor, index)...max(anchor, index)
             selected = Set(flattenedRows[range].map { $0.id })
         } else {
             selected = [rowItem.id]
-            lastSelectedIndex = index
+            anchorIndex = index
+            focusedIndex = index
         }
     }
 
@@ -411,11 +577,15 @@ struct DownloadListView: View {
                 : [item]
 
             if targetItems.contains(where: { $0.status == .downloading || $0.status == .queued }) {
-                Button("Stop") { targetItems.forEach { engine.stop($0) } }
+                Button("Stop") {
+                    targetItems.forEach { engine.stop($0) }
+                }
             }
             
             if targetItems.contains(where: { $0.status == .stopped || $0.status == .failed }) {
-                Button("Resume") { targetItems.forEach { engine.resume($0) } }
+                Button("Resume") {
+                    targetItems.forEach { engine.resume($0) }
+                }
             }
             
             if targetItems.contains(where: { $0.status == .completed || $0.status == .failed }) {
@@ -429,9 +599,11 @@ struct DownloadListView: View {
                     Button("Show Progress Window") {
                         NotificationCenter.default.post(name: .openProgressWindow, object: nil, userInfo: ["id": single.id])
                     }
+                    .keyboardShortcut("p", modifiers: [.command]) // Visually document shortcut
                 }
                 
                 Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([single.destinationURL]) }
+                    .keyboardShortcut("r", modifiers: [.command])
                 
                 if single.status == .completed {
                     Button("Open File") { NSWorkspace.shared.open(single.destinationURL) }
@@ -458,11 +630,14 @@ struct DownloadListView: View {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(single.url.absoluteString, forType: .string)
                 }
+                .keyboardShortcut("c", modifiers: [.command])
                 
                 Divider()
                 Button("Remove", role: .destructive) { onRequestRemove(targetItems) }
+                    .keyboardShortcut(.delete)
                 Divider()
                 Button("Properties") { propertiesItem = single }
+                    .keyboardShortcut("i", modifiers: [.command])
                 
             } else if targetItems.count > 1 {
                 if targetItems.allSatisfy({ $0.status == .completed }) {
@@ -475,10 +650,45 @@ struct DownloadListView: View {
             }
             
         case .sub(let parent, let file, let index):
-            if parent.type == .torrent {
-                Button(file.isStopped ? "Resume File" : "Pause File") {
-                    parent.subFiles[index].isStopped.toggle()
-                    engine.updateTorrentSelection(for: parent)
+            let isFinished = file.totalBytes > 0 && file.downloadedBytes >= file.totalBytes
+            
+            if isFinished {
+                Button("Restart") {
+                    let tempPath = parent.tempDirURL.appendingPathComponent(file.path)
+                    let destDir = parent.type == .batch ? parent.destinationURL : parent.destinationURL.deletingLastPathComponent()
+                    let destPath = destDir.appendingPathComponent(file.path)
+                    
+                    try? FileManager.default.removeItem(at: tempPath)
+                    try? FileManager.default.removeItem(at: destPath)
+                    
+                    var updated = parent.subFiles
+                    updated[index].downloadedBytes = 0
+                    updated[index].isStopped = false
+                    parent.subFiles = updated
+                    
+                    if parent.status == .completed || parent.status == .stopped || parent.status == .failed {
+                        parent.status = .stopped
+                        engine.resume(parent, resumeSubFiles: false)
+                    } else {
+                        engine.updateTorrentSelection(for: parent)
+                    }
+                }
+            } else if parent.type == .torrent {
+                let isEffectivelyPaused = parent.status == .stopped || parent.status == .failed || file.isStopped
+                Button(isEffectivelyPaused ? "Resume File" : "Pause File") {
+                    var updated = parent.subFiles
+                    updated[index].isStopped.toggle()
+                    parent.subFiles = updated
+                    
+                    if parent.status == .stopped || parent.status == .failed {
+                        if !parent.subFiles[index].isStopped {
+                            engine.resume(parent, resumeSubFiles: false)
+                        } else {
+                            engine.persist()
+                        }
+                    } else {
+                        engine.updateTorrentSelection(for: parent)
+                    }
                 }
             }
         }
@@ -706,9 +916,34 @@ struct SubFileRow: View {
     var engine = DownloadEngine.shared
 
     @AppStorage("accentColorHex") private var accentColorHex = "#0A84FF"
+    @AppStorage("matchBadgesToAccent") private var matchBadgesToAccent = false
+    @AppStorage("completedColorHex")   private var completedColorHex   = "#34C759"
+    @AppStorage("stoppedColorHex")     private var stoppedColorHex     = "#FF9500"
+    
+    @Environment(\.colorScheme) private var colorScheme
 
     var dynamicTextColor: Color {
         isSelected ? Color(hex: accentColorHex).accessibleText : .primary
+    }
+    
+    var completedColor: Color {
+        let baseColor = Color(hex: completedColorHex)
+        let matchedColor = matchBadgesToAccent ? baseColor.matchingThemeVisualWeight(of: Color(hex: accentColorHex)) : baseColor
+        return matchedColor.adaptedForScheme(colorScheme)
+    }
+    
+    var pausedColor: Color {
+        let baseColor = Color(hex: stoppedColorHex)
+        let matchedColor = matchBadgesToAccent ? baseColor.matchingThemeVisualWeight(of: Color(hex: accentColorHex)) : baseColor
+        return matchedColor.adaptedForScheme(colorScheme)
+    }
+
+    var isEffectivelyPaused: Bool {
+        parent.status == .stopped || parent.status == .failed || file.isStopped
+    }
+    
+    var isFinished: Bool {
+        file.totalBytes > 0 && file.downloadedBytes >= file.totalBytes
     }
 
     var body: some View {
@@ -727,19 +962,37 @@ struct SubFileRow: View {
             
             Text(formatBytes(file.downloadedBytes) + (file.totalBytes > 0 ? " / " + formatBytes(file.totalBytes) : ""))
                 .font(.system(size: 10))
-                .foregroundStyle(isSelected ? dynamicTextColor.opacity(0.7) : .secondary)
+                .foregroundStyle(isSelected ? dynamicTextColor.opacity(0.7) : (isEffectivelyPaused && !isFinished ? Color.secondary.opacity(0.5) : Color.secondary))
                 .frame(width: 110, alignment: .trailing)
             
-            if parent.type == .torrent {
+            if isFinished {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 14))
+                    .foregroundStyle(isSelected ? dynamicTextColor : completedColor)
+                    .frame(width: 14, height: 14)
+            } else if parent.type == .torrent {
                 Button(action: {
-                    parent.subFiles[index].isStopped.toggle()
-                    engine.updateTorrentSelection(for: parent)
+                    var updated = parent.subFiles
+                    updated[index].isStopped.toggle()
+                    parent.subFiles = updated
+                    
+                    if parent.status == .stopped || parent.status == .failed {
+                        if !parent.subFiles[index].isStopped {
+                            // Resume parent, but do NOT override the flags of other subfiles
+                            engine.resume(parent, resumeSubFiles: false)
+                        } else {
+                            engine.persist()
+                        }
+                    } else {
+                        engine.updateTorrentSelection(for: parent)
+                    }
                 }) {
-                    Image(systemName: file.isStopped ? "play.circle.fill" : "pause.circle.fill")
+                    Image(systemName: isEffectivelyPaused ? "play.circle.fill" : "pause.circle.fill")
                         .font(.system(size: 14))
-                        .foregroundStyle(file.isStopped ? Color.orange : (isSelected ? dynamicTextColor : Color(hex: accentColorHex)))
+                        .foregroundStyle(isEffectivelyPaused ? (isSelected ? dynamicTextColor : pausedColor) : (isSelected ? dynamicTextColor : Color(hex: accentColorHex)))
                 }
                 .buttonStyle(.plain)
+                .help(isEffectivelyPaused ? "Resume File" : "Pause File")
             } else {
                 Spacer().frame(width: 14)
             }

@@ -415,20 +415,34 @@ public final class DownloadEngine {
         UNUserNotificationCenter.current().add(request)
     }
 
-    public func stop(_ item: DownloadItem) {
+    public func stop(_ item: DownloadItem, stopSubFiles: Bool = true) {
         guard item.status == .downloading || item.status == .queued else { return }
         killProcesses(item)
         item.status = .stopped; item.speed = 0; item._lastTickDate = nil
+        
+        if stopSubFiles && (item.type == .torrent || item.type == .batch) {
+            var updated = item.subFiles
+            for i in updated.indices { updated[i].isStopped = true }
+            item.subFiles = updated
+        }
+        
         persist(); scheduleNext()
     }
     
     public func stopAll() {
-        items.filter { $0.status == .downloading || $0.status == .queued }.forEach { stop($0) }
+        items.filter { $0.status == .downloading || $0.status == .queued }.forEach { stop($0, stopSubFiles: true) }
     }
 
-    public func resume(_ item: DownloadItem) {
+    public func resume(_ item: DownloadItem, resumeSubFiles: Bool = true) {
         guard item.status == .stopped || item.status == .failed else { return }
         item.retryCount = 0
+        
+        if resumeSubFiles && (item.type == .torrent || item.type == .batch) {
+            var updated = item.subFiles
+            for i in updated.indices { updated[i].isStopped = false }
+            item.subFiles = updated
+        }
+        
         if activeCount >= maxConcurrent { item.status = .queued; persist(); return }
         startDownload(item)
     }
@@ -443,7 +457,15 @@ public final class DownloadEngine {
         item.error = nil; item.isPrepared = false; item.supportsRanges = false
         
         if item.type != .batch { item.subFiles = [] }
-        else { for i in item.subFiles.indices { item.subFiles[i].downloadedBytes = 0; item.subFiles[i].totalBytes = 0 } }
+        else {
+            var updated = item.subFiles
+            for i in updated.indices {
+                updated[i].downloadedBytes = 0
+                updated[i].totalBytes = 0
+                updated[i].isStopped = false
+            }
+            item.subFiles = updated
+        }
         
         item._lastTickDate = nil; persist(); scheduleNext()
     }
@@ -463,13 +485,18 @@ public final class DownloadEngine {
     public func updateSpeedLimit(for item: DownloadItem, limitKB: Int) {
         guard item.speedLimit != limitKB else { return }
         item.speedLimit = limitKB; persist()
-        if item.status == .downloading { stop(item); DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self.resume(item) } }
+        if item.status == .downloading {
+            stop(item, stopSubFiles: false)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self.resume(item, resumeSubFiles: false) }
+        }
     }
 
     public func updateTorrentSelection(for item: DownloadItem) {
         persist()
-        if item.status == .downloading { stop(item); DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self.resume(item) } }
-        else if item.status == .stopped || item.status == .completed { item.status = .stopped; resume(item) }
+        if item.status == .downloading {
+            stop(item, stopSubFiles: false)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self.resume(item, resumeSubFiles: false) }
+        }
     }
 
     private func scheduleNext() {
@@ -645,7 +672,7 @@ public final class DownloadEngine {
             args += [
                 "--enable-dht=true", "--bt-enable-lpd=true", "--enable-peer-exchange=true", "--bt-save-metadata=true",
                 "--dht-listen-port=6881-6999",
-                "--bt-tracker=udp://tracker.opentrackr.org:1337/announce,udp://open.stealth.si:80/announce,udp://tracker.torrent.eu.org:451/announce,udp://open.demonii.com:1337/announce,udp://exodus.desync.com:6969/announce,udp://tracker.torrent.eu.org:451/announce,udp://tracker.cyberia.is:6969/announce,udp://retracker.lanta-net.ru:2710/announce,udp://tracker.moeking.me:6969/announce,udp://tracker.pomf.se:80/announce,udp://tracker.publicbt.com:80/announce,udp://tracker.tiny-vps.com:6969/announce,udp://tracker.files.fm:6969/announce"
+                "--bt-tracker=udp://tracker.opentrackr.org:1337/announce,udp://open.stealth.si:80/announce,udp://tracker.torrent.eu.org:451/announce,udp://tracker.dler.org:6969/announce,udp://exodus.desync.com:6969/announce,udp://retracker.lanta-net.ru:2710/announce,udp://tracker.moeking.me:6969/announce,udp://tracker.pomf.se:80/announce,udp://tracker.publicbt.com:80/announce,udp://tracker.tiny-vps.com:6969/announce,udp://tracker.files.fm:6969/announce"
             ]
         }
         
@@ -657,7 +684,7 @@ public final class DownloadEngine {
         } else if type == .torrent {
             let activeIndices = await MainActor.run { item.subFiles.filter { !$0.isStopped }.map { String($0.index) }.joined(separator: ",") }
             if !activeIndices.isEmpty { args.append("--select-file=\(activeIndices)") }
-            else if !(await MainActor.run { item.subFiles.isEmpty }) { await MainActor.run { stop(item) }; return }
+            else if !(await MainActor.run { item.subFiles.isEmpty }) { await MainActor.run { stop(item, stopSubFiles: false) }; return }
             args.append(url.isFileURL ? url.path : url.absoluteString)
         } else {
             args.append(url.isFileURL ? url.path : url.absoluteString)
@@ -673,36 +700,45 @@ public final class DownloadEngine {
                     if let range = line.range(of: "Length: ") {
                         let sub = line[range.upperBound...]
                         let bytesStr = sub.prefix(while: { $0.isNumber })
-                        if let bytes = Int64(bytesStr), bytes > 0 { await MainActor.run { if item.totalBytes == 0 { item.totalBytes = bytes } } }
+                        if let bytes = Int64(bytesStr), bytes > 0 {
+                            await MainActor.run {
+                                if item.type == .directLink && item.totalBytes == 0 { item.totalBytes = bytes }
+                            }
+                        }
                     }
                 }
                 
-                if line.contains("[#") && line.contains("CN:") {
-                    var totalDl: Int64 = 0; var totalSz: Int64 = 0; var parsedSpeed: Double? = nil; var foundMatch = false
+                if line.contains("[#") && line.contains("DL:") {
+                    var totalDl: Int64 = 0; var totalSz: Int64 = 0; var totalSpeed: Double = 0; var foundMatch = false
                     
                     let blocks = line.components(separatedBy: "[#")
                     for block in blocks {
-                        guard block.contains("CN:") else { continue }
-                        let parts = block.split(separator: " ")
-                        guard parts.count >= 2 else { continue }
-                        
-                        let transferPart = parts[1]; let sizes = transferPart.components(separatedBy: "(")[0]; let sizeParts = sizes.components(separatedBy: "/")
-                        
-                        totalDl += parseAriaSize(sizeParts[0])
-                        if sizeParts.count > 1 { totalSz += parseAriaSize(sizeParts[1]) }
-                        foundMatch = true
-                        
                         if let dlRange = block.range(of: "DL:") {
-                            let sub = block[dlRange.upperBound...]; let speedStr = sub.prefix(while: { $0 != " " && $0 != "]" })
-                            parsedSpeed = Double(parseAriaSize(String(speedStr)))
+                            let sub = block[dlRange.upperBound...]
+                            let speedStr = sub.prefix(while: { $0 != " " && $0 != "]" })
+                            totalSpeed += Double(parseAriaSize(String(speedStr)))
+                            foundMatch = true
+                        }
+                        if item.type == .directLink {
+                            let parts = block.split(separator: " ")
+                            if parts.count >= 2 {
+                                let transferPart = parts[1]
+                                let sizes = transferPart.components(separatedBy: "(")[0]
+                                let sizeParts = sizes.components(separatedBy: "/")
+                                totalDl += parseAriaSize(sizeParts[0])
+                                if sizeParts.count > 1 { totalSz += parseAriaSize(sizeParts[1]) }
+                            }
                         }
                     }
                     
                     if foundMatch {
                         await MainActor.run {
-                            if totalDl > 0 { item.downloadedBytes = totalDl }
-                            if totalSz > item.totalBytes { item.totalBytes = totalSz }
-                            if let s = parsedSpeed { item.speed = s }
+                            if item.type == .directLink {
+                                if totalDl > 0 { item.downloadedBytes = totalDl }
+                                if totalSz > item.totalBytes { item.totalBytes = totalSz }
+                            }
+                            item.speed = totalSpeed
+                            item._lastTickDate = Date()
                         }
                     }
                 }
@@ -712,7 +748,7 @@ public final class DownloadEngine {
         let pollTask = Task { [weak item] in
             guard let item else { return }
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                try? await Task.sleep(nanoseconds: 250_000_000)
                 
                 if item.type == .torrent {
                     let currentSubFiles = await MainActor.run { item.subFiles }
@@ -730,14 +766,32 @@ public final class DownloadEngine {
                         }
                     } else {
                         var updatedSubFiles = currentSubFiles
+                        var totalDownloaded: Int64 = 0
+                        var totalActiveBytes: Int64 = 0
+                        
                         for i in updatedSubFiles.indices {
-                            let fileURL = tempDir.appendingPathComponent(updatedSubFiles[i].path)
+                            let sub = updatedSubFiles[i]
+                            let fileURL = tempDir.appendingPathComponent(sub.path)
+                            
                             if let vals = try? fileURL.resourceValues(forKeys: [.totalFileAllocatedSizeKey, .fileSizeKey]) {
-                                let physical = vals.totalFileAllocatedSize ?? 0; let logical = vals.fileSize ?? 0
-                                updatedSubFiles[i].downloadedBytes = Int64(min(physical, logical))
+                                let physical = vals.totalFileAllocatedSize ?? 0
+                                let logical = vals.fileSize ?? 0
+                                let downloaded = Int64(min(physical, logical))
+                                
+                                // Only accumulate new sizes into the visual progress if it's currently meant to be downloading
+                                if !sub.isStopped {
+                                    updatedSubFiles[i].downloadedBytes = downloaded
+                                }
                             }
+                            
+                            totalDownloaded += updatedSubFiles[i].downloadedBytes
+                            totalActiveBytes += updatedSubFiles[i].totalBytes
                         }
-                        await MainActor.run { item.subFiles = updatedSubFiles }
+                        await MainActor.run {
+                            item.subFiles = updatedSubFiles
+                            item.downloadedBytes = totalDownloaded
+                            if totalActiveBytes > 0 { item.totalBytes = totalActiveBytes }
+                        }
                     }
                 } else if item.type == .batch {
                     var updatedSubFiles: [SubFile] = []
@@ -756,12 +810,26 @@ public final class DownloadEngine {
                     }
                     await MainActor.run {
                         var merged = item.subFiles
+                        var totalDownloaded: Int64 = 0
+                        var totalActiveBytes: Int64 = 0
+                        
                         for newSub in updatedSubFiles {
                             if let idx = merged.firstIndex(where: { $0.filename == newSub.filename }) {
-                                merged[idx].downloadedBytes = newSub.downloadedBytes; merged[idx].totalBytes = newSub.totalBytes
-                            } else { merged.append(newSub) }
+                                if !merged[idx].isStopped {
+                                    merged[idx].downloadedBytes = newSub.downloadedBytes
+                                }
+                                merged[idx].totalBytes = newSub.totalBytes
+                            } else {
+                                merged.append(newSub)
+                            }
+                        }
+                        for sub in merged {
+                            totalDownloaded += sub.downloadedBytes
+                            totalActiveBytes += sub.totalBytes
                         }
                         item.subFiles = merged
+                        item.downloadedBytes = totalDownloaded
+                        if totalActiveBytes > 0 { item.totalBytes = totalActiveBytes }
                     }
                 }
             }
@@ -817,6 +885,7 @@ public final class DownloadEngine {
                     }
                 } else {
                     for file in subFiles {
+                        if file.isStopped { continue }
                         let src = tempDir.appendingPathComponent(file.path); let dst = destDirURL.appendingPathComponent(file.path)
                         try? FileManager.default.createDirectory(at: dst.deletingLastPathComponent(), withIntermediateDirectories: true)
                         _ = try? FileManager.default.removeItem(at: dst); try? FileManager.default.moveItem(at: src, to: dst)
@@ -836,7 +905,8 @@ public final class DownloadEngine {
             }
         } else if status == .downloading && isStillTracked {
             let currentRetry = await MainActor.run { item.retryCount }
-            if currentRetry < 3 {
+            let maxRetries = UserDefaults.standard.object(forKey: "maxRetryCount") as? Int ?? 3
+            if currentRetry < maxRetries {
                 await MainActor.run { item.retryCount += 1; item.status = .queued; item.speed = 0; item._lastTickDate = nil }
                 try? await Task.sleep(nanoseconds: 2_000_000_000)
                 await MainActor.run { scheduleNext() }
@@ -990,7 +1060,8 @@ public final class DownloadEngine {
             if let status = httpStatus, status >= 400 {
                 let errorMsg = curlHumanError(exitCode: proc.terminationStatus, stderr: stderrText, stdout: stdoutText)
                 let r = await MainActor.run { item.retryCount }
-                if r < 3 && status != 401 && status != 403 && status != 404 {
+                let maxRetries = UserDefaults.standard.object(forKey: "maxRetryCount") as? Int ?? 3
+                if r < maxRetries && status != 401 && status != 403 && status != 404 {
                     await MainActor.run { item.retryCount += 1; item.status = .queued; item.speed = 0; item._lastTickDate = nil }
                     try? await Task.sleep(nanoseconds: 2_000_000_000)
                     await MainActor.run { scheduleNext() }
@@ -1017,7 +1088,8 @@ public final class DownloadEngine {
         } else if currentStatus == .downloading && isStillTracked {
             let errorMsg = curlHumanError(exitCode: proc.terminationStatus, stderr: stderrText, stdout: stdoutText)
             let r = await MainActor.run { item.retryCount }
-            if r < 3 {
+            let maxRetries = UserDefaults.standard.object(forKey: "maxRetryCount") as? Int ?? 3
+            if r < maxRetries {
                 await MainActor.run { item.retryCount += 1; item.status = .queued; item.speed = 0; item._lastTickDate = nil }
                 try? await Task.sleep(nanoseconds: 2_000_000_000)
                 await MainActor.run { scheduleNext() }
@@ -1228,8 +1300,7 @@ public final class DownloadEngine {
                         item._lastBytes = curBytes; item._lastTickDate = now
                     }
                 } else {
-                    if curBytes == item._lastBytes && dt > 3.0 { item.speed = 0 }
-                    else if curBytes != item._lastBytes { item._lastBytes = curBytes; item._lastTickDate = now }
+                    if dt > 3.0 { item.speed = 0 }
                 }
             } else { item._lastBytes = curBytes; item._lastTickDate = now }
 

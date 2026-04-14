@@ -195,9 +195,16 @@ struct DetailView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Last Error")
                         .font(.headline)
-                    Text(message)
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
+                    ScrollView {
+                        Text(message)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(nil)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxHeight: 100)
+                    .clipped() // Fixes bleed over for large error logs
                 }
             }
         }
@@ -207,12 +214,16 @@ struct DetailView: View {
     private func actionBar(for item: DownloadItem) -> some View {
         HStack(spacing: 10) {
             if item.status == .downloading || item.status == .queued {
-                Button(action: { engine.stop(item) }) {
+                Button(action: {
+                    engine.stop(item)
+                }) {
                     Label("Pause", systemImage: "pause.fill")
                 }
                 .buttonStyle(ActionButtonStyle(prominent: true, hex: accentColorHex))
             } else {
-                Button(action: { engine.resume(item) }) {
+                Button(action: {
+                    engine.resume(item)
+                }) {
                     Label("Resume", systemImage: "play.fill")
                 }
                 .buttonStyle(ActionButtonStyle(prominent: true, hex: accentColorHex))
@@ -368,6 +379,21 @@ struct DetailView: View {
 
 struct TorrentInfoCard: View {
     let item: DownloadItem
+    
+    @State private var isExpanded = false
+    
+    @AppStorage("accentColorHex") private var accentColorHex = "#0A84FF"
+    @AppStorage("matchBadgesToAccent") private var matchBadgesToAccent = false
+    @AppStorage("completedColorHex")   private var completedColorHex   = "#34C759"
+    
+    @Environment(\.colorScheme) private var colorScheme
+    
+    var completedColor: Color {
+        let baseColor = Color(hex: completedColorHex)
+        let matchedColor = matchBadgesToAccent ? baseColor.matchingThemeVisualWeight(of: Color(hex: accentColorHex)) : baseColor
+        return matchedColor.adaptedForScheme(colorScheme)
+    }
+    
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Torrent Metadata")
@@ -375,25 +401,42 @@ struct TorrentInfoCard: View {
             
             if !item.subFiles.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Files (\(item.subFiles.count))")
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.secondary)
+                    HStack {
+                        Text("Files (\(item.subFiles.count))")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        if item.subFiles.count > 8 {
+                            Button(action: {
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                                    isExpanded.toggle()
+                                }
+                            }) {
+                                Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
                     
                     VStack(spacing: 0) {
-                        ForEach(item.subFiles.prefix(8)) { f in
-                            HStack {
-                                Text(f.filename).font(.system(size: 12)).lineLimit(1).truncationMode(.middle)
-                                Spacer()
-                                Text(formatBytes(f.totalBytes)).font(.system(size: 11)).foregroundStyle(.secondary)
+                        if isExpanded {
+                            ScrollView {
+                                LazyVStack(spacing: 0) {
+                                    fileRows(item.subFiles)
+                                }
+                                .padding(.trailing, 8)
                             }
-                            .padding(.vertical, 8)
-                            if f.id != item.subFiles.prefix(8).last?.id {
-                                Divider().opacity(0.5)
+                            .frame(maxHeight: 250)
+                            .clipped() // Fixes bleed over for expanded scroll area
+                        } else {
+                            fileRows(Array(item.subFiles.prefix(8)))
+                            
+                            if item.subFiles.count > 8 {
+                                Text("+ \(item.subFiles.count - 8) more files")
+                                    .font(.caption).foregroundStyle(.tertiary).padding(.top, 8)
                             }
-                        }
-                        if item.subFiles.count > 8 {
-                            Text("+ \(item.subFiles.count - 8) more files")
-                                .font(.caption).foregroundStyle(.tertiary).padding(.top, 8)
                         }
                     }
                     .padding(14)
@@ -406,5 +449,33 @@ struct TorrentInfoCard: View {
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay { RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Color.primary.opacity(0.08), lineWidth: 1) }
         .shadow(color: Color.black.opacity(0.12), radius: 5, x: 0, y: 2)
+    }
+    
+    @ViewBuilder
+    private func fileRows(_ files: [SubFile]) -> some View {
+        ForEach(files) { f in
+            HStack {
+                Text(f.filename).font(.system(size: 12)).lineLimit(1).truncationMode(.middle)
+                Spacer()
+                
+                let isFinished = f.totalBytes > 0 && f.downloadedBytes >= f.totalBytes
+                let isEffectivelyPaused = f.isStopped || item.status == .stopped || item.status == .failed
+                
+                Text("\(formatBytes(f.downloadedBytes)) / \(formatBytes(f.totalBytes))")
+                    .font(.system(size: 11))
+                    .foregroundStyle(isEffectivelyPaused && !isFinished ? Color.secondary.opacity(0.5) : Color.secondary)
+                
+                if isFinished {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(completedColor)
+                        .padding(.leading, 4)
+                }
+            }
+            .padding(.vertical, 8)
+            if f.id != files.last?.id {
+                Divider().opacity(0.5)
+            }
+        }
     }
 }

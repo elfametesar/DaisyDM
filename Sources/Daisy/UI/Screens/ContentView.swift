@@ -58,6 +58,10 @@ struct ContentView: View {
     @AppStorage("isCompactList") private var isCompactList = false
     @AppStorage("accentColorHex") private var accentColorHex = "#0A84FF"
     
+    // Updated Removal Settings
+    @AppStorage("askBeforeRemoving") private var askBeforeRemoving = true
+    @AppStorage("defaultRemoveAction") private var defaultRemoveAction = "keep"
+    
     // Shared sorting state for the Toolbar Menu
     @AppStorage("sortColumn") private var sortColumn: SortColumn = .dateAdded
     @AppStorage("sortAscending") private var sortAscending: Bool = false
@@ -90,7 +94,10 @@ struct ContentView: View {
             .sheet(isPresented: $showingSettings) { SettingsView().interactiveDismissDisabled() }
             .sheet(item: $itemsToRemove) { context in
                 RemoveDialog(items: context.items) { trash, remember in
-                    if remember { UserDefaults.standard.set(trash ? "trash" : "keep", forKey: "removeBehavior") }
+                    if remember {
+                        askBeforeRemoving = false
+                        defaultRemoveAction = trash ? "trash" : "keep"
+                    }
                     context.items.forEach { engine.remove($0, trashFile: trash) }
                     itemsToRemove = nil
                 } onCancel: { itemsToRemove = nil }
@@ -316,10 +323,12 @@ struct ContentView: View {
     }
 
     private func requestRemove(items: [DownloadItem]) {
-        let behavior = UserDefaults.standard.string(forKey: "removeBehavior") ?? "ask"
-        if behavior == "trash" { items.forEach { engine.remove($0, trashFile: true) } }
-        else if behavior == "keep" { items.forEach { engine.remove($0, trashFile: false) } }
-        else { itemsToRemove = RemovalContext(items: items) }
+        if askBeforeRemoving {
+            itemsToRemove = RemovalContext(items: items)
+        } else {
+            let trash = (defaultRemoveAction == "trash")
+            items.forEach { engine.remove($0, trashFile: trash) }
+        }
     }
 
     private func handlePaste() {

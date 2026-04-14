@@ -9,11 +9,15 @@ struct SettingsView: View {
     @AppStorage("alwaysPinProgressWindows") private var alwaysPinProgressWindows = false
     @AppStorage("playSoundOnComplete")   private var playSoundOnComplete = true
     @AppStorage("fileCollisionBehavior") private var collisionBehavior = "rename"
-    @AppStorage("removeBehavior")        private var removeBehavior    = "ask"
+    
+    // Updated Removal Settings
+    @AppStorage("askBeforeRemoving")     private var askBeforeRemoving = true
+    @AppStorage("defaultRemoveAction")   private var defaultRemoveAction = "keep"
     
     // Network
     @AppStorage("maxConcurrentDownloads") private var maxConcurrent = 5
     @AppStorage("globalSpeedLimit")       private var globalSpeedLimit = 0
+    @AppStorage("maxRetryCount")          private var maxRetryCount = 3
     @AppStorage("bypassModifierKey")      private var bypassModifierKey = "altKey"
     
     // Proxy
@@ -46,14 +50,6 @@ struct SettingsView: View {
             case .general: return "gearshape.fill"
             case .network: return "network"
             case .appearance: return "paintpalette.fill"
-            }
-        }
-        
-        var iconColor: Color {
-            switch self {
-            case .general: return .gray
-            case .network: return .blue
-            case .appearance: return .purple
             }
         }
     }
@@ -123,6 +119,7 @@ struct SettingsView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(width: 760, height: 580)
+        .background(Color(NSColor.windowBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -164,7 +161,7 @@ struct SettingsView: View {
                     Picker("", selection: $bypassModifierKey) {
                         Text("Option (Alt)").tag("altKey")
                         Text("Command (⌘)").tag("metaKey")
-                        Text("Control (^)").tag("ctrlKey")
+                        Text("Control (^)").tag("shiftKey")
                         Text("Shift (⇧)").tag("shiftKey")
                     }.labelsHidden().frame(width: 140)
                 }
@@ -177,11 +174,13 @@ struct SettingsView: View {
                         Text("Replace Existing File").tag("replace")
                     }.labelsHidden().frame(width: 200)
                 }
-                SettingsRow("When Removing", addDivider: false) {
-                    Picker("", selection: $removeBehavior) {
-                        Text("Ask Every Time").tag("ask")
-                        Text("Move File to Trash").tag("trash")
+                SettingsRow("Ask for confirmation before removing", addDivider: true) {
+                    Toggle("", isOn: $askBeforeRemoving).labelsHidden().toggleStyle(.switch)
+                }
+                SettingsRow("Default removal action", addDivider: false) {
+                    Picker("", selection: $defaultRemoveAction) {
                         Text("Remove from List Only").tag("keep")
+                        Text("Move File to Trash").tag("trash")
                     }.labelsHidden().frame(width: 200)
                 }
             }
@@ -206,6 +205,14 @@ struct SettingsView: View {
                             .frame(width: 60)
                             .multilineTextAlignment(.trailing)
                         Text("KB/s").foregroundStyle(.secondary)
+                    }
+                }
+                SettingsRow("Max Auto-Retries", addDivider: false) {
+                    HStack(spacing: 8) {
+                        Text("\(maxRetryCount)")
+                            .monospacedDigit()
+                            .frame(width: 24, alignment: .trailing)
+                        Stepper("", value: $maxRetryCount, in: 0...10).labelsHidden()
                     }
                 }
             }
