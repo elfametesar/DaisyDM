@@ -208,7 +208,7 @@ function handleBlob(blobUrl, filename) {
 }
 
 function findDownloadURL(obj, depth = 0) {
-  if (!obj || depth > 6) return null;
+ if (!obj || depth > 6) return null;
   if (typeof obj === "string")
     return (obj.startsWith("http") && isDownloadURL(obj))
       ? { url: obj, filename: extractFilename(obj) } : null;

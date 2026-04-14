@@ -80,12 +80,12 @@ struct FailedDownloadDialog: View {
             // Actions
             HStack {
                 Spacer()
-                Button("Cancel") { dismiss() }
-                    .keyboardShortcut(.escape)
-                    .controlSize(.large)
                 Button("Retry") { engine.retry(item) }
-                    .buttonStyle(.borderedProminent)
-                    .tint(themeAccent)
+                    .controlSize(.large)
+                    .buttonStyle(ActionButtonStyle(prominent: false, hex: accentColorHex))
+                Button("Done") { dismiss() }
+                    .keyboardShortcut(.escape)
+                    .buttonStyle(ActionButtonStyle(prominent: true, hex: accentColorHex))
                     .controlSize(.large)
                     .keyboardShortcut(.defaultAction)
             }

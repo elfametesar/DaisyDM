@@ -155,12 +155,20 @@ struct SettingsView: View {
                         }
                         .buttonStyle(ActionButtonStyle(prominent: false, hex: accentColorHex))
                     }
-                } 
+                }
                 SettingsRow("Always pin progress windows on top", addDivider: true) {
                     Toggle("", isOn: $alwaysPinProgressWindows).labelsHidden().toggleStyle(.switch)
                 }
                 SettingsRow("Play sound on completion", addDivider: false) {
                     Toggle("", isOn: $playSoundOnComplete).labelsHidden().toggleStyle(.switch)
+                }
+                SettingsRow("Browser Bypass Key", addDivider: false) {
+                    Picker("", selection: $bypassModifierKey) {
+                        Text("Option (Alt)").tag("altKey")
+                        Text("Command (⌘)").tag("metaKey")
+                        Text("Control (^)").tag("ctrlKey")
+                        Text("Shift (⇧)").tag("shiftKey")
+                    }.labelsHidden().frame(width: 140)
                 }
             }
             
@@ -201,14 +209,6 @@ struct SettingsView: View {
                             .multilineTextAlignment(.trailing)
                         Text("KB/s").foregroundStyle(.secondary)
                     }
-                }
-                SettingsRow("Browser Bypass Key", addDivider: false) {
-                    Picker("", selection: $bypassModifierKey) {
-                        Text("Option (Alt)").tag("altKey")
-                        Text("Command (⌘)").tag("metaKey")
-                        Text("Control (^)").tag("ctrlKey")
-                        Text("Shift (⇧)").tag("shiftKey")
-                    }.labelsHidden().frame(width: 140)
                 }
             }
             
@@ -263,7 +263,7 @@ struct SettingsView: View {
                         ColorPicker("", selection: progressBarColor, supportsOpacity: false).labelsHidden()
                     }
                 }
-                SettingsRow("Slightly Tint App Background", addDivider: false) {
+                SettingsRow("Tint Background", addDivider: false) {
                     Toggle("", isOn: $enableBackgroundTint).labelsHidden().toggleStyle(.switch)
                 }
             }
