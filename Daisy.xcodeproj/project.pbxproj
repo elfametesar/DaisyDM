@@ -14,6 +14,11 @@
 		53F624789BAF9FB2DB63EDBB /* SafariExtensionHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02FA831F84964C6E30740ED4 /* SafariExtensionHandler.swift */; };
 		712C631C2F8A952D00504612 /* LocalServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 712C631B2F8A952800504612 /* LocalServer.swift */; };
 		714070032F88B43700875649 /* popup.js in Resources */ = {isa = PBXBuildFile; fileRef = 714070022F88B43400875649 /* popup.js */; };
+		7161C5EB2F8D4DC800FFB581 /* ProgressWindowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7161C5EA2F8D4DBC00FFB581 /* ProgressWindowView.swift */; };
+		7161C5ED2F8D4FB900FFB581 /* FailedDownloadDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7161C5EC2F8D4FB800FFB581 /* FailedDownloadDialog.swift */; };
+		7161C5EF2F8D769B00FFB581 /* SharedUIComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7161C5EE2F8D769600FFB581 /* SharedUIComponents.swift */; };
+		7161C5F12F8D7A9800FFB581 /* RemoveDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7161C5F02F8D7A9600FFB581 /* RemoveDialog.swift */; };
+		7161C5F32F8D7AB300FFB581 /* PropertiesSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7161C5F22F8D7AAF00FFB581 /* PropertiesSheet.swift */; };
 		8DE4E266805149234A8741FE /* DaisyExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 7A117A8396344D68906886AE /* DaisyExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		94239571324F1E220C2EDA5A /* AddDownloadSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB44EE0F7D6EA3AA72232245 /* AddDownloadSheet.swift */; };
 		A632EED8E7FCE3E2E9321090 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECF7392741EE1B516970CA7B /* SettingsView.swift */; };
@@ -65,6 +70,11 @@
 		7108AF5B2F8974030059958D /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		712C631B2F8A952800504612 /* LocalServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalServer.swift; sourceTree = "<group>"; };
 		714070022F88B43400875649 /* popup.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = popup.js; sourceTree = "<group>"; };
+		7161C5EA2F8D4DBC00FFB581 /* ProgressWindowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProgressWindowView.swift; sourceTree = "<group>"; };
+		7161C5EC2F8D4FB800FFB581 /* FailedDownloadDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FailedDownloadDialog.swift; sourceTree = "<group>"; };
+		7161C5EE2F8D769600FFB581 /* SharedUIComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedUIComponents.swift; sourceTree = "<group>"; };
+		7161C5F02F8D7A9600FFB581 /* RemoveDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoveDialog.swift; sourceTree = "<group>"; };
+		7161C5F22F8D7AAF00FFB581 /* PropertiesSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PropertiesSheet.swift; sourceTree = "<group>"; };
 		7A117A8396344D68906886AE /* DaisyExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = DaisyExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		A0159ADC2E90F823FF4B7A57 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		AA11BB22CC33DD44EE55FF67 /* ConfirmDownloadView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfirmDownloadView.swift; sourceTree = "<group>"; };
@@ -142,6 +152,11 @@
 		CBA556BC1FD09F5332CA266B /* Screens */ = {
 			isa = PBXGroup;
 			children = (
+				7161C5F22F8D7AAF00FFB581 /* PropertiesSheet.swift */,
+				7161C5F02F8D7A9600FFB581 /* RemoveDialog.swift */,
+				7161C5EE2F8D769600FFB581 /* SharedUIComponents.swift */,
+				7161C5EC2F8D4FB800FFB581 /* FailedDownloadDialog.swift */,
+				7161C5EA2F8D4DBC00FFB581 /* ProgressWindowView.swift */,
 				CB44EE0F7D6EA3AA72232245 /* AddDownloadSheet.swift */,
 				AA11BB22CC33DD44EE55FF67 /* ConfirmDownloadView.swift */,
 				E16D72692BAB7622BBD388D3 /* ContentView.swift */,
@@ -271,11 +286,16 @@
 				94239571324F1E220C2EDA5A /* AddDownloadSheet.swift in Sources */,
 				AA11BB22CC33DD44EE55FF66 /* ConfirmDownloadView.swift in Sources */,
 				E6466915463132C126752D64 /* AppDelegate.swift in Sources */,
+				7161C5F12F8D7A9800FFB581 /* RemoveDialog.swift in Sources */,
+				7161C5EF2F8D769B00FFB581 /* SharedUIComponents.swift in Sources */,
+				7161C5F32F8D7AB300FFB581 /* PropertiesSheet.swift in Sources */,
+				7161C5EB2F8D4DC800FFB581 /* ProgressWindowView.swift in Sources */,
 				D2841A44D4CDA47E09F5A0EA /* ContentView.swift in Sources */,
 				D03D0C1410EEC02AB846A437 /* DownloadDetailView.swift in Sources */,
 				E83E1A8BDEBD4355E446E247 /* DownloadEngine.swift in Sources */,
 				B5A502C1B883ABB2001778D5 /* DownloadListView.swift in Sources */,
 				A632EED8E7FCE3E2E9321090 /* SettingsView.swift in Sources */,
+				7161C5ED2F8D4FB900FFB581 /* FailedDownloadDialog.swift in Sources */,
 				FA21961A36B68ECAA613D7DC /* SidebarView.swift in Sources */,
 				FE3349E82E4588853A8EEABD /* URLSchemeHandler.swift in Sources */,
 			);

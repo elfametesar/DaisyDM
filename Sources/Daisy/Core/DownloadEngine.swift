@@ -1,27 +1,41 @@
-// MARK: - DownloadEngine.swift
 import Foundation
 import AppKit
+import UserNotifications
 
-// ── Native Dock Icon Progress Overlay ─────────────────────────
+extension NSColor {
+    convenience init?(hex: String) {
+        var s = hex.trimmingCharacters(in: .whitespacesAndNewlines)
+        if s.hasPrefix("#") { s = String(s.dropFirst()) }
+        if s.count == 3 { s = s.map { "\($0)\($0)" }.joined() }
+        guard let value = UInt64(s, radix: 16) else { return nil }
+        let r = CGFloat((value >> 16) & 0xFF) / 255
+        let g = CGFloat((value >>  8) & 0xFF) / 255
+        let b = CGFloat( value        & 0xFF) / 255
+        self.init(srgbRed: r, green: g, blue: b, alpha: 1.0)
+    }
+}
+
 class DockProgressView: NSView {
     var progress: Double = 0.0 {
         didSet { needsDisplay = true }
     }
     
+    private func getBarColor() -> NSColor {
+        let defaults = UserDefaults.standard
+        let match = defaults.bool(forKey: "matchProgressBarToAccent")
+        let hexString = match ? (defaults.string(forKey: "accentColorHex") ?? "#0A84FF") : (defaults.string(forKey: "progressBarColorHex") ?? "#34C759")
+        return NSColor(hex: hexString) ?? .systemGreen
+    }
+    
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
-        
-        if let appIcon = NSImage(named: NSImage.applicationIconName) {
-            appIcon.draw(in: bounds)
-        }
+        if let appIcon = NSImage(named: NSImage.applicationIconName) { appIcon.draw(in: bounds) }
         
         let inset: CGFloat = bounds.width * 0.12
         let cornerRadius: CGFloat = bounds.width * 0.18
         let barThick: CGFloat = 6.0
-        
         let rect = bounds.insetBy(dx: inset, dy: inset)
         let startY = rect.maxY - (rect.height * 0.45)
-        
         let straightLen = startY - (rect.minY + cornerRadius)
         let arcLen = 0.5 * .pi * cornerRadius
         let bottomLen = rect.width - (2 * cornerRadius)
@@ -30,22 +44,16 @@ class DockProgressView: NSView {
         let bgPath = NSBezierPath()
         bgPath.move(to: NSPoint(x: rect.minX, y: startY))
         bgPath.line(to: NSPoint(x: rect.minX, y: rect.minY + cornerRadius))
-        bgPath.appendArc(withCenter: NSPoint(x: rect.minX + cornerRadius, y: rect.minY + cornerRadius),
-                         radius: cornerRadius, startAngle: 180, endAngle: 270)
+        bgPath.appendArc(withCenter: NSPoint(x: rect.minX + cornerRadius, y: rect.minY + cornerRadius), radius: cornerRadius, startAngle: 180, endAngle: 270)
         bgPath.line(to: NSPoint(x: rect.maxX - cornerRadius, y: rect.minY))
-        bgPath.appendArc(withCenter: NSPoint(x: rect.maxX - cornerRadius, y: rect.minY + cornerRadius),
-                         radius: cornerRadius, startAngle: 270, endAngle: 360)
+        bgPath.appendArc(withCenter: NSPoint(x: rect.maxX - cornerRadius, y: rect.minY + cornerRadius), radius: cornerRadius, startAngle: 270, endAngle: 360)
         bgPath.line(to: NSPoint(x: rect.maxX, y: startY))
-        
-        bgPath.lineWidth = barThick
-        bgPath.lineCapStyle = .round
-        NSColor.black.withAlphaComponent(0.4).setStroke()
-        bgPath.stroke()
+        bgPath.lineWidth = barThick; bgPath.lineCapStyle = .round
+        NSColor.black.withAlphaComponent(0.4).setStroke(); bgPath.stroke()
         
         if progress > 0 {
             let targetLen = totalLen * CGFloat(min(1.0, progress))
             var currentLen: CGFloat = 0
-            
             let fgPath = NSBezierPath()
             fgPath.move(to: NSPoint(x: rect.minX, y: startY))
             
@@ -55,12 +63,8 @@ class DockProgressView: NSView {
                     let p = (targetLen - currentLen) / segLen
                     fgPath.line(to: NSPoint(x: rect.minX, y: startY - (straightLen * p)))
                     currentLen = targetLen
-                } else {
-                    fgPath.line(to: NSPoint(x: rect.minX, y: rect.minY + cornerRadius))
-                    currentLen += segLen
-                }
+                } else { fgPath.line(to: NSPoint(x: rect.minX, y: rect.minY + cornerRadius)); currentLen += segLen }
             }
-            
             if targetLen > currentLen {
                 let segLen = arcLen
                 let center = NSPoint(x: rect.minX + cornerRadius, y: rect.minY + cornerRadius)
@@ -68,24 +72,16 @@ class DockProgressView: NSView {
                     let p = (targetLen - currentLen) / segLen
                     fgPath.appendArc(withCenter: center, radius: cornerRadius, startAngle: 180, endAngle: 180 + (90 * p))
                     currentLen = targetLen
-                } else {
-                    fgPath.appendArc(withCenter: center, radius: cornerRadius, startAngle: 180, endAngle: 270)
-                    currentLen += segLen
-                }
+                } else { fgPath.appendArc(withCenter: center, radius: cornerRadius, startAngle: 180, endAngle: 270); currentLen += segLen }
             }
-            
             if targetLen > currentLen {
                 let segLen = bottomLen
                 if targetLen < currentLen + segLen {
                     let p = (targetLen - currentLen) / segLen
                     fgPath.line(to: NSPoint(x: rect.minX + cornerRadius + (bottomLen * p), y: rect.minY))
                     currentLen = targetLen
-                } else {
-                    fgPath.line(to: NSPoint(x: rect.maxX - cornerRadius, y: rect.minY))
-                    currentLen += segLen
-                }
+                } else { fgPath.line(to: NSPoint(x: rect.maxX - cornerRadius, y: rect.minY)); currentLen += segLen }
             }
-            
             if targetLen > currentLen {
                 let segLen = arcLen
                 let center = NSPoint(x: rect.maxX - cornerRadius, y: rect.minY + cornerRadius)
@@ -93,28 +89,18 @@ class DockProgressView: NSView {
                     let p = (targetLen - currentLen) / segLen
                     fgPath.appendArc(withCenter: center, radius: cornerRadius, startAngle: 270, endAngle: 270 + (90 * p))
                     currentLen = targetLen
-                } else {
-                    fgPath.appendArc(withCenter: center, radius: cornerRadius, startAngle: 270, endAngle: 360)
-                    currentLen += segLen
-                }
+                } else { fgPath.appendArc(withCenter: center, radius: cornerRadius, startAngle: 270, endAngle: 360); currentLen += segLen }
             }
-            
             if targetLen > currentLen {
                 let segLen = straightLen
                 if targetLen < currentLen + segLen {
                     let p = (targetLen - currentLen) / segLen
                     fgPath.line(to: NSPoint(x: rect.maxX, y: rect.minY + cornerRadius + (straightLen * p)))
                     currentLen = targetLen
-                } else {
-                    fgPath.line(to: NSPoint(x: rect.maxX, y: startY))
-                    currentLen += segLen
-                }
+                } else { fgPath.line(to: NSPoint(x: rect.maxX, y: startY)); currentLen += segLen }
             }
-            
-            fgPath.lineWidth = barThick
-            fgPath.lineCapStyle = .round
-            NSColor.systemGreen.setStroke()
-            fgPath.stroke()
+            fgPath.lineWidth = barThick; fgPath.lineCapStyle = .round
+            getBarColor().setStroke(); fgPath.stroke()
         }
     }
 }
@@ -143,18 +129,11 @@ public struct SubFile: Identifiable, Codable, Hashable {
     public var isStopped: Bool = false
     
     public init(id: UUID = UUID(), index: Int, path: String, filename: String, totalBytes: Int64, downloadedBytes: Int64, isStopped: Bool) {
-        self.id = id
-        self.index = index
-        self.path = path
-        self.filename = filename
-        self.totalBytes = totalBytes
-        self.downloadedBytes = downloadedBytes
-        self.isStopped = isStopped
+        self.id = id; self.index = index; self.path = path; self.filename = filename
+        self.totalBytes = totalBytes; self.downloadedBytes = downloadedBytes; self.isStopped = isStopped
     }
     
-    enum CodingKeys: String, CodingKey {
-        case id, index, path, filename, totalBytes, downloadedBytes, isStopped
-    }
+    enum CodingKeys: String, CodingKey { case id, index, path, filename, totalBytes, downloadedBytes, isStopped }
     
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -169,12 +148,9 @@ public struct SubFile: Identifiable, Codable, Hashable {
     
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(id, forKey: .id)
-        try container.encode(index, forKey: .index)
-        try container.encode(path, forKey: .path)
-        try container.encode(filename, forKey: .filename)
-        try container.encode(totalBytes, forKey: .totalBytes)
-        try container.encode(downloadedBytes, forKey: .downloadedBytes)
+        try container.encode(id, forKey: .id); try container.encode(index, forKey: .index)
+        try container.encode(path, forKey: .path); try container.encode(filename, forKey: .filename)
+        try container.encode(totalBytes, forKey: .totalBytes); try container.encode(downloadedBytes, forKey: .downloadedBytes)
         try container.encode(isStopped, forKey: .isStopped)
     }
 }
@@ -208,7 +184,6 @@ public final class DownloadItem: Identifiable, Codable, Hashable {
     public var userAgent: String?
     public var referer: String?
 
-    public var _managesOwnSpeed: Bool = false
     var processes: [Process] = []
     var _lastBytes: Int64 = 0
     var _lastTickDate: Date? = nil
@@ -224,7 +199,8 @@ public final class DownloadItem: Identifiable, Codable, Hashable {
     public var progress: Double {
         if status == .completed { return 1.0 }
         guard totalBytes > 0 else { return 0 }
-        return min(1.0, Double(downloadedBytes) / Double(totalBytes))
+        let cappedDownloaded = min(downloadedBytes, totalBytes)
+        return Double(cappedDownloaded) / Double(totalBytes)
     }
 
     public var eta: TimeInterval? {
@@ -234,40 +210,37 @@ public final class DownloadItem: Identifiable, Codable, Hashable {
     }
 
     public var formattedSize: String { formatBytes(totalBytes) }
-    public var formattedDownloaded: String { formatBytes(downloadedBytes) }
+    
+    public var formattedDownloaded: String {
+        let displayBytes = totalBytes > 0 ? min(downloadedBytes, totalBytes) : downloadedBytes
+        return formatBytes(displayBytes)
+    }
+    
     public var formattedSpeed: String {
         guard speed > 0 else { return "–" }
         return formatBytes(Int64(speed)) + "/s"
     }
+    
     public var formattedETA: String? {
         guard let eta else { return nil }
         if eta < 60 { return "\(Int(eta))s" }
         if eta < 3600 { return "\(Int(eta/60))m \(Int(eta.truncatingRemainder(dividingBy:60)))s" }
         return "\(Int(eta/3600))h \(Int((eta.truncatingRemainder(dividingBy:3600))/60))m"
     }
+    
     public var transferLabel: String {
         if totalBytes > 0 { return "\(formattedDownloaded) of \(formattedSize)" }
         return downloadedBytes > 0 ? formattedDownloaded : "Zero KB"
     }
 
     public init(url: URL, filename: String, destination: URL) {
-        self.id = UUID()
-        self.url = url
-        self.filename = filename
+        self.id = UUID(); self.url = url; self.filename = filename
         self.destinationURL = destination.appendingPathComponent(filename)
         self.status = .queued
-        
-        // Removed url.isFileURL constraint so HTTP torrent links download as Torrents properly.
         let isTorrentFile = url.pathExtension.lowercased() == "torrent" || url.absoluteString.contains(".torrent")
         let computedType: DownloadType = (url.scheme == "magnet" || isTorrentFile) ? .torrent : .directLink
-        
-        self.type = computedType
-        self.totalBytes = 0
-        self.downloadedBytes = 0
-        self.speed = 0
-        self.dateAdded = Date()
-        self.connectionCount = 16
-        self.sourceHost = url.host ?? (computedType == .torrent ? "P2P Network" : "")
+        self.type = computedType; self.totalBytes = 0; self.downloadedBytes = 0; self.speed = 0; self.dateAdded = Date()
+        self.connectionCount = 16; self.sourceHost = url.host ?? (computedType == .torrent ? "P2P Network" : "")
     }
 
     enum CodingKeys: String, CodingKey {
@@ -279,66 +252,38 @@ public final class DownloadItem: Identifiable, Codable, Hashable {
 
     public required init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        id = try c.decode(UUID.self, forKey: .id)
-        url = try c.decode(URL.self, forKey: .url)
-        filename = try c.decode(String.self, forKey: .filename)
-        destinationURL = try c.decode(URL.self, forKey: .destinationURL)
+        id = try c.decode(UUID.self, forKey: .id); url = try c.decode(URL.self, forKey: .url)
+        filename = try c.decode(String.self, forKey: .filename); destinationURL = try c.decode(URL.self, forKey: .destinationURL)
         status = try c.decode(DownloadStatus.self, forKey: .status)
-        
-        if let rawStatus = try? c.decode(String.self, forKey: .status) {
-            if rawStatus == "Stopped" || rawStatus == "Cancelled" { status = .stopped }
-        }
-        
+        if let rawStatus = try? c.decode(String.self, forKey: .status) { if rawStatus == "Stopped" || rawStatus == "Cancelled" { status = .stopped } }
         type = try c.decodeIfPresent(DownloadType.self, forKey: .type) ?? .directLink
-        totalBytes = try c.decode(Int64.self, forKey: .totalBytes)
-        downloadedBytes = try c.decode(Int64.self, forKey: .downloadedBytes)
-        speed = 0
-        error = try c.decodeIfPresent(String.self, forKey: .error)
-        dateAdded = try c.decode(Date.self, forKey: .dateAdded)
+        totalBytes = try c.decode(Int64.self, forKey: .totalBytes); downloadedBytes = try c.decode(Int64.self, forKey: .downloadedBytes)
+        speed = 0; error = try c.decodeIfPresent(String.self, forKey: .error); dateAdded = try c.decode(Date.self, forKey: .dateAdded)
         dateCompleted = try c.decodeIfPresent(Date.self, forKey: .dateCompleted)
         connectionCount = try c.decodeIfPresent(Int.self, forKey: .connectionCount) ?? 16
-        mimeType = try c.decodeIfPresent(String.self, forKey: .mimeType)
-        sourceHost = try c.decodeIfPresent(String.self, forKey: .sourceHost) ?? ""
-        isPrepared = try c.decodeIfPresent(Bool.self, forKey: .isPrepared) ?? false
-        supportsRanges = try c.decodeIfPresent(Bool.self, forKey: .supportsRanges) ?? false
-        speedLimit = try c.decodeIfPresent(Int.self, forKey: .speedLimit) ?? 0
-        subFiles = try c.decodeIfPresent([SubFile].self, forKey: .subFiles) ?? []
-        batchURLs = try c.decodeIfPresent([String].self, forKey: .batchURLs)
-        cookies = try c.decodeIfPresent(String.self, forKey: .cookies)
-        userAgent = try c.decodeIfPresent(String.self, forKey: .userAgent)
-        referer = try c.decodeIfPresent(String.self, forKey: .referer)
+        mimeType = try c.decodeIfPresent(String.self, forKey: .mimeType); sourceHost = try c.decodeIfPresent(String.self, forKey: .sourceHost) ?? ""
+        isPrepared = try c.decodeIfPresent(Bool.self, forKey: .isPrepared) ?? false; supportsRanges = try c.decodeIfPresent(Bool.self, forKey: .supportsRanges) ?? false
+        speedLimit = try c.decodeIfPresent(Int.self, forKey: .speedLimit) ?? 0; subFiles = try c.decodeIfPresent([SubFile].self, forKey: .subFiles) ?? []
+        batchURLs = try c.decodeIfPresent([String].self, forKey: .batchURLs); cookies = try c.decodeIfPresent(String.self, forKey: .cookies)
+        userAgent = try c.decodeIfPresent(String.self, forKey: .userAgent); referer = try c.decodeIfPresent(String.self, forKey: .referer)
         retryCount = try c.decodeIfPresent(Int.self, forKey: .retryCount) ?? 0
     }
 
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(id, forKey: .id)
-        try c.encode(url, forKey: .url)
-        try c.encode(filename, forKey: .filename)
-        try c.encode(destinationURL, forKey: .destinationURL)
-        try c.encode(status, forKey: .status)
-        try c.encode(type, forKey: .type)
-        try c.encode(totalBytes, forKey: .totalBytes)
-        try c.encode(downloadedBytes, forKey: .downloadedBytes)
-        try c.encodeIfPresent(error, forKey: .error)
-        try c.encode(dateAdded, forKey: .dateAdded)
-        try c.encodeIfPresent(dateCompleted, forKey: .dateCompleted)
-        try c.encode(connectionCount, forKey: .connectionCount)
-        try c.encodeIfPresent(mimeType, forKey: .mimeType)
-        try c.encode(sourceHost, forKey: .sourceHost)
-        try c.encode(isPrepared, forKey: .isPrepared)
-        try c.encode(supportsRanges, forKey: .supportsRanges)
-        try c.encode(speedLimit, forKey: .speedLimit)
-        try c.encode(subFiles, forKey: .subFiles)
-        try c.encodeIfPresent(batchURLs, forKey: .batchURLs)
-        try c.encodeIfPresent(cookies, forKey: .cookies)
-        try c.encodeIfPresent(userAgent, forKey: .userAgent)
-        try c.encodeIfPresent(referer, forKey: .referer)
+        try c.encode(id, forKey: .id); try c.encode(url, forKey: .url); try c.encode(filename, forKey: .filename)
+        try c.encode(destinationURL, forKey: .destinationURL); try c.encode(status, forKey: .status); try c.encode(type, forKey: .type)
+        try c.encode(totalBytes, forKey: .totalBytes); try c.encode(downloadedBytes, forKey: .downloadedBytes)
+        try c.encodeIfPresent(error, forKey: .error); try c.encode(dateAdded, forKey: .dateAdded)
+        try c.encodeIfPresent(dateCompleted, forKey: .dateCompleted); try c.encode(connectionCount, forKey: .connectionCount)
+        try c.encodeIfPresent(mimeType, forKey: .mimeType); try c.encode(sourceHost, forKey: .sourceHost)
+        try c.encode(isPrepared, forKey: .isPrepared); try c.encode(supportsRanges, forKey: .supportsRanges)
+        try c.encode(speedLimit, forKey: .speedLimit); try c.encode(subFiles, forKey: .subFiles)
+        try c.encodeIfPresent(batchURLs, forKey: .batchURLs); try c.encodeIfPresent(cookies, forKey: .cookies)
+        try c.encodeIfPresent(userAgent, forKey: .userAgent); try c.encodeIfPresent(referer, forKey: .referer)
         try c.encode(retryCount, forKey: .retryCount)
     }
 }
-
-// MARK: - Engine
 
 @Observable
 @MainActor
@@ -349,8 +294,6 @@ public final class DownloadEngine {
 
     private let persistenceURL: URL
     private var speedTimer: Timer?
-
-    private let emaAlpha: Double = 0.2
 
     private var maxConcurrent: Int {
         let max = UserDefaults.standard.integer(forKey: "maxConcurrentDownloads")
@@ -378,69 +321,93 @@ public final class DownloadEngine {
                 item.subFiles = []
             }
         }
+        
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
 
-    public func addDownload(urls: [URL], destination: URL? = nil, connections: Int = 16, cookies: String? = nil, userAgent: String? = nil, referer: String? = nil, filename: String? = nil) {
+public func addDownload(urls: [URL], destination: URL? = nil, connections: Int = 16, cookies: String? = nil, userAgent: String? = nil, referer: String? = nil, filename: String? = nil) {
         guard !urls.isEmpty else { return }
-        let dest = destination ?? downloadsDir()
+        let defaults = UserDefaults.standard
+        let defaultPath = defaults.string(forKey: "defaultDownloadPath") ?? downloadsDir().path
+        let dest = destination ?? URL(fileURLWithPath: defaultPath)
 
+        let newItem: DownloadItem
+        
         if urls.count == 1 {
             let url = urls[0]
             let isTorrentFile = url.pathExtension.lowercased() == "torrent"
 
             let computedFilename: String
-            if let provided = filename {
-                computedFilename = provided
-            } else if url.scheme == "magnet" {
-                computedFilename = suggestMagnetName(from: url)
-            } else if isTorrentFile {
+            if let provided = filename { computedFilename = provided }
+            else if url.scheme == "magnet" { computedFilename = suggestMagnetName(from: url) }
+            else if isTorrentFile {
                 let base = url.deletingPathExtension().lastPathComponent
                 computedFilename = base.isEmpty ? "Torrent Download" : base
-            } else {
-                computedFilename = suggestFilename(from: url)
-            }
+            } else { computedFilename = suggestFilename(from: url) }
 
-            let item = DownloadItem(url: url, filename: computedFilename, destination: dest)
-            item.connectionCount = connections
-            item.cookies = cookies
-            item.userAgent = userAgent
-            item.referer = referer
-            
-            items.insert(item, at: 0)
-            persist()
-            scheduleNext()
-            NotificationCenter.default.post(name: .openProgressWindow, object: nil, userInfo: ["id": item.id])
+            newItem = DownloadItem(url: url, filename: computedFilename, destination: dest)
+            newItem.connectionCount = connections
+            newItem.cookies = cookies; newItem.userAgent = userAgent; newItem.referer = referer
         } else {
             let computedFilename = filename ?? "Batch Download (\(urls.count) files)"
-            let item = DownloadItem(url: urls[0], filename: computedFilename, destination: dest)
-            item.type = .batch
-            item.batchURLs = urls.map { $0.absoluteString }
-            
-            item.subFiles = urls.enumerated().map { index, u in
+            newItem = DownloadItem(url: urls[0], filename: computedFilename, destination: dest)
+            newItem.type = .batch; newItem.batchURLs = urls.map { $0.absoluteString }
+            newItem.subFiles = urls.enumerated().map { index, u in
                 SubFile(index: index + 1, path: u.lastPathComponent, filename: u.lastPathComponent, totalBytes: 0, downloadedBytes: 0, isStopped: false)
             }
-            
-            item.connectionCount = connections
-            item.cookies = cookies
-            item.userAgent = userAgent
-            item.referer = referer
-            item.sourceHost = "Multiple Sources"
-            
-            items.insert(item, at: 0)
-            persist()
-            scheduleNext()
-            NotificationCenter.default.post(name: .openProgressWindow, object: nil, userInfo: ["id": item.id])
+            newItem.connectionCount = connections
+            newItem.cookies = cookies; newItem.userAgent = userAgent; newItem.referer = referer
+            newItem.sourceHost = "Multiple Sources"
         }
+
+        // Set to queued first, then scheduleNext will pick it up immediately
+        newItem.status = .queued
+        items.insert(newItem, at: 0)
+        persist()
+        
+        // This triggers the engine to look at the queue and start the download
+        scheduleNext()
+        
+        NotificationCenter.default.post(name: .openProgressWindow, object: nil, userInfo: ["id": newItem.id])
+    }
+    
+    private func getProxyString() -> String? {
+        let defaults = UserDefaults.standard
+        guard defaults.bool(forKey: "proxyEnabled") else { return nil }
+        let host = defaults.string(forKey: "proxyHost") ?? ""
+        let port = defaults.string(forKey: "proxyPort") ?? "8080"
+        let user = defaults.string(forKey: "proxyUsername") ?? ""
+        let pass = defaults.string(forKey: "proxyPassword") ?? ""
+        
+        guard !host.isEmpty else { return nil }
+        var prefix = host.hasPrefix("http") || host.hasPrefix("socks") ? host : "http://\(host)"
+        if !user.isEmpty {
+            let auth = pass.isEmpty ? "\(user)@" : "\(user):\(pass)@"
+            if let schemeRange = prefix.range(of: "://") {
+                prefix.insert(contentsOf: auth, at: schemeRange.upperBound)
+            }
+        }
+        return "\(prefix):\(port)"
+    }
+
+    private func notifyCompletion(for item: DownloadItem) {
+        let defaults = UserDefaults.standard
+        if defaults.bool(forKey: "playSoundOnComplete") { NSSound(named: .init("Glass"))?.play() }
+        
+        let content = UNMutableNotificationContent()
+        content.title = "Download Complete"
+        content.body = item.filename
+        content.sound = .default
+        
+        let request = UNNotificationRequest(identifier: item.id.uuidString, content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(request)
     }
 
     public func stop(_ item: DownloadItem) {
         guard item.status == .downloading || item.status == .queued else { return }
         killProcesses(item)
-        item.status = .stopped
-        item.speed = 0
-        item._lastTickDate = nil
-        persist()
-        scheduleNext()
+        item.status = .stopped; item.speed = 0; item._lastTickDate = nil
+        persist(); scheduleNext()
     }
     
     public func stopAll() {
@@ -456,70 +423,44 @@ public final class DownloadEngine {
 
     public func retry(_ item: DownloadItem) {
         killProcesses(item)
-        
         try? FileManager.default.removeItem(at: item.tempDirURL)
-        if item.type != .torrent && item.type != .batch {
-            try? FileManager.default.removeItem(at: item.destinationURL)
-        }
+        if item.type != .torrent && item.type != .batch { try? FileManager.default.removeItem(at: item.destinationURL) }
         
-        item.retryCount = 0
-        item.status = .queued
-        item.downloadedBytes = 0
-        item.totalBytes = 0
-        item.speed = 0
-        item.error = nil
-        item.isPrepared = false
-        item.supportsRanges = false
+        item.retryCount = 0; item.status = .queued
+        item.downloadedBytes = 0; item.totalBytes = 0
+        item.speed = 0; item.error = nil; item.isPrepared = false; item.supportsRanges = false
         
-        if item.type != .batch {
-            item.subFiles = []
-        } else {
-            for i in item.subFiles.indices {
-                item.subFiles[i].downloadedBytes = 0
-                item.subFiles[i].totalBytes = 0
-            }
+        if item.type != .batch { item.subFiles = [] }
+        else {
+            for i in item.subFiles.indices { item.subFiles[i].downloadedBytes = 0; item.subFiles[i].totalBytes = 0 }
         }
         
         item._lastTickDate = nil
-        persist()
-        scheduleNext()
+        persist(); scheduleNext()
     }
 
     public func remove(_ item: DownloadItem, trashFile: Bool = false) {
         killProcesses(item)
         try? FileManager.default.removeItem(at: item.tempDirURL)
-        
         if trashFile || item.status != .completed {
             let fileURL = item.destinationURL
-            if FileManager.default.fileExists(atPath: fileURL.path) {
-                try? FileManager.default.trashItem(at: fileURL, resultingItemURL: nil)
-            }
+            if FileManager.default.fileExists(atPath: fileURL.path) { try? FileManager.default.trashItem(at: fileURL, resultingItemURL: nil) }
         }
-        
         items.removeAll { $0.id == item.id }
-        persist()
-        scheduleNext()
+        persist(); scheduleNext()
     }
 
     public func updateSpeedLimit(for item: DownloadItem, limitKB: Int) {
         guard item.speedLimit != limitKB else { return }
         item.speedLimit = limitKB
         persist()
-        if item.status == .downloading {
-            stop(item)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self.resume(item) }
-        }
+        if item.status == .downloading { stop(item); DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self.resume(item) } }
     }
 
     public func updateTorrentSelection(for item: DownloadItem) {
         persist()
-        if item.status == .downloading {
-            stop(item)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self.resume(item) }
-        } else if item.status == .stopped || item.status == .completed {
-            item.status = .stopped
-            resume(item)
-        }
+        if item.status == .downloading { stop(item); DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self.resume(item) } }
+        else if item.status == .stopped || item.status == .completed { item.status = .stopped; resume(item) }
     }
 
     private func scheduleNext() {
@@ -533,15 +474,12 @@ public final class DownloadEngine {
         if item.url.scheme == "blob" {
             item.status = .failed
             item.error = "Blob URLs are browser-local and cannot be downloaded directly. Please download the .torrent file to your Mac and add it to Dispatch manually."
-            persist()
-            scheduleNext()
+            persist(); scheduleNext()
             return
         }
 
-        item.status = .downloading
-        item.error = nil
-        item._lastBytes = item.downloadedBytes
-        item._lastTickDate = Date()
+        item.status = .downloading; item.error = nil
+        item._lastBytes = item.downloadedBytes; item._lastTickDate = Date()
         persist()
 
         if item.type == .directLink && item.url.scheme == "data" {
@@ -550,14 +488,8 @@ public final class DownloadEngine {
         }
 
         if item.type == .batch {
-            if let exe = aria2Path {
-                Task { await runBatch(item, executable: exe) }
-            } else {
-                item.status = .failed
-                item.error = "Missing Engine. Please run 'brew install aria2' in your Terminal."
-                persist()
-                scheduleNext()
-            }
+            if let exe = aria2Path { Task { await runBatch(item, executable: exe) } }
+            else { item.status = .failed; item.error = "Missing Engine. Please run 'brew install aria2' in your Terminal."; persist(); scheduleNext() }
             return
         }
 
@@ -566,17 +498,12 @@ public final class DownloadEngine {
         } else if item.type == .directLink {
             Task { await runCurl(item) }
         } else {
-            item.status = .failed
-            item.error = "Missing Engine. Please run 'brew install aria2' in your Terminal."
-            persist()
-            scheduleNext()
+            item.status = .failed; item.error = "Missing Engine. Please run 'brew install aria2' in your Terminal."
+            persist(); scheduleNext()
         }
     }
 
-    // ── Batch Runner (Sequential Download) ──────────────────────────────────
     private func runBatch(_ item: DownloadItem, executable: String) async {
-        await MainActor.run { item._managesOwnSpeed = true }
-
         let tempDir = await MainActor.run { item.tempDirURL }
         try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
 
@@ -584,8 +511,7 @@ public final class DownloadEngine {
             if !item.isPrepared {
                 item.destinationURL = uniqueURL(item.destinationURL)
                 try? FileManager.default.createDirectory(at: item.destinationURL, withIntermediateDirectories: true)
-                item.isPrepared = true
-                persist()
+                item.isPrepared = true; persist()
             }
         }
 
@@ -607,9 +533,7 @@ public final class DownloadEngine {
 
             let targetURLStr = urls[i]
             guard let originalURL = URL(string: targetURLStr) else { continue }
-
             let resolvedURL = await resolveDirectLink(url: originalURL, item: item)
-
             await downloadSingleBatchFile(item: item, index: i, url: resolvedURL, executable: executable, tempDir: tempDir)
 
             let newStatus = await MainActor.run { item.status }
@@ -619,25 +543,16 @@ public final class DownloadEngine {
         let finalStatus = await MainActor.run { item.status }
         if finalStatus == .downloading {
             await MainActor.run {
-                item.status = .completed
-                item.dateCompleted = Date()
-                item.speed = 0
-                item._lastTickDate = nil
-                persist()
-                scheduleNext()
+                item.status = .completed; item.dateCompleted = Date(); item.speed = 0; item._lastTickDate = nil
+                self.notifyCompletion(for: item)
+                persist(); scheduleNext()
             }
         } else if finalStatus == .failed {
             await MainActor.run {
                 if item.retryCount < 3 {
-                    item.retryCount += 1
-                    item.status = .queued
-                    item.error = nil
-                    persist()
-                    scheduleNext()
-                } else {
-                    persist()
-                    scheduleNext()
-                }
+                    item.retryCount += 1; item.status = .queued; item.error = nil
+                    persist(); scheduleNext()
+                } else { persist(); scheduleNext() }
             }
         }
     }
@@ -647,29 +562,27 @@ public final class DownloadEngine {
         try? FileManager.default.createDirectory(atPath: destDir, withIntermediateDirectories: true)
 
         let conns      = await MainActor.run { item.connectionCount }
-        let speedLimit = await MainActor.run { item.speedLimit }
+        let localLimit = await MainActor.run { item.speedLimit }
         let cookies   = await MainActor.run { item.cookies }
         let userAgent = await MainActor.run { item.userAgent }
         let referer   = await MainActor.run { item.referer }
+
+        let globalLimit = UserDefaults.standard.integer(forKey: "globalSpeedLimit")
+        let activeLimit = (localLimit > 0) ? localLimit : globalLimit
 
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: executable)
         var didLaunch = false
 
         var args = [
-            "--dir=\(destDir)",
-            "--continue=true",
-            "--file-allocation=none",
-            "--max-connection-per-server=\(conns)",
-            "--split=\(conns)",
-            "--min-split-size=1M",
-            "--seed-time=0",
-            "--auto-file-renaming=false",
-            "--summary-interval=1",
-            "--console-log-level=notice"
+            "--dir=\(destDir)", "--continue=true", "--file-allocation=none",
+            "--max-connection-per-server=\(conns)", "--split=\(conns)", "--min-split-size=1M",
+            "--seed-time=0", "--auto-file-renaming=false", "--summary-interval=1", "--console-log-level=notice"
         ]
-        if speedLimit > 0 { args.append("--max-overall-download-limit=\(speedLimit)K") }
+        
+        if activeLimit > 0 { args.append("--max-overall-download-limit=\(activeLimit)K") }
         if let cookies = cookies, !cookies.isEmpty { args.append("--header=Cookie: \(cookies)") }
+        if let proxy = getProxyString() { args.append("--all-proxy=\(proxy)") }
 
         let host = url.host ?? ""
         let resolvedReferer = (referer != nil && !referer!.isEmpty) ? referer! : "https://\(host)/"
@@ -704,38 +617,26 @@ public final class DownloadEngine {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 100_000_000)
 
-                var fileDl: Int64 = 0
-                var fileTot: Int64 = 0
-                var fileName: String?
+                var fileDl: Int64 = 0; var fileTot: Int64 = 0; var fileName: String?
 
                 if let enumerator = FileManager.default.enumerator(at: URL(fileURLWithPath: destDir), includingPropertiesForKeys: [.totalFileAllocatedSizeKey, .fileSizeKey]) {
                     for case let fileURL as URL in enumerator {
                         if fileURL.pathExtension == "aria2" { continue }
                         fileName = fileURL.lastPathComponent
                         if let vals = try? fileURL.resourceValues(forKeys: [.totalFileAllocatedSizeKey, .fileSizeKey]) {
-                            let physical = Int64(vals.totalFileAllocatedSize ?? 0)
-                            let logical = Int64(vals.fileSize ?? 0)
-                            fileDl = min(physical, logical)
-                            fileTot = logical
+                            let physical = Int64(vals.totalFileAllocatedSize ?? 0); let logical = Int64(vals.fileSize ?? 0)
+                            fileDl = min(physical, logical); fileTot = logical
                         }
                     }
                 }
 
                 await MainActor.run {
                     if item.subFiles.indices.contains(index) {
-                        if fileDl > item.subFiles[index].downloadedBytes {
-                            item.subFiles[index].downloadedBytes = fileDl
-                        }
-                        if let fn = fileName {
-                            item.subFiles[index].filename = fn
-                            item.subFiles[index].path = fn
-                        }
+                        if fileDl > item.subFiles[index].downloadedBytes { item.subFiles[index].downloadedBytes = fileDl }
+                        if let fn = fileName { item.subFiles[index].filename = fn; item.subFiles[index].path = fn }
                     }
-                    
                     let sumDl = item.subFiles.map { $0.downloadedBytes }.reduce(0, +)
-                    if sumDl > item.downloadedBytes {
-                        item.downloadedBytes = sumDl
-                    }
+                    if sumDl > item.downloadedBytes { item.downloadedBytes = sumDl }
                     item.totalBytes = item.subFiles.map { max($0.totalBytes, $0.downloadedBytes) }.reduce(0, +)
                 }
             }
@@ -749,29 +650,9 @@ public final class DownloadEngine {
                         let sub = line[range.upperBound...]
                         let bytesStr = sub.prefix(while: { $0.isNumber })
                         if let bytes = Int64(bytesStr), bytes > 0 {
-                            await MainActor.run {
-                                if item.subFiles.indices.contains(index) {
-                                    item.subFiles[index].totalBytes = bytes
-                                }
-                            }
+                            await MainActor.run { if item.subFiles.indices.contains(index) { item.subFiles[index].totalBytes = bytes } }
                         }
                     }
-                }
-
-                if line.contains("[#") && line.contains("CN:") {
-                     var parsedSpeed: Double? = nil
-                     let blocks = line.components(separatedBy: "[#")
-                     for block in blocks {
-                         guard block.contains("CN:") else { continue }
-                         if let dlRange = block.range(of: "DL:") {
-                            let sub = block[dlRange.upperBound...]
-                            let speedStr = sub.prefix(while: { $0 != " " && $0 != "]" })
-                            parsedSpeed = Double(parseAriaSize(String(speedStr)))
-                         }
-                     }
-                     if let s = parsedSpeed {
-                         await MainActor.run { item.speed = s }
-                     }
                 }
             }
         }
@@ -780,12 +661,10 @@ public final class DownloadEngine {
 
         await withCheckedContinuation { cont in
             proc.terminationHandler = { _ in cont.resume() }
-            do { try proc.run(); didLaunch = true }
-            catch { cont.resume() }
+            do { try proc.run(); didLaunch = true } catch { cont.resume() }
         }
 
-        pollTask.cancel()
-        sizeSnifferTask.cancel()
+        pollTask.cancel(); sizeSnifferTask.cancel()
         
         let isStillTracked = await MainActor.run {
             let tracked = item.processes.contains(where: { $0 === proc })
@@ -797,10 +676,7 @@ public final class DownloadEngine {
 
         guard didLaunch else {
             if status == .downloading && isStillTracked {
-                await MainActor.run {
-                    item.status = .failed
-                    item.error = "Failed to launch batch sub-file."
-                }
+                await MainActor.run { item.status = .failed; item.error = "Failed to launch batch sub-file." }
             }
             return
         }
@@ -816,39 +692,28 @@ public final class DownloadEngine {
 
                     await MainActor.run {
                         if item.subFiles.indices.contains(index) {
-                            item.subFiles[index].path = fileURL.lastPathComponent
-                            item.subFiles[index].filename = fileURL.lastPathComponent
+                            item.subFiles[index].path = fileURL.lastPathComponent; item.subFiles[index].filename = fileURL.lastPathComponent
                             let sz = (try? destPath.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
-                            item.subFiles[index].downloadedBytes = Int64(sz)
-                            item.subFiles[index].totalBytes = Int64(sz)
+                            item.subFiles[index].downloadedBytes = Int64(sz); item.subFiles[index].totalBytes = Int64(sz)
                         }
-                        
                         let sumDl = item.subFiles.map { $0.downloadedBytes }.reduce(0, +)
-                        if sumDl > item.downloadedBytes {
-                            item.downloadedBytes = sumDl
-                        }
+                        if sumDl > item.downloadedBytes { item.downloadedBytes = sumDl }
                         item.totalBytes = item.subFiles.map { max($0.totalBytes, $0.downloadedBytes) }.reduce(0, +)
                     }
                 }
             }
         } else if status == .downloading && isStillTracked {
-             await MainActor.run {
-                 item.status = .failed
-                 item.error = aria2HumanError(exitCode: proc.terminationStatus)
-             }
+             await MainActor.run { item.status = .failed; item.error = aria2HumanError(exitCode: proc.terminationStatus) }
         }
-
         try? FileManager.default.removeItem(atPath: destDir)
     }
 
     private func resolveDirectLink(url: URL, item: DownloadItem) async -> URL {
         guard url.host?.contains("fuckingfast.co") == true, !url.path.starts(with: "/dl/") else { return url }
-        
         var request = URLRequest(url: url)
         
         let ua = (item.userAgent != nil && !item.userAgent!.isEmpty)
-            ? item.userAgent!
-            : "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+            ? item.userAgent! : "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
         
         request.setValue(ua, forHTTPHeaderField: "User-Agent")
         request.setValue("text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8", forHTTPHeaderField: "Accept")
@@ -857,50 +722,31 @@ public final class DownloadEngine {
         request.setValue("document", forHTTPHeaderField: "Sec-Fetch-Dest")
         request.setValue("none", forHTTPHeaderField: "Sec-Fetch-Site")
         
-        if let cookies = item.cookies, !cookies.isEmpty {
-            request.setValue(cookies, forHTTPHeaderField: "Cookie")
-        }
+        if let cookies = item.cookies, !cookies.isEmpty { request.setValue(cookies, forHTTPHeaderField: "Cookie") }
         
         var attempts = 0
         let maxAttempts = 3
-        
         while attempts < maxAttempts {
             attempts += 1
-            
-            guard let (data, response) = try? await URLSession.shared.data(for: request) else {
-                return url
-            }
-            
+            guard let (data, response) = try? await URLSession.shared.data(for: request) else { return url }
             let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 200
-            
-            if statusCode == 429 || statusCode == 503 {
-                try? await Task.sleep(nanoseconds: 3_000_000_000)
-                continue
-            }
-            
+            if statusCode == 429 || statusCode == 503 { try? await Task.sleep(nanoseconds: 3_000_000_000); continue }
             guard let html = String(data: data, encoding: .utf8) else { return url }
             
-            // Your exact regex implementation
             let pattern = #"window\.open\(["'](https?://[^\s"'\)]+)"#
             guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else { return url }
-            
             let range = NSRange(location: 0, length: html.utf16.count)
             if let match = regex.firstMatch(in: html, options: [], range: range),
                let swiftRange = Range(match.range(at: 1), in: html) {
                 let extracted = String(html[swiftRange])
-                if let finalURL = URL(string: extracted) {
-                    return finalURL
-                }
+                if let finalURL = URL(string: extracted) { return finalURL }
             }
             break
         }
         return url
     }
-    // ─────────────────────────────────────────────────────────────────────────
 
     private func runAria2(_ item: DownloadItem, executable: String) async {
-        await MainActor.run { item._managesOwnSpeed = true }
-        
         let tempDir = await MainActor.run { item.tempDirURL }
         try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
 
@@ -910,17 +756,12 @@ public final class DownloadEngine {
                 if !files.isEmpty {
                     item.subFiles = files
                     item.totalBytes = files.map { $0.totalBytes }.reduce(0, +)
-                    
-                    // UPDATE FILENAME BASED ON METADATA ROOT
-                    if files.count == 1 {
-                        item.filename = files[0].filename
-                    } else {
+                    if files.count == 1 { item.filename = files[0].filename }
+                    else {
                         let paths = files.map { ($0.path as NSString).pathComponents }
                         if let firstPath = paths.first, firstPath.count > 1 {
                             let possibleRoot = firstPath[0]
-                            if paths.allSatisfy({ $0.first == possibleRoot }) {
-                                item.filename = possibleRoot
-                            }
+                            if paths.allSatisfy({ $0.first == possibleRoot }) { item.filename = possibleRoot }
                         }
                     }
                 }
@@ -928,12 +769,7 @@ public final class DownloadEngine {
             
             let stillEmpty = await MainActor.run { item.subFiles.isEmpty }
             if stillEmpty && item.url.isFileURL {
-                await MainActor.run {
-                    item.status = .failed
-                    item.error = "Failed to parse .torrent file metadata."
-                    item.speed = 0
-                    persist(); scheduleNext()
-                }
+                await MainActor.run { item.status = .failed; item.error = "Failed to parse .torrent file metadata."; item.speed = 0; persist(); scheduleNext() }
                 return
             }
         }
@@ -942,15 +778,11 @@ public final class DownloadEngine {
             if !item.isPrepared {
                 let policy = UserDefaults.standard.string(forKey: "fileCollisionBehavior") ?? "rename"
                 if item.type != .torrent {
-                    if policy == "replace" {
-                        try? FileManager.default.removeItem(at: item.destinationURL)
-                    } else {
-                        item.destinationURL = uniqueURL(item.destinationURL)
-                    }
+                    if policy == "replace" { try? FileManager.default.removeItem(at: item.destinationURL) }
+                    else { item.destinationURL = uniqueURL(item.destinationURL) }
                     FileManager.default.createFile(atPath: item.destinationURL.path, contents: nil)
                 }
-                item.isPrepared = true
-                persist()
+                item.isPrepared = true; persist()
             }
         }
 
@@ -962,38 +794,30 @@ public final class DownloadEngine {
         let fileName   = await MainActor.run { item.filename }
         let conns      = await MainActor.run { item.connectionCount }
         let type       = await MainActor.run { item.type }
-        
-        // Resolve URL before download (if direct link)
         let originalURL = await MainActor.run { item.url }
         let url = type == .directLink ? await resolveDirectLink(url: originalURL, item: item) : originalURL
         
-        let speedLimit = await MainActor.run { item.speedLimit }
+        let localLimit = await MainActor.run { item.speedLimit }
         let cookies   = await MainActor.run { item.cookies }
         let userAgent = await MainActor.run { item.userAgent }
         let referer   = await MainActor.run { item.referer }
 
+        let globalLimit = UserDefaults.standard.integer(forKey: "globalSpeedLimit")
+        let activeLimit = (localLimit > 0) ? localLimit : globalLimit
+
         var args = [
-            "--dir=\(destDir)",
-            "--continue=true",
-            "--file-allocation=none",
-            "--max-connection-per-server=\(conns)",
-            "--split=\(conns)",
-            "--min-split-size=1M",
-            "--seed-time=0",
-            "--auto-file-renaming=false",
-            "--summary-interval=1",
-            "--console-log-level=notice"
+            "--dir=\(destDir)", "--continue=true", "--file-allocation=none",
+            "--max-connection-per-server=\(conns)", "--split=\(conns)", "--min-split-size=1M",
+            "--seed-time=0", "--auto-file-renaming=false", "--summary-interval=1", "--console-log-level=notice"
         ]
 
-        if speedLimit > 0 { args.append("--max-overall-download-limit=\(speedLimit)K") }
+        if activeLimit > 0 { args.append("--max-overall-download-limit=\(activeLimit)K") }
         if type != .torrent { args.append("--out=\(fileName)") }
-        
         if let cookies = cookies, !cookies.isEmpty { args.append("--header=Cookie: \(cookies)") }
+        if let proxy = getProxyString() { args.append("--all-proxy=\(proxy)") }
         
-        // ── Spoofing Engine ───────────────────────────────────────────────
         let host = url.host ?? ""
         let resolvedReferer = (referer != nil && !referer!.isEmpty) ? referer! : "https://\(host)/"
-        
         let refHost = URL(string: resolvedReferer)?.host ?? host
         let isSameOrigin = host.hasSuffix(refHost) || refHost.hasSuffix(host)
         
@@ -1006,93 +830,55 @@ public final class DownloadEngine {
         args.append("--header=Upgrade-Insecure-Requests: 1")
         
         let ua = (userAgent != nil && !userAgent!.isEmpty)
-            ? userAgent!
-            : "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+            ? userAgent! : "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
         args.append("--user-agent=\(ua)")
         args.append("--header=Sec-Ch-Ua: \"Google Chrome\";v=\"131\", \"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"")
         args.append("--header=Sec-Ch-Ua-Mobile: ?0")
         args.append("--header=Sec-Ch-Ua-Platform: \"macOS\"")
-
         args.append("--header=Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8")
         args.append("--header=Accept-Language: en-US,en;q=0.9")
-        // ──────────────────────────────────────────────────────────────────
 
         if type == .torrent {
             args += [
-                "--enable-dht=true",
-                "--bt-enable-lpd=true",
-                "--enable-peer-exchange=true",
-                "--bt-save-metadata=true",
-                "--dht-listen-port=6881-6999",
-                "--bt-tracker=udp://tracker.opentrackr.org:1337/announce,udp://open.stealth.si:80/announce,udp://tracker.torrent.eu.org:451/announce,udp://open.demonii.com:1337/announce,udp://exodus.desync.com:6969/announce",
+                "--enable-dht=true", "--bt-enable-lpd=true", "--enable-peer-exchange=true", "--bt-save-metadata=true",
+                "--dht-listen-port=6881-6999", "--bt-tracker=udp://tracker.opentrackr.org:1337/announce,udp://open.stealth.si:80/announce,udp://tracker.torrent.eu.org:451/announce,udp://tracker.dler.org:6969/announce,udp://open.demonii.com:1337/announce,udp://exodus.desync.com:6969/announce"
             ]
             let activeIndices = await MainActor.run { item.subFiles.filter { !$0.isStopped }.map { String($0.index) }.joined(separator: ",") }
-            if !activeIndices.isEmpty {
-                args.append("--select-file=\(activeIndices)")
-            } else if !(await MainActor.run { item.subFiles.isEmpty }) {
-                await MainActor.run { stop(item) }
-                return
-            }
+            if !activeIndices.isEmpty { args.append("--select-file=\(activeIndices)") }
+            else if !(await MainActor.run { item.subFiles.isEmpty }) { await MainActor.run { stop(item) }; return }
         }
         
         args.append(url.isFileURL ? url.path : url.absoluteString)
-
         proc.arguments = args
-        let stdoutPipe = Pipe()
-        proc.standardOutput = stdoutPipe
-        proc.standardError = FileHandle.nullDevice
+        let stdoutPipe = Pipe(); proc.standardOutput = stdoutPipe; proc.standardError = FileHandle.nullDevice
         
         let sizeSnifferTask = Task { [weak item] in
             guard let item else { return }
             for try await line in stdoutPipe.fileHandleForReading.bytes.lines {
                 if line.contains("Length: ") {
                     if let range = line.range(of: "Length: ") {
-                        let sub = line[range.upperBound...]
-                        let bytesStr = sub.prefix(while: { $0.isNumber })
-                        if let bytes = Int64(bytesStr), bytes > 0 {
-                            await MainActor.run {
-                                if item.totalBytes == 0 { item.totalBytes = bytes }
-                            }
-                        }
+                        let sub = line[range.upperBound...]; let bytesStr = sub.prefix(while: { $0.isNumber })
+                        if let bytes = Int64(bytesStr), bytes > 0 { await MainActor.run { if item.totalBytes == 0 { item.totalBytes = bytes } } }
                     }
                 }
                 
                 if line.contains("[#") && line.contains("CN:") {
-                    var totalDl: Int64 = 0
-                    var totalSz: Int64 = 0
-                    var parsedSpeed: Double? = nil
-                    var foundMatch = false
-                    
+                    var totalDl: Int64 = 0; var totalSz: Int64 = 0; var foundMatch = false
                     let blocks = line.components(separatedBy: "[#")
                     for block in blocks {
                         guard block.contains("CN:") else { continue }
                         let parts = block.split(separator: " ")
                         guard parts.count >= 2 else { continue }
-                        
-                        let transferPart = parts[1]
-                        let sizes = transferPart.components(separatedBy: "(")[0]
-                        let sizeParts = sizes.components(separatedBy: "/")
+                        let transferPart = parts[1]; let sizes = transferPart.components(separatedBy: "(")[0]; let sizeParts = sizes.components(separatedBy: "/")
                         
                         totalDl += parseAriaSize(sizeParts[0])
-                        if sizeParts.count > 1 {
-                            totalSz += parseAriaSize(sizeParts[1])
-                        }
+                        if sizeParts.count > 1 { totalSz += parseAriaSize(sizeParts[1]) }
                         foundMatch = true
-                        
-                        if let dlRange = block.range(of: "DL:") {
-                            let sub = block[dlRange.upperBound...]
-                            let speedStr = sub.prefix(while: { $0 != " " && $0 != "]" })
-                            parsedSpeed = Double(parseAriaSize(String(speedStr)))
-                        }
                     }
-                    
                     if foundMatch {
                         await MainActor.run {
-                            if totalDl > item.downloadedBytes {
-                                item.downloadedBytes = totalDl
-                            }
+                            if totalDl > item.downloadedBytes { item.downloadedBytes = totalDl }
                             if totalSz > item.totalBytes { item.totalBytes = totalSz }
-                            if let s = parsedSpeed { item.speed = s }
                         }
                     }
                 }
@@ -1102,38 +888,27 @@ public final class DownloadEngine {
         let pollTask = Task { [weak item] in
             guard let item else { return }
             while !Task.isCancelled {
-                // Read physical data size 10x per sec to bridge Aria2's 1-second stdout update gap
                 try? await Task.sleep(nanoseconds: 100_000_000)
-                
                 if item.type == .torrent {
                     let currentSubFiles = await MainActor.run { item.subFiles }
-                    
                     if currentSubFiles.isEmpty {
                         let enumerator = FileManager.default.enumerator(at: tempDir, includingPropertiesForKeys: nil, options: [.skipsSubdirectoryDescendants])
                         var foundTorrent: URL? = nil
                         while let fileURL = enumerator?.nextObject() as? URL {
-                            if fileURL.pathExtension == "torrent" {
-                                foundTorrent = fileURL
-                                break
-                            }
+                            if fileURL.pathExtension == "torrent" { foundTorrent = fileURL; break }
                         }
                         
                         if let torrent = foundTorrent {
                             let newSubFiles = await self.fetchLocalTorrentInfo(path: torrent.path, executable: executable)
                             if !newSubFiles.isEmpty {
                                 await MainActor.run {
-                                    item.subFiles = newSubFiles
-                                    item.totalBytes = newSubFiles.map { $0.totalBytes }.reduce(0, +)
-                                    // UPDATE FILENAME ON THE FLY FOR MAGNETS
-                                    if newSubFiles.count == 1 {
-                                        item.filename = newSubFiles[0].filename
-                                    } else {
+                                    item.subFiles = newSubFiles; item.totalBytes = newSubFiles.map { $0.totalBytes }.reduce(0, +)
+                                    if newSubFiles.count == 1 { item.filename = newSubFiles[0].filename }
+                                    else {
                                         let paths = newSubFiles.map { ($0.path as NSString).pathComponents }
                                         if let firstPath = paths.first, firstPath.count > 1 {
                                             let possibleRoot = firstPath[0]
-                                            if paths.allSatisfy({ $0.first == possibleRoot }) {
-                                                item.filename = possibleRoot
-                                            }
+                                            if paths.allSatisfy({ $0.first == possibleRoot }) { item.filename = possibleRoot }
                                         }
                                     }
                                 }
@@ -1144,8 +919,7 @@ public final class DownloadEngine {
                         for i in updatedSubFiles.indices {
                             let fileURL = tempDir.appendingPathComponent(updatedSubFiles[i].path)
                             if let vals = try? fileURL.resourceValues(forKeys: [.totalFileAllocatedSizeKey, .fileSizeKey]) {
-                                let physical = vals.totalFileAllocatedSize ?? 0
-                                let logical = vals.fileSize ?? 0
+                                let physical = vals.totalFileAllocatedSize ?? 0; let logical = vals.fileSize ?? 0
                                 updatedSubFiles[i].downloadedBytes = Int64(min(physical, logical))
                             }
                         }
@@ -1154,35 +928,23 @@ public final class DownloadEngine {
                 } else if item.type == .directLink {
                     let fileName = await MainActor.run { item.filename }
                     let fileURL = tempDir.appendingPathComponent(fileName)
-                    
                     if let vals = try? fileURL.resourceValues(forKeys: [.totalFileAllocatedSizeKey, .fileSizeKey]) {
-                        let physical = Int64(vals.totalFileAllocatedSize ?? 0)
-                        let logical = Int64(vals.fileSize ?? 0)
+                        let physical = Int64(vals.totalFileAllocatedSize ?? 0); let logical = Int64(vals.fileSize ?? 0)
                         let currentDl = min(physical, logical)
-                        await MainActor.run {
-                            if currentDl > item.downloadedBytes {
-                                item.downloadedBytes = currentDl
-                            }
-                        }
+                        await MainActor.run { if currentDl > item.downloadedBytes { item.downloadedBytes = currentDl } }
                     }
                 }
             }
         }
 
-        await MainActor.run {
-            item._lastBytes    = item.downloadedBytes
-            item._lastTickDate = Date()
-            item.processes.append(proc)
-        }
+        await MainActor.run { item._lastBytes = item.downloadedBytes; item._lastTickDate = Date(); item.processes.append(proc) }
 
         await withCheckedContinuation { cont in
             proc.terminationHandler = { _ in cont.resume() }
-            do { try proc.run(); didLaunch = true }
-            catch { cont.resume() }
+            do { try proc.run(); didLaunch = true } catch { cont.resume() }
         }
 
-        pollTask.cancel()
-        sizeSnifferTask.cancel()
+        pollTask.cancel(); sizeSnifferTask.cancel()
         
         let isStillTracked = await MainActor.run {
             let tracked = item.processes.contains(where: { $0 === proc })
@@ -1195,17 +957,10 @@ public final class DownloadEngine {
             if status == .downloading && isStillTracked {
                 await MainActor.run {
                     if item.retryCount < 3 {
-                        item.retryCount += 1
-                        item.status = .queued
-                        item.error = nil
-                        item.speed = 0
-                        item._lastTickDate = nil
+                        item.retryCount += 1; item.status = .queued; item.error = nil; item.speed = 0; item._lastTickDate = nil
                         persist(); scheduleNext()
                     } else {
-                        item.status = .failed
-                        item.error = "Failed to launch download engine."
-                        item.speed = 0
-                        item._lastTickDate = nil
+                        item.status = .failed; item.error = "Failed to launch download engine."; item.speed = 0; item._lastTickDate = nil
                         persist(); scheduleNext()
                     }
                 }
@@ -1215,7 +970,6 @@ public final class DownloadEngine {
 
         if proc.terminationStatus == 0 {
             let destinationURL = await MainActor.run { item.destinationURL }
-            
             if type == .directLink {
                 let downloadedFile = tempDir.appendingPathComponent(fileName)
                 _ = try? FileManager.default.removeItem(at: destinationURL)
@@ -1223,31 +977,25 @@ public final class DownloadEngine {
             } else {
                 let destDirURL = destinationURL.deletingLastPathComponent()
                 let subFiles = await MainActor.run { item.subFiles }
-                
                 if subFiles.isEmpty && type == .torrent {
                     let enumerator = FileManager.default.enumerator(at: tempDir, includingPropertiesForKeys: nil)
                     let prefix = tempDir.path + "/"
                     while let fileURL = enumerator?.nextObject() as? URL {
                         guard fileURL.path.hasPrefix(prefix) else { continue }
                         if fileURL.pathExtension == "torrent" || fileURL.pathExtension == "aria2" { continue }
-                        
                         var isDir: ObjCBool = false
                         if FileManager.default.fileExists(atPath: fileURL.path, isDirectory: &isDir), isDir.boolValue { continue }
                         
                         let relativePath = String(fileURL.path.dropFirst(prefix.count))
                         let dst = destDirURL.appendingPathComponent(relativePath)
-                        
                         try? FileManager.default.createDirectory(at: dst.deletingLastPathComponent(), withIntermediateDirectories: true)
-                        _ = try? FileManager.default.removeItem(at: dst)
-                        try? FileManager.default.moveItem(at: fileURL, to: dst)
+                        _ = try? FileManager.default.removeItem(at: dst); try? FileManager.default.moveItem(at: fileURL, to: dst)
                     }
                 } else {
                     for file in subFiles {
-                        let src = tempDir.appendingPathComponent(file.path)
-                        let dst = destDirURL.appendingPathComponent(file.path)
+                        let src = tempDir.appendingPathComponent(file.path); let dst = destDirURL.appendingPathComponent(file.path)
                         try? FileManager.default.createDirectory(at: dst.deletingLastPathComponent(), withIntermediateDirectories: true)
-                        _ = try? FileManager.default.removeItem(at: dst)
-                        try? FileManager.default.moveItem(at: src, to: dst)
+                        _ = try? FileManager.default.removeItem(at: dst); try? FileManager.default.moveItem(at: src, to: dst)
                     }
                 }
             }
@@ -1256,32 +1004,17 @@ public final class DownloadEngine {
 
             await MainActor.run {
                 if item.totalBytes == 0 { item.totalBytes = item.downloadedBytes }
-                
-                if item.type == .torrent && item.downloadedBytes < item.totalBytes && !item.subFiles.isEmpty {
-                    item.status = .stopped
-                } else {
-                    item.status = .completed
-                    item.dateCompleted = Date()
-                }
-                
-                item.speed = 0
-                item._lastTickDate = nil
-                persist(); scheduleNext()
+                if item.type == .torrent && item.downloadedBytes < item.totalBytes && !item.subFiles.isEmpty { item.status = .stopped }
+                else { item.status = .completed; item.dateCompleted = Date(); self.notifyCompletion(for: item) }
+                item.speed = 0; item._lastTickDate = nil; persist(); scheduleNext()
             }
         } else if status == .downloading && isStillTracked {
             await MainActor.run {
                 if item.retryCount < 3 {
-                    item.retryCount += 1
-                    item.status = .queued
-                    item.error = nil
-                    item.speed = 0
-                    item._lastTickDate = nil
+                    item.retryCount += 1; item.status = .queued; item.error = nil; item.speed = 0; item._lastTickDate = nil
                     persist(); scheduleNext()
                 } else {
-                    item.status = .failed
-                    item.error = self.aria2HumanError(exitCode: proc.terminationStatus)
-                    item.speed = 0
-                    item._lastTickDate = nil
+                    item.status = .failed; item.error = self.aria2HumanError(exitCode: proc.terminationStatus); item.speed = 0; item._lastTickDate = nil
                     persist(); scheduleNext()
                 }
             }
@@ -1308,10 +1041,9 @@ public final class DownloadEngine {
 
     nonisolated private func parseAriaSize(_ str: String) -> Int64 {
         let s = str.uppercased().trimmingCharacters(in: .whitespaces)
-        var multiplier: Double = 1
-        var numStr = s
-        if s.hasSuffix("KIB") { multiplier = 1024; numStr = String(s.dropLast(3)) }
-        else if s.hasSuffix("KB") { multiplier = 1000; numStr = String(s.dropLast(2)) }
+        var multiplier: Double = 1; var numStr = s
+        if s.hasPrefix("KIB") { multiplier = 1024; numStr = String(s.dropLast(3)) }
+        else if s.hasPrefix("KB") { multiplier = 1000; numStr = String(s.dropLast(2)) }
         else if s.hasSuffix("MIB") { multiplier = 1024 * 1024; numStr = String(s.dropLast(3)) }
         else if s.hasSuffix("MB") { multiplier = 1000 * 1000; numStr = String(s.dropLast(2)) }
         else if s.hasSuffix("GIB") { multiplier = 1024 * 1024 * 1024; numStr = String(s.dropLast(3)) }
@@ -1326,13 +1058,8 @@ public final class DownloadEngine {
 
     private func writeDataURL(_ item: DownloadItem) async {
         let dataURL = item.url.absoluteString
-
         guard let commaIdx = dataURL.firstIndex(of: ",") else {
-            await MainActor.run {
-                item.status = .failed
-                item.error = "Invalid data URL — missing comma separator."
-                item.speed = 0; persist(); scheduleNext()
-            }
+            await MainActor.run { item.status = .failed; item.error = "Invalid data URL — missing comma separator."; item.speed = 0; persist(); scheduleNext() }
             return
         }
 
@@ -1345,11 +1072,7 @@ public final class DownloadEngine {
             ? Data(base64Encoded: body, options: .ignoreUnknownCharacters)
             : body.removingPercentEncoding?.data(using: .utf8)
         else {
-            await MainActor.run {
-                item.status = .failed
-                item.error = "Failed to decode attachment data."
-                item.speed = 0; persist(); scheduleNext()
-            }
+            await MainActor.run { item.status = .failed; item.error = "Failed to decode attachment data."; item.speed = 0; persist(); scheduleNext() }
             return
         }
 
@@ -1359,75 +1082,54 @@ public final class DownloadEngine {
 
         let finalDest = uniqueURL(dest.appendingPathComponent(fn))
 
-        do {
-            try data.write(to: finalDest)
-        } catch {
-            await MainActor.run {
-                item.status = .failed
-                item.error = "Failed to write file: \(error.localizedDescription)"
-                item.speed = 0; persist(); scheduleNext()
-            }
+        do { try data.write(to: finalDest) }
+        catch {
+            await MainActor.run { item.status = .failed; item.error = "Failed to write file: \(error.localizedDescription)"; item.speed = 0; persist(); scheduleNext() }
             return
         }
 
         await MainActor.run {
-            item.filename        = fn
-            item.destinationURL  = finalDest
-            item.totalBytes      = Int64(data.count)
-            item.downloadedBytes = Int64(data.count)
-            item.status          = .completed
-            item.dateCompleted   = Date()
-            item.speed           = 0
+            item.filename        = fn; item.destinationURL  = finalDest
+            item.totalBytes      = Int64(data.count); item.downloadedBytes = Int64(data.count)
+            item.status          = .completed; item.dateCompleted   = Date()
+            item.speed           = 0; self.notifyCompletion(for: item)
             persist(); scheduleNext()
         }
     }
 
     private func mimeToExt(_ mime: String) -> String {
         switch mime {
-        case "video/mp4":                  return ".mp4"
-        case "video/webm":                 return ".webm"
-        case "audio/mpeg":                 return ".mp3"
-        case "audio/mp4":                  return ".m4a"
-        case "application/zip":            return ".zip"
-        case "application/pdf":            return ".pdf"
-        case "image/jpeg":                 return ".jpg"
-        case "image/png":                  return ".png"
-        case "image/gif":                  return ".gif"
-        case "application/octet-stream":   return ".bin"
-        default:                           return ""
+        case "video/mp4": return ".mp4"; case "video/webm": return ".webm"; case "audio/mpeg": return ".mp3"; case "audio/mp4": return ".m4a"
+        case "application/zip": return ".zip"; case "application/pdf": return ".pdf"; case "image/jpeg": return ".jpg"; case "image/png": return ".png"
+        case "image/gif": return ".gif"; case "application/octet-stream": return ".bin"; default: return ""
         }
     }
 
     private func runCurl(_ item: DownloadItem) async {
-        await MainActor.run { item._managesOwnSpeed = false }
-        
         let tempDir = await MainActor.run { item.tempDirURL }
         try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
 
         await MainActor.run {
             if !item.isPrepared {
                 let policy = UserDefaults.standard.string(forKey: "fileCollisionBehavior") ?? "rename"
-                if policy == "replace" {
-                    try? FileManager.default.removeItem(at: item.destinationURL)
-                } else {
-                    item.destinationURL = uniqueURL(item.destinationURL)
-                }
+                if policy == "replace" { try? FileManager.default.removeItem(at: item.destinationURL) }
+                else { item.destinationURL = uniqueURL(item.destinationURL) }
                 FileManager.default.createFile(atPath: item.destinationURL.path, contents: nil)
-                item.isPrepared = true
-                persist()
+                item.isPrepared = true; persist()
             }
         }
 
         let destFile        = await MainActor.run { item.destinationURL.path }
-        
         let originalURL     = await MainActor.run { item.url }
         let url             = await resolveDirectLink(url: originalURL, item: item)
-        
         let cookies         = await MainActor.run { item.cookies }
         let userAgent       = await MainActor.run { item.userAgent }
         let referer         = await MainActor.run { item.referer }
-        let speedLimit      = await MainActor.run { item.speedLimit }
         let downloadedBytes = await MainActor.run { item.downloadedBytes }
+
+        let localLimit = await MainActor.run { item.speedLimit }
+        let globalLimit = UserDefaults.standard.integer(forKey: "globalSpeedLimit")
+        let activeLimit = (localLimit > 0) ? localLimit : globalLimit
 
         let headersFile = tempDir.appendingPathComponent("headers.txt").path
 
@@ -1435,24 +1137,18 @@ public final class DownloadEngine {
         proc.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
 
         var args: [String] = [
-            "--location-trusted",
-            "--silent",
-            "--show-error",
-            "--compressed",
+            "--location-trusted", "--silent", "--show-error", "--compressed",
             "--write-out", "\n%{http_code} %{size_download}\n",
-            "--output", destFile,
-            "--dump-header", headersFile
+            "--output", destFile, "--dump-header", headersFile
         ]
 
         if downloadedBytes > 0 { args.append(contentsOf: ["-C", "-"]) }
-        if speedLimit > 0 { args.append(contentsOf: ["--limit-rate", "\(speedLimit)K"]) }
-
+        if activeLimit > 0 { args.append(contentsOf: ["--limit-rate", "\(activeLimit)K"]) }
         if let cookies = cookies, !cookies.isEmpty { args.append(contentsOf: ["--cookie", cookies]) }
+        if let proxy = getProxyString() { args.append(contentsOf: ["-x", proxy]) }
         
-        // ── Spoofing Engine for Curl ───────────────────────────────────────────────
         let host = url.host ?? ""
         let resolvedReferer = (referer != nil && !referer!.isEmpty) ? referer! : "https://\(host)/"
-        
         let refHost = URL(string: resolvedReferer)?.host ?? host
         let isSameOrigin = host.hasSuffix(refHost) || refHost.hasSuffix(host)
         
@@ -1464,26 +1160,21 @@ public final class DownloadEngine {
         args.append(contentsOf: ["--header", "Sec-Fetch-User: ?1"])
         
         let ua = (userAgent != nil && !userAgent!.isEmpty)
-            ? userAgent!
-            : "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+            ? userAgent! : "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
         args.append(contentsOf: ["--user-agent", ua])
         
         args.append(contentsOf: [
             "--header", "Sec-Ch-Ua: \"Google Chrome\";v=\"131\", \"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"",
-            "--header", "Sec-Ch-Ua-Mobile: ?0",
-            "--header", "Sec-Ch-Ua-Platform: \"macOS\"",
+            "--header", "Sec-Ch-Ua-Mobile: ?0", "--header", "Sec-Ch-Ua-Platform: \"macOS\"",
             "--header", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
             "--header", "Accept-Language: en-US,en;q=0.9"
         ])
-        // ──────────────────────────────────────────────────────────────────────────
 
         args.append(url.absoluteString)
         proc.arguments = args
 
-        let stderrPipe = Pipe()
-        let stdoutPipe = Pipe()
-        proc.standardError = stderrPipe
-        proc.standardOutput = stdoutPipe
+        let stderrPipe = Pipe(); let stdoutPipe = Pipe()
+        proc.standardError = stderrPipe; proc.standardOutput = stdoutPipe
 
         let pollTask = Task { [weak item] in
             guard let item else { return }
@@ -1493,20 +1184,16 @@ public final class DownloadEngine {
                 if let vals = try? URL(fileURLWithPath: destFile).resourceValues(forKeys: [.fileSizeKey]) {
                     let sz = Int64(vals.fileSize ?? 0)
                     await MainActor.run {
-                        if sz > item.downloadedBytes {
-                            item.downloadedBytes = sz
-                        }
+                        if sz > item.downloadedBytes { item.downloadedBytes = sz }
                         if item.totalBytes > 0 && sz > item.totalBytes { item.totalBytes = sz }
                     }
                 }
                 
                 if let headersStr = try? String(contentsOfFile: headersFile, encoding: .utf8) {
                     let lines = headersStr.components(separatedBy: .newlines)
-
                     let currentTotal = await MainActor.run { item.totalBytes }
                     if currentTotal <= 0 {
-                        var foundTotal: Int64 = 0
-                        var isPartial = false
+                        var foundTotal: Int64 = 0; var isPartial = false
                         for line in lines {
                             let l = line.lowercased()
                             if l.hasPrefix("http/") && l.contains(" 206") { isPartial = true }
@@ -1534,10 +1221,9 @@ public final class DownloadEngine {
                             }
                             if !fn.isEmpty {
                                 await MainActor.run {
-                                    let dir     = item.destinationURL.deletingLastPathComponent()
+                                    let dir = item.destinationURL.deletingLastPathComponent()
                                     let newDest = self.uniqueURL(dir.appendingPathComponent(fn))
-                                    item.filename       = fn
-                                    item.destinationURL = newDest
+                                    item.filename = fn; item.destinationURL = newDest
                                 }
                                 break
                             }
@@ -1552,8 +1238,7 @@ public final class DownloadEngine {
         var didLaunch = false
         await withCheckedContinuation { cont in
             proc.terminationHandler = { _ in cont.resume() }
-            do { try proc.run(); didLaunch = true }
-            catch { cont.resume() }
+            do { try proc.run(); didLaunch = true } catch { cont.resume() }
         }
 
         pollTask.cancel()
@@ -1574,15 +1259,10 @@ public final class DownloadEngine {
             if currentStatus == .downloading && isStillTracked {
                 await MainActor.run {
                     if item.retryCount < 3 {
-                        item.retryCount += 1
-                        item.status = .queued
-                        item.error = nil
-                        item.speed = 0; item._lastTickDate = nil
+                        item.retryCount += 1; item.status = .queued; item.error = nil; item.speed = 0; item._lastTickDate = nil
                         persist(); scheduleNext()
                     } else {
-                        item.status = .failed
-                        item.error = "Failed to launch curl."
-                        item.speed = 0; item._lastTickDate = nil
+                        item.status = .failed; item.error = "Failed to launch curl."; item.speed = 0; item._lastTickDate = nil
                         persist(); scheduleNext()
                     }
                 }
@@ -1591,24 +1271,15 @@ public final class DownloadEngine {
         }
 
         if proc.terminationStatus == 0 {
-            let httpStatus: Int? = stdoutText
-                .components(separatedBy: "\n")
-                .compactMap { Int($0.split(separator: " ").first ?? "") }
-                .last
-
+            let httpStatus: Int? = stdoutText.components(separatedBy: "\n").compactMap { Int($0.split(separator: " ").first ?? "") }.last
             if let status = httpStatus, status >= 400 {
                 let errorMsg = curlHumanError(exitCode: proc.terminationStatus, stderr: stderrText, stdout: stdoutText)
                 await MainActor.run {
                     if item.retryCount < 3 {
-                        item.retryCount += 1
-                        item.status = .queued
-                        item.error = nil
-                        item.speed = 0; item._lastTickDate = nil
+                        item.retryCount += 1; item.status = .queued; item.error = nil; item.speed = 0; item._lastTickDate = nil
                         persist(); scheduleNext()
                     } else {
-                        item.status = .failed
-                        item.error = errorMsg
-                        item.speed = 0; item._lastTickDate = nil
+                        item.status = .failed; item.error = errorMsg; item.speed = 0; item._lastTickDate = nil
                         persist(); scheduleNext()
                     }
                 }
@@ -1622,15 +1293,12 @@ public final class DownloadEngine {
                     if let line = stdoutText.components(separatedBy: "\n").last(where: { !$0.isEmpty }) {
                         let parts = line.split(separator: " ")
                         if parts.count >= 2, let sz = Int64(parts[1]), sz > 0 {
-                            if sz > item.downloadedBytes {
-                                item.downloadedBytes = sz
-                            }
+                            if sz > item.downloadedBytes { item.downloadedBytes = sz }
                             if item.totalBytes == 0 { item.totalBytes = sz }
                         }
                     }
-                    item.status = .completed
-                    item.dateCompleted = Date()
-                    item.speed = 0; item._lastTickDate = nil
+                    item.status = .completed; item.dateCompleted = Date(); item.speed = 0; item._lastTickDate = nil
+                    self.notifyCompletion(for: item)
                     persist(); scheduleNext()
                 }
             }
@@ -1638,15 +1306,10 @@ public final class DownloadEngine {
             let errorMsg = curlHumanError(exitCode: proc.terminationStatus, stderr: stderrText, stdout: stdoutText)
             await MainActor.run {
                 if item.retryCount < 3 {
-                    item.retryCount += 1
-                    item.status = .queued
-                    item.error = nil
-                    item.speed = 0; item._lastTickDate = nil
+                    item.retryCount += 1; item.status = .queued; item.error = nil; item.speed = 0; item._lastTickDate = nil
                     persist(); scheduleNext()
                 } else {
-                    item.status = .failed
-                    item.error = errorMsg
-                    item.speed = 0; item._lastTickDate = nil
+                    item.status = .failed; item.error = errorMsg; item.speed = 0; item._lastTickDate = nil
                     persist(); scheduleNext()
                 }
             }
@@ -1654,11 +1317,7 @@ public final class DownloadEngine {
     }
 
     private func curlHumanError(exitCode: Int32, stderr: String, stdout: String) -> String {
-        let httpStatus: Int? = stdout
-            .components(separatedBy: "\n")
-            .compactMap { Int($0.split(separator: " ").first ?? "") }
-            .last
-
+        let httpStatus: Int? = stdout.components(separatedBy: "\n").compactMap { Int($0.split(separator: " ").first ?? "") }.last
         if let status = httpStatus, status >= 400 {
             switch status {
             case 400: return "HTTP 400 Bad Request."
@@ -1695,36 +1354,15 @@ public final class DownloadEngine {
     
     private func fetchLocalTorrentInfo(path: String, executable: String) async -> [SubFile] {
         return await withCheckedContinuation { cont in
-            let proc = Process()
-            proc.executableURL = URL(fileURLWithPath: executable)
-            proc.arguments = ["--show-files", path]
-            
-            let pipe = Pipe()
-            proc.standardOutput = pipe
-            proc.standardError = Pipe()
-            
+            let proc = Process(); proc.executableURL = URL(fileURLWithPath: executable); proc.arguments = ["--show-files", path]
+            let pipe = Pipe(); proc.standardOutput = pipe; proc.standardError = Pipe()
             let readTask = Task {
                 var outputData = Data()
-                do {
-                    if let data = try pipe.fileHandleForReading.readToEnd() {
-                        outputData = data
-                    }
-                } catch {}
+                do { if let data = try pipe.fileHandleForReading.readToEnd() { outputData = data } } catch {}
                 return String(data: outputData, encoding: .utf8) ?? ""
             }
-            
-            proc.terminationHandler = { _ in
-                Task {
-                    let output = await readTask.value
-                    cont.resume(returning: self.parseShowFiles(output))
-                }
-            }
-            
-            do {
-                try proc.run()
-            } catch {
-                cont.resume(returning: [])
-            }
+            proc.terminationHandler = { _ in Task { let output = await readTask.value; cont.resume(returning: self.parseShowFiles(output)) } }
+            do { try proc.run() } catch { cont.resume(returning: []) }
         }
     }
 
@@ -1733,85 +1371,44 @@ public final class DownloadEngine {
         let targetPath = item.url.isFileURL ? item.url.path : item.url.absoluteString
         
         return await withCheckedContinuation { cont in
-            let proc = Process()
-            proc.executableURL = URL(fileURLWithPath: executable)
-            
+            let proc = Process(); proc.executableURL = URL(fileURLWithPath: executable)
             proc.arguments = [
-                "--show-files",
-                "--enable-dht=true",
-                "--bt-enable-lpd=true",
-                "--enable-peer-exchange=true",
-                "--dht-listen-port=6881-6999",
+                "--show-files", "--enable-dht=true", "--bt-enable-lpd=true", "--enable-peer-exchange=true", "--dht-listen-port=6881-6999",
                 "--bt-tracker=udp://tracker.opentrackr.org:1337/announce,udp://open.stealth.si:80/announce,udp://tracker.torrent.eu.org:451/announce,udp://tracker.dler.org:6969/announce,udp://open.demonii.com:1337/announce,udp://exodus.desync.com:6969/announce",
-                "--dir=\(tempDir)",
-                targetPath
+                "--dir=\(tempDir)", targetPath
             ]
-            
-            let pipe = Pipe()
-            proc.standardOutput = pipe
-            proc.standardError = Pipe()
-            
+            let pipe = Pipe(); proc.standardOutput = pipe; proc.standardError = Pipe()
             let readTask = Task {
                 var outputData = Data()
-                do {
-                    if let data = try pipe.fileHandleForReading.readToEnd() {
-                        outputData = data
-                    }
-                } catch {}
+                do { if let data = try pipe.fileHandleForReading.readToEnd() { outputData = data } } catch {}
                 return String(data: outputData, encoding: .utf8) ?? ""
             }
-            
-            proc.terminationHandler = { _ in
-                Task {
-                    let output = await readTask.value
-                    let parsed = self.parseShowFiles(output)
-                    cont.resume(returning: parsed)
-                }
-            }
-            
+            proc.terminationHandler = { _ in Task { let output = await readTask.value; let parsed = self.parseShowFiles(output); cont.resume(returning: parsed) } }
             do {
                 try proc.run()
-                Task {
-                    try? await Task.sleep(nanoseconds: 120_000_000_000)
-                    if proc.isRunning { proc.terminate() }
-                }
-            } catch {
-                cont.resume(returning: [])
-            }
+                Task { try? await Task.sleep(nanoseconds: 120_000_000_000); if proc.isRunning { proc.terminate() } }
+            } catch { cont.resume(returning: []) }
         }
     }
     
     nonisolated private func parseShowFiles(_ output: String) -> [SubFile] {
         var files: [SubFile] = []
         let lines = output.components(separatedBy: .newlines)
-        var currentIndex: Int?
-        var currentPath: String?
+        var currentIndex: Int?; var currentPath: String?
 
         for line in lines {
             if let sepRange = line.range(of: "|") {
                 let left = line[..<sepRange.lowerBound].trimmingCharacters(in: .whitespaces)
                 let right = line[sepRange.upperBound...].trimmingCharacters(in: .whitespaces)
-                
-                if let idx = Int(left) {
-                    currentIndex = idx
-                    currentPath = right
-                } else if let idx = currentIndex, let path = currentPath, left.isEmpty {
+                if let idx = Int(left) { currentIndex = idx; currentPath = right }
+                else if let idx = currentIndex, let path = currentPath, left.isEmpty {
                     if let start = right.firstIndex(of: "("), let end = right.lastIndex(of: ")") {
                         let bytesStr = right[right.index(after: start)..<end].replacingOccurrences(of: ",", with: "")
                         if let bytes = Int64(bytesStr) {
-                            files.append(SubFile(
-                                id: UUID(),
-                                index: idx,
-                                path: path,
-                                filename: URL(fileURLWithPath: path).lastPathComponent,
-                                totalBytes: bytes,
-                                downloadedBytes: 0,
-                                isStopped: false
-                            ))
+                            files.append(SubFile(id: UUID(), index: idx, path: path, filename: URL(fileURLWithPath: path).lastPathComponent, totalBytes: bytes, downloadedBytes: 0, isStopped: false))
                         }
                     }
-                    currentIndex = nil
-                    currentPath = nil
+                    currentIndex = nil; currentPath = nil
                 }
             }
         }
@@ -1833,20 +1430,22 @@ public final class DownloadEngine {
 
         for item in items where item.status == .downloading {
             let curBytes = item.downloadedBytes
-
             if let lastDate = item._lastTickDate {
                 let dt = now.timeIntervalSince(lastDate)
                 
-                if !item._managesOwnSpeed {
-                    if dt >= 0.5 {
-                        item.speed = max(0.0, Double(curBytes - item._lastBytes) / dt)
+                // Only evaluate speed over a 1.0-second moving interval
+                if dt >= 1.0 {
+                    let bytesDiff = max(0, curBytes - item._lastBytes)
+                    
+                    if bytesDiff > 0 {
+                        let instantSpeed = Double(bytesDiff) / dt
+                        // Exponential Moving Average to prevent sudden jumps
+                        item.speed = item.speed > 0 ? (item.speed * 0.4 + instantSpeed * 0.6) : instantSpeed
                         item._lastBytes = curBytes
                         item._lastTickDate = now
-                    }
-                } else {
-                    if curBytes == item._lastBytes && dt > 3.0 {
+                    } else if dt >= 3.0 {
+                        // Strict buffer: Force speed to 0 only if 0 bytes downloaded over a full 3 seconds
                         item.speed = 0
-                    } else if curBytes != item._lastBytes {
                         item._lastBytes = curBytes
                         item._lastTickDate = now
                     }
@@ -1862,9 +1461,12 @@ public final class DownloadEngine {
             activeCount += 1
         }
 
-        for item in items where item.status != .downloading && item.speed > 0 { item.speed = 0 }
-        globalDownloadSpeed = totalSpeed
+        // Clean up speed displays for items not actively progressing
+        for item in items where item.status != .downloading && item.speed > 0 {
+            item.speed = 0
+        }
         
+        globalDownloadSpeed = totalSpeed
         let progress = totalActiveBytes > 0 ? Double(totalActiveDownloaded) / Double(totalActiveBytes) : 0.0
         updateDockProgress(progress: progress, totalActive: activeCount)
     }
@@ -1872,32 +1474,20 @@ public final class DownloadEngine {
     private func updateDockProgress(progress: Double, totalActive: Int) {
         DispatchQueue.main.async {
             let dockTile = NSApp.dockTile
-            if totalActive == 0 {
-                dockTile.contentView = nil
-                dockTile.badgeLabel = nil
-                dockTile.display()
-                return
-            }
-
-            if let customView = dockTile.contentView as? DockProgressView {
-                customView.progress = progress
-            } else {
+            if totalActive == 0 { dockTile.contentView = nil; dockTile.badgeLabel = nil; dockTile.display(); return }
+            if let customView = dockTile.contentView as? DockProgressView { customView.progress = progress }
+            else {
                 let size = dockTile.size.width > 0 ? dockTile.size : NSSize(width: 128, height: 128)
                 let view = DockProgressView(frame: NSRect(origin: .zero, size: size))
-                view.progress = progress
-                dockTile.contentView = view
+                view.progress = progress; dockTile.contentView = view
             }
-
             dockTile.badgeLabel = "\(totalActive)"
             dockTile.display()
         }
     }
 
     private func killProcesses(_ item: DownloadItem) {
-        item.processes.forEach {
-            guard $0.isRunning else { return }
-            $0.terminate()
-        }
+        item.processes.forEach { guard $0.isRunning else { return }; $0.terminate() }
         item.processes = []
     }
     
@@ -1937,8 +1527,7 @@ public final class DownloadEngine {
     }
 
     private func loadPersisted() {
-        guard let d = try? Data(contentsOf: persistenceURL),
-              let dec = try? JSONDecoder().decode([DownloadItem].self, from: d) else { return }
+        guard let d = try? Data(contentsOf: persistenceURL), let dec = try? JSONDecoder().decode([DownloadItem].self, from: d) else { return }
         items = dec
     }
 }

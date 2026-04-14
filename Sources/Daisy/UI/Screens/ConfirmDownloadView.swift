@@ -1,4 +1,3 @@
-// MARK: - ConfirmDownloadView.swift
 import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
@@ -22,11 +21,13 @@ struct ConfirmDownloadView: View {
     @State private var connections: Int = 16
     @State private var showDetails  = false
     
-    // Background fetch states
     @State private var isResolving  = false
     @State private var resolvedSize: Int64 = 0
 
     private let engine = DownloadEngine.shared
+
+    @AppStorage("accentColorHex") private var accentColorHex = "#0A84FF"
+    @State private var window: NSWindow?
 
     init(request: ConfirmDownloadRequest,
          onConfirm: @escaping (ConfirmDownloadRequest, URL, Int) -> Void,
@@ -50,24 +51,25 @@ struct ConfirmDownloadView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // ── Banner ────────────────────────────────────────────────
-            HStack(spacing: 14) {
+            HStack(alignment: .top, spacing: 14) {
                 Image(nsImage: fileIcon)
                     .resizable()
-                    .frame(width: 48, height: 48)
+                    .frame(width: 40, height: 40)
 
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 3) {
                     Text($filename.wrappedValue)
-                        .font(.headline)
+                        .font(.system(size: 13, weight: .semibold))
+                        .lineLimit(1).truncationMode(.middle)
+                    
                     HStack(spacing: 6) {
                         Text(fileExt)
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(.white)
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(Color(hex: accentColorHex).accessibleText)
                             .padding(.horizontal, 5).padding(.vertical, 2)
-                            .background(Color.blue, in: RoundedRectangle(cornerRadius: 4))
+                            .background(Color(hex: accentColorHex), in: Capsule())
                         
                         Text(request.url.host ?? request.url.absoluteString)
-                            .font(.system(size: 12))
+                            .font(.system(size: 11))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                             
@@ -77,6 +79,7 @@ struct ConfirmDownloadView: View {
                             Text(formatBytes(resolvedSize))
                                 .font(.system(size: 11, weight: .semibold))
                                 .foregroundStyle(.secondary)
+                                .monospacedDigit()
                         } else if isResolving {
                             ProgressView().controlSize(.small).scaleEffect(0.6)
                         }
@@ -84,128 +87,131 @@ struct ConfirmDownloadView: View {
                 }
                 Spacer()
             }
-            .padding(.horizontal, 20)
-            .padding(.top, 20)
-            .padding(.bottom, 16)
+            .padding(.horizontal, 16).padding(.top, 16).padding(.bottom, 12)
 
             Divider()
 
-            // ── Fields ────────────────────────────────────────────────
-            VStack(alignment: .leading, spacing: 14) {
-                // Filename
-                VStack(alignment: .leading, spacing: 5) {
-                    Label("File Name", systemImage: "doc")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("File Name")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.tertiary)
                     TextField("filename", text: $filename)
                         .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 13))
+                        .font(.system(size: 11))
                 }
 
-                // Destination
-                VStack(alignment: .leading, spacing: 5) {
-                    Label("Save To", systemImage: "folder")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                    HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Save To")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                    HStack {
                         Text(destination.path(percentEncoded: false))
-                            .font(.system(size: 12))
+                            .font(.system(size: 11))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .truncationMode(.head)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.vertical, 5)
-                            .padding(.horizontal, 8)
-                            .background(Color(NSColor.controlBackgroundColor),
-                                        in: RoundedRectangle(cornerRadius: 6))
-                            .overlay(RoundedRectangle(cornerRadius: 6)
-                                .stroke(Color(NSColor.separatorColor), lineWidth: 1))
-                        Button("…") {
+                        Button("Choose…") {
                             let panel = NSOpenPanel()
                             panel.canChooseFiles       = false
                             panel.canChooseDirectories = true
                             panel.prompt               = "Select"
                             if panel.runModal() == .OK, let u = panel.url { destination = u }
                         }
-                        .frame(width: 28)
+                        .font(.system(size: 11))
+                        .buttonStyle(ActionButtonStyle(prominent: false, hex: accentColorHex))
                     }
+                    .padding(6)
+                    .background(Color(NSColor.controlBackgroundColor).opacity(0.4), in: RoundedRectangle(cornerRadius: 6))
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color(NSColor.separatorColor).opacity(0.5), lineWidth: 1))
                 }
 
-                // Connections
-                VStack(alignment: .leading, spacing: 5) {
+                VStack(alignment: .leading, spacing: 4) {
                     HStack {
-                        Label("Connections", systemImage: "arrow.down.to.line.alt")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(.secondary)
+                        Text("Connections")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(Color(accentColorHex))
                         Spacer()
                         Text("\(connections)")
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundStyle(.blue)
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(Color(hex: accentColorHex).accessibleText)
                             .monospacedDigit()
                     }
                     HStack(spacing: 8) {
-                        Text("1").font(.caption2).foregroundStyle(.tertiary)
+                        Text("1").font(.system(size: 10)).foregroundStyle(.tertiary)
                         Slider(value: Binding(get: { Double(connections) },
                                               set: { connections = Int($0) }),
                                in: 1...32, step: 1)
-                        .tint(.blue)
-                        Text("32").font(.caption2).foregroundStyle(.tertiary)
+                        .tint(Color(hex: accentColorHex))
+                        Text("32").font(.system(size: 10)).foregroundStyle(.tertiary)
                     }
                 }
 
                 DisclosureGroup(isExpanded: $showDetails) {
                     VStack(alignment: .leading, spacing: 6) {
-                        ConfirmDetailRow(label: "URL",      value: request.url.absoluteString)
+                        DetailRowView(label: "URL", value: request.url.absoluteString, labelWidth: 76)
                         if !request.referer.isEmpty {
-                            ConfirmDetailRow(label: "Referer",  value: request.referer)
+                            DetailRowView(label: "Referer", value: request.referer, labelWidth: 76)
                         }
                         if !request.cookies.isEmpty {
-                            ConfirmDetailRow(label: "Cookies",
-                                             value: String(request.cookies.prefix(120))
-                                             + (request.cookies.count > 120 ? "…" : ""))
+                            DetailRowView(label: "Cookies",
+                                          value: String(request.cookies.prefix(120)) + (request.cookies.count > 120 ? "…" : ""),
+                                          labelWidth: 76)
                         }
                         if !request.ua.isEmpty {
-                            ConfirmDetailRow(label: "User-Agent", value: request.ua)
+                            DetailRowView(label: "User-Agent", value: request.ua, labelWidth: 76)
                         }
                     }
                     .padding(.top, 8)
                 } label: {
-                    Text("Details")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.secondary)
+                    Text("Advanced Details")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.tertiary)
                 }
                 .disclosureGroupStyle(.automatic)
+                .tint(Color(hex: accentColorHex))
             }
-            .padding(.horizontal, 20)
+            .padding(.horizontal, 16)
             .padding(.vertical, 16)
 
+            Spacer()
             Divider()
 
-            // ── Buttons ───────────────────────────────────────────────
             HStack(spacing: 10) {
-                Button("Cancel") { onCancel() }
+                Button(action: onCancel) {
+                    Label("Cancel", systemImage: "xmark")
+                }
                 .keyboardShortcut(.escape)
+                .buttonStyle(ActionButtonStyle(prominent: false, hex: accentColorHex))
 
                 Spacer()
 
-                Button("Download") {
+                Button(action: {
                     var r = request
                     r.filename = filename.trimmingCharacters(in: .whitespacesAndNewlines)
                     if r.filename.isEmpty { r.filename = suggestName(request.url) }
                     onConfirm(r, destination, connections)
+                }) {
+                    Label("Download", systemImage: "arrow.down.circle")
                 }
                 .keyboardShortcut(.return)
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(ActionButtonStyle(prominent: true, hex: accentColorHex))
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 14)
+            .padding(.horizontal, 16).padding(.vertical, 12)
         }
         .frame(width: 460)
         .task { await performBackgroundSniff() }
+        .background(VisualEffectView(material: .popover, blendingMode: .behindWindow).ignoresSafeArea())
+        .background(WindowAccessor(window: $window))
+        .onChange(of: window) { _, newWindow in
+            if let win = newWindow {
+                win.isOpaque = false
+                win.backgroundColor = .clear
+            }
+        }
     }
     
-    // ── 1-Byte Background GET to Sniff Filename/Size without downloading ──
-    // ── 1-Byte Background GET to Sniff True Filename from Server ──
     private func performBackgroundSniff() async {
         guard request.url.scheme?.starts(with: "http") == true else { return }
         
@@ -215,10 +221,7 @@ struct ConfirmDownloadView: View {
         var req = URLRequest(url: request.url)
         req.httpMethod = "GET"
         
-        // Request 1 byte to trigger real headers without downloading
         req.setValue("bytes=0-1", forHTTPHeaderField: "Range")
-        
-        // Spoof standard browser to avoid Cloudflare/WAF 403s
         req.setValue("text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8", forHTTPHeaderField: "Accept")
         req.setValue("document", forHTTPHeaderField: "Sec-Fetch-Dest")
         req.setValue("navigate", forHTTPHeaderField: "Sec-Fetch-Mode")
@@ -234,10 +237,7 @@ struct ConfirmDownloadView: View {
                 await MainActor.run {
                     var foundName: String? = nil
                     
-                    // 1. Sniff Filename from Content-Disposition
                     if let disposition = httpResp.value(forHTTPHeaderField: "Content-Disposition") ?? httpResp.value(forHTTPHeaderField: "content-disposition") {
-                        
-                        // Try standard filename="..."
                         if let range = disposition.range(of: "filename=", options: .caseInsensitive) {
                             var fn = String(disposition[range.upperBound...]).trimmingCharacters(in: .whitespaces)
                             if fn.hasPrefix("\"") {
@@ -253,7 +253,6 @@ struct ConfirmDownloadView: View {
                             if !fn.isEmpty { foundName = fn }
                         }
                         
-                        // Try RFC 5987 (filename*=UTF-8''...) -> Overrides standard if present
                         if let rfcMatch = disposition.range(of: "filename\\*=[^']+'[^']*'([^;]+)", options: .regularExpression) {
                             let matchStr = String(disposition[rfcMatch])
                             if let split = matchStr.components(separatedBy: "''").last,
@@ -263,7 +262,6 @@ struct ConfirmDownloadView: View {
                         }
                     }
                     
-                    // 2. Fallback to final resolved URL path if we still have a generic name
                     if foundName == nil {
                         let finalURL = httpResp.url ?? request.url
                         let lastComponent = finalURL.lastPathComponent.removingPercentEncoding ?? finalURL.lastPathComponent
@@ -272,12 +270,10 @@ struct ConfirmDownloadView: View {
                         }
                     }
                     
-                    // Override the extension's generic name if we found a real one
                     if let fn = foundName, fn != "download", fn != "file" {
                         self.filename = fn
                     }
                     
-                    // 3. Sniff True Size from Content-Range or Content-Length
                     if let cr = httpResp.value(forHTTPHeaderField: "Content-Range") ?? httpResp.value(forHTTPHeaderField: "content-range") {
                         if let totalStr = cr.components(separatedBy: "/").last, let total = Int64(totalStr.trimmingCharacters(in: .whitespaces)) {
                             self.resolvedSize = total
@@ -288,27 +284,6 @@ struct ConfirmDownloadView: View {
                 }
             }
         } catch {
-            // Silently ignore network sniff failures
-        }
-    }
-}
-
-private struct ConfirmDetailRow: View {
-    let label: String
-    let value: String
-    var body: some View {
-        HStack(alignment: .top, spacing: 0) {
-            Text(label + ":")
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-                .frame(width: 76, alignment: .leading)
-            Text(value)
-                .font(.system(size: 11))
-                .foregroundStyle(.primary)
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
-                .lineLimit(3)
-                .truncationMode(.middle)
         }
     }
 }

@@ -1,4 +1,3 @@
-// MARK: - ContentView.swift
 import SwiftUI
 import AppKit
 
@@ -47,8 +46,8 @@ struct ContentView: View {
     var engine = DownloadEngine.shared
     @State private var selectedFilter: SidebarFilter = .all
     @State private var selectedItems: Set<UUID> = []
-    @State private var showingAdd = false
     @State private var showingSettings = false
+    @State private var showingAddDownload = false
     @State private var searchText = ""
     @State private var isDropTargeted = false
     @State private var itemsToRemove: RemovalContext? = nil
@@ -58,6 +57,11 @@ struct ContentView: View {
     
     @AppStorage("isCompactList") private var isCompactList = false
     @AppStorage("accentColorHex") private var accentColorHex = "#0A84FF"
+    
+    // Shared sorting state for the Toolbar Menu
+    @AppStorage("sortColumn") private var sortColumn: SortColumn = .dateAdded
+    @AppStorage("sortAscending") private var sortAscending: Bool = false
+    
     var customAccent: Color { Color(hex: accentColorHex) }
 
     @Environment(\.openWindow) private var openWindow
@@ -80,15 +84,17 @@ struct ContentView: View {
 
     var body: some View {
         mainLayout
-            .sheet(isPresented: $showingAdd) { AddDownloadSheet() }
-            .sheet(isPresented: $showingSettings) { SettingsView().interactiveDismissDisabled() } // Explicitly disabled outer dismiss
+            .sheet(isPresented: $showingAddDownload) {
+                AddDownloadSheet(onClose: { showingAddDownload = false })
+            }
+            .sheet(isPresented: $showingSettings) { SettingsView().interactiveDismissDisabled() }
             .sheet(item: $itemsToRemove) { context in
                 RemoveDialog(items: context.items) { trash, remember in
                     if remember { UserDefaults.standard.set(trash ? "trash" : "keep", forKey: "removeBehavior") }
                     context.items.forEach { engine.remove($0, trashFile: trash) }
                     itemsToRemove = nil
                 } onCancel: { itemsToRemove = nil }
-                .interactiveDismissDisabled() // Enforces strong modal blocking
+                .interactiveDismissDisabled()
             }
             .alert(duplicateAddRequest?.urls.count ?? 1 > 1 ? "Duplicate Downloads" : "Duplicate Download", isPresented: $showingDuplicateAlert) {
                 Button("Add Anyway") {
@@ -118,8 +124,8 @@ struct ContentView: View {
         } detail: {
             detailColumn
         }
-        .onReceive(NotificationCenter.default.publisher(for: .showAddDownload)) { _ in showingAdd = true }
-        .onReceive(NotificationCenter.default.publisher(for: .showSettings)) { _ in showingSettings = true } // Injected Settings Hook
+        .onReceive(NotificationCenter.default.publisher(for: .showAddDownload)) { _ in showingAddDownload = true }
+        .onReceive(NotificationCenter.default.publisher(for: .showSettings)) { _ in showingSettings = true }
         .onReceive(NotificationCenter.default.publisher(for: .openProgressWindow)) { notif in
             if let id = notif.userInfo?["id"] as? UUID { openWindow(value: id) }
         }
@@ -173,7 +179,26 @@ struct ContentView: View {
                 Button(action: { isCompactList.toggle() }) { Label(isCompactList ? "Relaxed View" : "Compact View", systemImage: isCompactList ? "list.dash" : "list.bullet") }
                 .help(isCompactList ? "Switch to Relaxed View" : "Switch to Compact View")
                 
-                Button { showingAdd = true } label: { Label("New Download", systemImage: "plus") }
+                Menu {
+                    Picker("Sort By", selection: $sortColumn) {
+                        Text("Date Modified").tag(SortColumn.dateModified)
+                        Text("Date Added").tag(SortColumn.dateAdded)
+                        Divider()
+                        Text("Name").tag(SortColumn.name)
+                        Text("Status").tag(SortColumn.status)
+                        Text("Transfer").tag(SortColumn.transfer)
+                        Text("Type").tag(SortColumn.type)
+                        Text("Speed").tag(SortColumn.speed)
+                    }
+                    Divider()
+                    Toggle("Sort Ascending", isOn: $sortAscending)
+                } label: {
+                    Label("Sort", systemImage: "arrow.up.arrow.down")
+                }
+                .help("Sort Downloads")
+                .tint(customAccent.accessibleText)
+
+                Button { NotificationCenter.default.post(name: .showAddDownload, object: nil) } label: { Label("New Download", systemImage: "plus") }
                     .help("New Download (⌘N)")
 
                 let canResume = targetItems.contains(where: { $0.status == .stopped || $0.status == .failed })
@@ -218,7 +243,6 @@ struct ContentView: View {
     }
 
     private func processAddRequest(urls: [URL], destination: URL? = nil, connections: Int = 16) {
-        // ... (rest exactly matches)
         if urls.count == 1 {
             let u = urls[0]
             if engine.items.contains(where: { $0.url.absoluteString == u.absoluteString }) {
@@ -301,41 +325,9 @@ struct ContentView: View {
         if let string = NSPasteboard.general.string(forType: .string) {
             let lines = string.components(separatedBy: .newlines).compactMap { URL(string: $0.trimmingCharacters(in: .whitespaces)) }.filter { $0.scheme?.hasPrefix("http") == true || $0.scheme == "magnet" }
             if !lines.isEmpty {
-                showingAdd = true
+                NotificationCenter.default.post(name: .showAddDownload, object: nil)
             }
         }
-    }
-}
-
-struct RemoveDialog: View {
-    let items: [DownloadItem]
-    let onConfirm: (Bool, Bool) -> Void
-    let onCancel: () -> Void
-
-    @State private var trashFile = false
-    @State private var remember = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text(items.count > 1 ? "Remove \(items.count) Downloads?" : "Remove Download?")
-                .font(.headline)
-            Text("Are you sure you want to remove \(items.count > 1 ? "these items" : "this item") from your list?")
-                .font(.callout)
-            VStack(alignment: .leading, spacing: 10) {
-                Toggle("Move downloaded file(s) to Trash", isOn: $trashFile)
-                Toggle("Remember my choice", isOn: $remember)
-            }
-            .padding(.vertical, 4)
-            HStack {
-                Spacer()
-                Button("Cancel", action: onCancel).keyboardShortcut(.escape)
-                Button("Remove") { onConfirm(trashFile, remember) }
-                    .buttonStyle(.borderedProminent).tint(.red)
-                    .keyboardShortcut(.defaultAction)
-            }
-        }
-        .padding(20)
-        .frame(width: 360)
     }
 }
 

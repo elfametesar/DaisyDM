@@ -40,6 +40,7 @@ extension View {
     }
 }
 
+
 struct DownloadListView: View {
     let items: [DownloadItem]
     @Binding var selected: Set<UUID>
@@ -54,10 +55,47 @@ struct DownloadListView: View {
     
     @AppStorage("accentColorHex") private var accentColorHex = "#0A84FF"
     @AppStorage("enableBackgroundTint") private var enableBackgroundTint = false
+    
+    // Sort sync
+    @AppStorage("sortColumn") private var sortColumn: SortColumn = .dateAdded
+    @AppStorage("sortAscending") private var sortAscending: Bool = false
+
+    // ── Unified Sorting Logic ─────────────────────────────────
+    var sortedItems: [DownloadItem] {
+        items.sorted { a, b in
+            let isAsc = sortAscending
+            switch sortColumn {
+            case .name:
+                let cmp = a.filename.localizedStandardCompare(b.filename)
+                if cmp == .orderedSame { return a.dateAdded > b.dateAdded }
+                return isAsc ? cmp == .orderedAscending : cmp == .orderedDescending
+            case .status:
+                if a.status == b.status { return a.dateAdded > b.dateAdded }
+                return isAsc ? a.status.rawValue < b.status.rawValue : a.status.rawValue > b.status.rawValue
+            case .transfer:
+                if a.progress == b.progress { return a.dateAdded > b.dateAdded }
+                return isAsc ? a.progress < b.progress : a.progress > b.progress
+            case .type:
+                if a.type == b.type { return a.dateAdded > b.dateAdded }
+                return isAsc ? a.type.rawValue < b.type.rawValue : a.type.rawValue > b.type.rawValue
+            case .speed:
+                if a.speed == b.speed { return a.dateAdded > b.dateAdded }
+                return isAsc ? a.speed < b.speed : a.speed > b.speed
+            case .dateAdded:
+                if a.dateAdded == b.dateAdded { return a.filename < b.filename }
+                return isAsc ? a.dateAdded < b.dateAdded : a.dateAdded > b.dateAdded
+            case .dateModified:
+                let d1 = a.dateCompleted ?? a.dateAdded
+                let d2 = b.dateCompleted ?? b.dateAdded
+                if d1 == d2 { return a.filename < b.filename }
+                return isAsc ? d1 < d2 : d1 > d2
+            }
+        }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
-            ColumnHeader()
+            ColumnHeader(sortColumn: $sortColumn, sortAscending: $sortAscending)
             mainContent
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -89,7 +127,7 @@ struct DownloadListView: View {
             ScrollView {
                 VStack(spacing: 0) {
                     LazyVStack(spacing: 0) {
-                        ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                        ForEach(Array(sortedItems.enumerated()), id: \.element.id) { index, item in
                             DownloadRow(
                                 item: item,
                                 isSelected: selected.contains(item.id)
@@ -123,7 +161,7 @@ struct DownloadListView: View {
         }
         .onKeyPress(.init("a"), phases: .down) { press in
             guard press.modifiers.contains(.command) else { return .ignored }
-            selected = Set(items.map { $0.id })
+            selected = Set(sortedItems.map { $0.id })
             return .handled
         }
         .onDeleteCommand {
@@ -202,13 +240,13 @@ struct DownloadListView: View {
             else { selected.insert(item.id) }
             lastSelectedIndex = index
         } else if flags.contains(.shift) {
-            guard let last = lastSelectedIndex, last < items.count else {
+            guard let last = lastSelectedIndex, last < sortedItems.count else {
                 selected = [item.id]
                 lastSelectedIndex = index
                 return
             }
             let range = min(last, index)...max(last, index)
-            selected = Set(items[range].map { $0.id })
+            selected = Set(sortedItems[range].map { $0.id })
         } else {
             selected = [item.id]
             lastSelectedIndex = index
@@ -288,70 +326,155 @@ struct DownloadListView: View {
 }
 
 struct LiquidGlassBackground: View {
-@State private var shimmerPhase: CGFloat = -1.0
-
-var body: some View {
-    ZStack {
-        Capsule().fill(.ultraThinMaterial.opacity(0.80))
-        
-        GeometryReader { geo in
-            LinearGradient(
-                stops: [
-                    .init(color: .clear, location: 0.0),
-                    .init(color: .white.opacity(0.3), location: 0.4),
-                    .init(color: .white.opacity(0.7), location: 0.5),
-                    .init(color: .white.opacity(0.3), location: 0.6),
-                    .init(color: .clear, location: 1.0)
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            .frame(width: geo.size.width * 2)
-            .offset(x: geo.size.width * shimmerPhase)
-            .blendMode(.plusLighter)
-        }
-        .clipShape(Capsule())
-        .onAppear {
-            withAnimation(.linear(duration: 4.5).repeatForever(autoreverses: false)) {
-                shimmerPhase = 1.0
-            }
-        }
-        
-        Capsule()
-            .fill(
-                LinearGradient(colors: [.white.opacity(0.9), .white.opacity(0.1), .clear], startPoint: .top, endPoint: .bottom)
-            )
-            .padding(1.5)
-        
-        Capsule()
-            .strokeBorder(
-                LinearGradient(colors: [.white.opacity(1.0), .white.opacity(0.2), .black.opacity(0.05), .white.opacity(0.6)], startPoint: .topLeading, endPoint: .bottomTrailing),
-                lineWidth: 1.5
-            )
-    }
-    .shadow(color: .black.opacity(0.08), radius: 12, x: 0, y: 6)
-    .shadow(color: .black.opacity(0.04), radius: 3, x: 0, y: 1)
-}
-}
-
-struct ColumnHeader: View {
+    @State private var shimmerPhase: CGFloat = -1.0
+    
     @AppStorage("accentColorHex") private var accentColorHex = "#0A84FF"
     @AppStorage("enableBackgroundTint") private var enableBackgroundTint = false
 
     var body: some View {
-        HStack(spacing: 0) {
-            Text("Name").frame(minWidth: 200, maxWidth: .infinity, alignment: .leading)
-            Text("Status").frame(width: 105, alignment: .leading)
-            Text("Transfer").frame(width: 140, alignment: .leading)
-            Text("Type").frame(width: 100, alignment: .leading)
-            Text("Speed").frame(width: 75, alignment: .leading)
+        ZStack {
+            // This layer now correctly switches between your Accent Color and Material
+            Capsule()
+                .fill(backgroundStyle)
+            
+            let accentColor = Color(accentColorHex)
+            GeometryReader { geo in
+                LinearGradient(
+                    stops: [
+                        .init(color: .clear, location: 0.0),
+                        .init(color: accentColor.opacity(0.3), location: 0.4),
+                        .init(color: accentColor.opacity(0.7), location: 0.5),
+                        .init(color: accentColor.opacity(0.3), location: 0.6),
+                        .init(color: .clear, location: 1.0)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                .frame(width: geo.size.width * 2)
+                .offset(x: geo.size.width * shimmerPhase)
+                .blendMode(.plusLighter)
+            }
+            .clipShape(Capsule())
+            .onAppear {
+                withAnimation(.linear(duration: 4.5).repeatForever(autoreverses: false)) {
+                    shimmerPhase = 1.0
+                }
+            }
+            
+            Capsule()
+                .fill(
+                    LinearGradient(colors: [.white.opacity(0.9), .white.opacity(0.1), .clear], startPoint: .top, endPoint: .bottom)
+                )
+                .padding(1.5)
+            
+            Capsule()
+                .strokeBorder(
+                    LinearGradient(colors: [.white.opacity(1.0), .white.opacity(0.2), .black.opacity(0.05), .white.opacity(0.6)], startPoint: .topLeading, endPoint: .bottomTrailing),
+                    lineWidth: 1.5
+                )
+        }
+        // Tint the shadow with the accent color for better integration
+        .shadow(color: enableBackgroundTint ? Color(hex: accentColorHex).opacity(0.15) : .black.opacity(0.08), radius: 12, x: 0, y: 6)
+    }
+
+    private var backgroundStyle: AnyShapeStyle {
+        if enableBackgroundTint {
+            // Apply a heavier opacity of the accent color to make the difference visible
+            return AnyShapeStyle(Color(hex: accentColorHex).opacity(0.15))
+        } else {
+            return AnyShapeStyle(.ultraThinMaterial.opacity(0.85))
+        }
+    }
+}
+
+// ── Clickable Column Headers ──────────────────────────────────
+struct ColumnHeader: View {
+    @Binding var sortColumn: SortColumn
+    @Binding var sortAscending: Bool
+
+    @AppStorage("accentColorHex") private var accentColorHex = "#0A84FF"
+    @AppStorage("enableBackgroundTint") private var enableBackgroundTint = false
+
+    var body: some View {
+        // MATCHING HSTACK SPACING
+        HStack(spacing: 12) {
+            Button(action: { sort(by: .name) }) {
+                HStack(spacing: 4) {
+                    Text("Name")
+                    sortIcon(for: .name)
+                }
+                .frame(minWidth: 200, maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            Button(action: { sort(by: .status) }) {
+                HStack(spacing: 4) {
+                    Text("Status")
+                    sortIcon(for: .status)
+                }
+                .frame(width: 100, alignment: .leading) // EXACT WIDTH
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            Button(action: { sort(by: .transfer) }) {
+                HStack(spacing: 4) {
+                    Text("Transfer")
+                    sortIcon(for: .transfer)
+                }
+                .frame(width: 130, alignment: .leading) // EXACT WIDTH
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            Button(action: { sort(by: .type) }) {
+                HStack(spacing: 4) {
+                    Text("Type")
+                    sortIcon(for: .type)
+                }
+                .frame(width: 80, alignment: .leading) // EXACT WIDTH
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            Button(action: { sort(by: .speed) }) {
+                HStack(spacing: 4) {
+                    Text("Speed")
+                    sortIcon(for: .speed)
+                }
+                .frame(width: 70, alignment: .leading) // EXACT WIDTH
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
         }
         .font(.system(size: 11, weight: .medium))
         .foregroundStyle(.secondary)
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 12) // MATCHING OUTER PADDING
         .padding(.vertical, 8)
         .background(enableBackgroundTint ? Color(hex: accentColorHex).opacity(0.04) : Color(NSColor.controlBackgroundColor))
         .overlay(alignment: .bottom) { Divider() }
+    }
+
+    private func sort(by column: SortColumn) {
+        if sortColumn == column {
+            sortAscending.toggle()
+        } else {
+            sortColumn = column
+            switch column {
+            case .name, .type, .status: sortAscending = true
+            case .transfer, .speed, .dateAdded, .dateModified: sortAscending = false
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func sortIcon(for column: SortColumn) -> some View {
+        if sortColumn == column {
+            Image(systemName: sortAscending ? "chevron.up" : "chevron.down")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(Color(hex: accentColorHex))
+        }
     }
 }
 
@@ -440,7 +563,10 @@ struct DownloadRow: View {
     }
     
     var mainRow: some View {
-        HStack(spacing: 0) {
+        // MATCHING HSTACK SPACING
+        HStack(spacing: 12) {
+            
+            // 1. NAME
             HStack(spacing: 8) {
                 if (item.type == .torrent || item.type == .batch) && (!item.subFiles.isEmpty || item.status == .downloading) {
                     Button(action: { withAnimation(.easeInOut(duration: 0.2)) { isExpanded.toggle() } }) {
@@ -450,8 +576,7 @@ struct DownloadRow: View {
                             .frame(width: 16, height: 16)
                     }
                     .buttonStyle(.plain)
-                } else {
-                }
+                } else {}
                 
                 Image(nsImage: fileIcon)
                     .resizable()
@@ -470,43 +595,48 @@ struct DownloadRow: View {
                         .lineLimit(1)
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(minWidth: 200, maxWidth: .infinity, alignment: .leading)
 
+            // 2. STATUS
             StatusPill(status: item.status, isSelected: isSelected, accentColorHex: accentColorHex)
-                .frame(width: 105, alignment: .leading)
+                .frame(width: 100, alignment: .leading) // EXACT WIDTH
 
+            // 3. TRANSFER
             VStack(alignment: .leading, spacing: 3) {
                 GeometryReader { geo in
                     ZStack(alignment: .leading) {
                         RoundedRectangle(cornerRadius: 2)
                             .fill(Color.primary.opacity(isSelected ? 0.2 : 0.1))
-                            .frame(height: 4)
+                            .frame(height: 6)
                         RoundedRectangle(cornerRadius: 2)
                             .fill(progressColor)
-                            .frame(width: max(0, CGFloat(item.progress) * geo.size.width), height: 4)
+                            .frame(width: max(0, CGFloat(item.progress) * geo.size.width), height: 6)
                     }
                 }
                 .frame(height: 4)
                 Text(item.transferLabel)
                     .font(.system(size: 10))
                     .foregroundStyle(isSelected ? dynamicTextColor.opacity(0.8) : .secondary)
+                    .lineLimit(1)
             }
-            .frame(width: 140, alignment: .leading)
-            .padding(.trailing, 8)
+            .frame(width: 130, alignment: .leading) // EXACT WIDTH (and removed rogue padding)
 
+            // 4. TYPE
             Text(item.type.rawValue)
                 .font(.system(size: 12))
                 .foregroundStyle(isSelected ? dynamicTextColor.opacity(0.85) : .primary)
                 .lineLimit(1)
-                .frame(width: 100, alignment: .leading)
+                .frame(width: 80, alignment: .leading) // EXACT WIDTH
 
+            // 5. SPEED
             Text(item.status == .downloading ? item.formattedSpeed : "–")
                 .font(.system(size: 12))
                 .foregroundStyle(isSelected ? dynamicTextColor.opacity(0.85) : .secondary)
-                .frame(width: 75, alignment: .leading)
+                .lineLimit(1)
+                .frame(width: 70, alignment: .leading) // EXACT WIDTH
 
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 12) // MATCHING OUTER PADDING
         .padding(.vertical, isCompactList ? 4 : 9)
     }
 
@@ -587,305 +717,6 @@ struct EmptyListPlaceholder: View {
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 340)
             }
-        }
-    }
-}
-
-// MARK: - Properties Sheet
-
-struct PropertiesSheet: View {
-    let item: DownloadItem
-    @Environment(\.dismiss) private var dismiss
-    var engine = DownloadEngine.shared
-
-    @State private var urlText: String = ""
-    @State private var urlIsValid: Bool = true
-    
-    @AppStorage("accentColorHex") private var accentColorHex = "#0A84FF"
-    @AppStorage("enableBackgroundTint") private var enableBackgroundTint = false
-
-    private var fileSize: String {
-        if item.totalBytes > 0 { return formatBytes(item.totalBytes) }
-        if item.downloadedBytes > 0 { return formatBytes(item.downloadedBytes) + " (partial)" }
-        return "Unknown"
-    }
-
-    private var diskUsage: String {
-        let url = item.destinationURL
-        guard FileManager.default.fileExists(atPath: url.path),
-              let vals = try? url.resourceValues(forKeys: [.totalFileAllocatedSizeKey]) else { return "–" }
-        return formatBytes(Int64(vals.totalFileAllocatedSize ?? 0))
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Image(systemName: item.type == .torrent ? "arrow.2.circlepath" : (item.type == .batch ? "square.stack.3d.down.right" : "link"))
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                Text(item.filename)
-                    .font(.system(size: 14, weight: .semibold))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Spacer()
-                Button { dismiss() } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 18))
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(.horizontal, 20)
-            .padding(.top, 18)
-            .padding(.bottom, 14)
-
-            Divider()
-
-            ScrollView {
-                VStack(spacing: 0) {
-                    PropertiesSection("File") {
-                        PropRow("Filename",    item.filename)
-                        PropRow("Destination", item.destinationURL.path)
-                        PropRow("File Size",   fileSize)
-                        PropRow("On Disk",     diskUsage)
-                        PropRow("Type",        item.type.rawValue)
-                        if let mime = item.mimeType { PropRow("MIME Type", mime) }
-                    }
-
-                    PropertiesSection("Transfer") {
-                        PropRow("Status",      item.status.rawValue)
-                        PropRow("Downloaded",  formatBytes(item.downloadedBytes))
-                        PropRow("Progress",    item.totalBytes > 0
-                            ? String(format: "%.1f%%", item.progress * 100)
-                            : "–")
-                        PropRow("Connections", "\(item.connectionCount)")
-                        PropRow("Range Support", item.supportsRanges ? "Yes" : "No")
-                        if item.speedLimit > 0 {
-                            PropRow("Speed Limit", "\(item.speedLimit) KB/s")
-                        }
-                        if let err = item.error { PropRow("Error", err) }
-                    }
-
-                    PropertiesSection("Source") {
-                        if item.type == .batch {
-                            PropRow("Batch URLs", "\(item.batchURLs?.count ?? 0) URLs", expandable: false)
-                        } else {
-                            HStack(alignment: .top, spacing: 12) {
-                                Text("URL")
-                                    .font(.system(size: 12, weight: .medium))
-                                    .foregroundStyle(.secondary)
-                                    .frame(width: 120, alignment: .trailing)
-                                VStack(alignment: .leading, spacing: 4) {
-                                    TextField("", text: $urlText)
-                                        .textFieldStyle(.plain)
-                                        .font(.system(size: 12, design: .monospaced))
-                                        .foregroundColor(urlIsValid ? .primary : .red)
-                                        .onChange(of: urlText) { _, new in
-                                            urlIsValid = URL(string: new) != nil && !new.isEmpty
-                                        }
-                                    if !urlIsValid {
-                                        Text("Invalid URL")
-                                            .font(.system(size: 10))
-                                            .foregroundStyle(.red)
-                                    }
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                Button {
-                                    NSPasteboard.general.clearContents()
-                                    NSPasteboard.general.setString(urlText, forType: .string)
-                                } label: {
-                                    Image(systemName: "doc.on.doc")
-                                        .font(.system(size: 11))
-                                        .foregroundStyle(.secondary)
-                                }
-                                .buttonStyle(.plain)
-                            }
-                            .padding(.horizontal, 20)
-                            .padding(.vertical, 5)
-
-                            PropRow("Host",   URL(string: urlText)?.host ?? item.url.host ?? "–")
-                            PropRow("Scheme", URL(string: urlText)?.scheme?.uppercased() ?? item.url.scheme?.uppercased() ?? "–")
-                        }
-                        if let ua = item.userAgent, !ua.isEmpty { PropRow("User-Agent", ua, expandable: true) }
-                        if let ck = item.cookies,  !ck.isEmpty  { PropRow("Cookies",    ck, expandable: true) }
-                    }
-
-                    PropertiesSection("Dates") {
-                        PropRow("Added", formatDate(item.dateAdded))
-                        if let done = item.dateCompleted {
-                            PropRow("Completed", formatDate(done))
-                            PropRow("Duration",  formatDuration(done.timeIntervalSince(item.dateAdded)))
-                        }
-                    }
-
-                    if !item.subFiles.isEmpty {
-                        PropertiesSection("\(item.type == .batch ? "Batch" : "Torrent") Files (\(item.subFiles.count))") {
-                            ForEach(item.subFiles) { f in
-                                PropRow(f.filename, f.totalBytes > 0 ? formatBytes(f.totalBytes) : "Unknown Size")
-                            }
-                        }
-                    }
-                }
-                .padding(.bottom, 16)
-            }
-
-            Divider()
-
-            HStack {
-                Button("Show in Finder") {
-                    NSWorkspace.shared.activateFileViewerSelecting([item.destinationURL])
-                }
-                .buttonStyle(.bordered)
-                Spacer()
-                
-                Button("Done") {
-                    if item.type != .batch, urlIsValid, let newURL = URL(string: urlText), newURL != item.url {
-                        let shouldResume = (item.status != .completed)
-                        
-                        if item.status == .downloading || item.status == .queued {
-                            engine.stop(item)
-                        }
-                        
-                        try? FileManager.default.removeItem(at: item.tempDirURL)
-                        try? FileManager.default.removeItem(at: item.destinationURL)
-                        
-                        let newFilename: String = {
-                            var c = URLComponents(url: newURL, resolvingAgainstBaseURL: false)
-                            c?.query = nil
-                            let last = (c?.url ?? newURL).lastPathComponent
-                            let dec  = last.removingPercentEncoding ?? last
-                            return (!dec.isEmpty && dec != "/") ? dec : "download"
-                        }()
-                        let destDir = item.destinationURL.deletingLastPathComponent()
-
-                        item.url            = newURL
-                        item.filename       = newFilename
-                        item.destinationURL = destDir.appendingPathComponent(newFilename)
-                        item.sourceHost     = newURL.host ?? ""
-                        item.error          = nil
-                        item.downloadedBytes = 0
-                        item.totalBytes      = 0
-                        item.isPrepared      = false
-                        item.supportsRanges  = false
-                        item.status          = .stopped
-                        
-                        engine.persist()
-                        
-                        if shouldResume {
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                                engine.resume(item)
-                            }
-                        }
-                    }
-                    dismiss()
-                }
-                .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.return)
-                .disabled(!urlIsValid)
-                .tint(Color(hex: accentColorHex))
-                .foregroundStyle(Color(hex: accentColorHex).accessibleText)
-            }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 14)
-        }
-        .frame(width: 560, height: 520)
-        .background(enableBackgroundTint ? Color(hex: accentColorHex).opacity(0.04) : Color(NSColor.windowBackgroundColor))
-        .onAppear { urlText = item.url.absoluteString }
-    }
-
-    private func formatDate(_ date: Date) -> String {
-        let f = DateFormatter()
-        f.dateStyle = .medium
-        f.timeStyle = .medium
-        return f.string(from: date)
-    }
-
-    private func formatDuration(_ t: TimeInterval) -> String {
-        let s = Int(t)
-        if s < 60 { return "\(s)s" }
-        if s < 3600 { return "\(s/60)m \(s%60)s" }
-        return "\(s/3600)h \((s%3600)/60)m \(s%60)s"
-    }
-}
-
-struct PropRow: View {
-    let label: String
-    let value: String
-    var copiable: Bool = false
-    var expandable: Bool = false
-    var lineLimit: Int = 3
-    @State private var copied = false
-    @State private var expanded = false
-
-    init(_ label: String, _ value: String, copiable: Bool = false, expandable: Bool = false, lineLimit: Int = 3) {
-        self.label = label
-        self.value = value
-        self.copiable = copiable
-        self.expandable = expandable
-        self.lineLimit = lineLimit
-    }
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Text(label)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.secondary)
-                .frame(width: 120, alignment: .trailing)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(value)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.primary)
-                    .textSelection(.enabled)
-                    .lineLimit(expandable && !expanded ? 1 : nil)
-                    .truncationMode(.tail)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                if expandable {
-                    Button(expanded ? "Show less" : "Show more") {
-                        expanded.toggle()
-                    }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            if copiable {
-                Button {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(value, forType: .string)
-                    copied = true
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
-                } label: {
-                    Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                        .font(.system(size: 11))
-                        .foregroundStyle(copied ? .green : .secondary)
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 5)
-    }
-}
-
-private struct PropertiesSection<Content: View>: View {
-    let title: String
-    @ViewBuilder let content: Content
-
-    init(_ title: String, @ViewBuilder content: () -> Content) {
-        self.title = title
-        self.content = content()
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text(title.uppercased())
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(.tertiary)
-                .padding(.horizontal, 20)
-                .padding(.top, 16)
-                .padding(.bottom, 6)
-            content
         }
     }
 }
