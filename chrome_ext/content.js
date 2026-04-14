@@ -12,6 +12,9 @@ _api.runtime.sendMessage({ type: "GET_BYPASS_KEY" }, (response) => {
 
 _api.runtime.onMessage.addListener((message) => {
     if (message.type === "UPDATE_BYPASS_KEY" && message.bypassKey) bypassKey = message.bypassKey;
+    if (message.type === "CREDENTIALED_FETCH" && message.url) {
+        fetchWithCredentials(message.url, message.filename || "");
+    }
 });
 
 window.addEventListener("keydown", (e) => {
@@ -45,6 +48,7 @@ const DOWNLOAD_SITE_PATTERNS = [
 const onDownloadSite = DOWNLOAD_SITE_PATTERNS.some(p => p.test(location.href));
 
 function isDownloadURL(url) {
+  if (url.startsWith("magnet:")) return true;
   try {
     const path = new URL(url).pathname.toLowerCase().split("?")[0];
     return DOWNLOAD_EXTENSIONS.some(ext => path.endsWith("." + ext));
@@ -63,8 +67,52 @@ function extractFilename(url, anchor) {
   } catch { return "download"; }
 }
 
+// ── Claude.ai and other HttpOnly-cookie sites ─────────────────────────────
+const CREDENTIALED_PATTERNS = [/claude\.ai/];
+
+function needsCredentialedFetch(url) {
+  try { return CREDENTIALED_PATTERNS.some(p => p.test(new URL(url).hostname)); }
+  catch { return false; }
+}
+
+async function fetchWithCredentials(url, filename) {
+  try {
+    const resp = await fetch(url, { credentials: "include" });
+    if (!resp.ok) return;
+
+    // Prefer Content-Disposition filename
+    const cd = resp.headers.get("content-disposition");
+    if (cd) {
+      const rfc = cd.match(/filename\*=UTF-8''([^;\r\n]+)/i);
+      const plain = cd.match(/filename=["']?([^"';\r\n]+)/i);
+      const resolved = rfc ? decodeURIComponent(rfc[1].trim())
+                     : plain ? plain[1].trim().replace(/["']/g, "")
+                     : null;
+      if (resolved) filename = resolved;
+    }
+
+    const blob = await resp.blob();
+    if (blob.size === 0 || blob.size > 500 * 1024 * 1024) return;
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      _api.runtime.sendMessage({
+        type:     "PREPARE_DISPATCH_DOWNLOAD",
+        url:      reader.result,
+        filename: filename || "download"
+      }).catch(() => {});
+    };
+    reader.readAsDataURL(blob);
+  } catch (_) {}
+}
+
 // ── Send to background (Or Relay to Browser) ──────────────────────────────
 function sendToDispatch(url, filename) {
+  // Intercept credentialed URLs before sending to background
+  if (needsCredentialedFetch(url)) {
+    fetchWithCredentials(url, filename);
+    return;
+  }
   if (isBypassKeyHeld) {
       // THE FIX: If bypassed, explicitly force the browser to handle the download natively.
       console.log("[Dispatch] Bypass active. Relaying to browser natively:", url);
@@ -102,6 +150,20 @@ document.addEventListener("click", (e) => {
   const href        = el.href;
   const hasDownload = el.hasAttribute("download");
   const isFile      = isDownloadURL(href);
+
+  // Magnet links — intercept before browser handles them
+  if (href.startsWith("magnet:")) {
+    e.preventDefault(); e.stopImmediatePropagation();
+    sendToDispatch(href, extractFilename(href, el));
+    return;
+  }
+
+  // Claude attachments: fetch in-page so session cookies are sent
+  if (needsCredentialedFetch(href) && (hasDownload || href.includes("/download"))) {
+    e.preventDefault(); e.stopImmediatePropagation();
+    fetchWithCredentials(href, extractFilename(href, el));
+    return;
+  }
 
   if (hasDownload || isFile) {
     e.preventDefault();
@@ -149,7 +211,8 @@ window.open = function(url, ...rest) {
           sendToDispatch(url, extractFilename(url));
           return null; // Stop the popup, force the native download tag
       }
-      if (url.startsWith("blob:"))  { handleBlob(url, "download"); return null; }
+      if (url.startsWith("magnet:")) { sendToDispatch(url, extractFilename(url)); return null; }
+  if (url.startsWith("blob:"))  { handleBlob(url, "download"); return null; }
       if (isDownloadURL(url))       { sendToDispatch(url, extractFilename(url)); return null; }
       if (onDownloadSite)           { sendToDispatch(url, extractFilename(url)); return null; }
   }
@@ -193,18 +256,53 @@ if (onDownloadSite) {
 }
 
 // ── Blob handling ──────────────────────────────────────────────────────────
-function handleBlob(blobUrl, filename) {
+async function handleBlob(blobUrl, filename) {
   if (isBypassKeyHeld) return;
-  fetch(blobUrl).then(r => {
-    const fn = r.headers.get("content-disposition")
-      ?.match(/filename=["']?([^"';]+)/i)?.[1]?.trim();
-    if (fn) filename = fn;
-    return r.blob();
-  }).then(blob => {
-    const reader  = new FileReader();
+  try {
+    const r = await fetch(blobUrl);
+    const cd = r.headers.get("content-disposition");
+    if (cd) {
+      const rfc = cd.match(/filename\*=UTF-8''([^;\r\n]+)/i);
+      const plain = cd.match(/filename=["']?([^"';\r\n]+)/i);
+      const resolved = rfc ? decodeURIComponent(rfc[1].trim())
+                     : plain ? plain[1].trim().replace(/["']/g, "") : null;
+      if (resolved) filename = resolved;
+    }
+    const blob = await r.blob();
+    if (blob.size === 0 || blob.size > 500 * 1024 * 1024) return;
+
+    // Detect torrent by filename or magic byte (bencoded dict starts with 0x64 = 'd')
+    const lname = (filename || "").toLowerCase();
+    let isTorrent = lname.endsWith(".torrent") || blob.type === "application/x-bittorrent";
+    if (!isTorrent) {
+      const header = await blob.slice(0, 4).arrayBuffer();
+      isTorrent = new Uint8Array(header)[0] === 0x64;
+    }
+
+    if (isTorrent) {
+      if (!lname.endsWith(".torrent")) filename = (filename || "download") + ".torrent";
+      const buf = await blob.arrayBuffer();
+      for (let port = 6840; port <= 6850; port++) {
+        try {
+          const ctrl = new AbortController();
+          const t = setTimeout(() => ctrl.abort(), 1500);
+          const resp = await fetch(`http://127.0.0.1:${port}/torrent`, {
+            method: "POST",
+            headers: { "Content-Type": "application/octet-stream", "X-Filename": filename, "Content-Length": String(buf.byteLength) },
+            body: buf, signal: ctrl.signal
+          });
+          clearTimeout(t);
+          if (resp.ok) return;
+        } catch (_) {}
+      }
+      return;
+    }
+
+    // Non-torrent blobs: convert to data URL
+    const reader = new FileReader();
     reader.onload = () => sendToDispatch(reader.result, filename || "download");
     reader.readAsDataURL(blob);
-  }).catch(() => showBanner("Couldn't read blob — right-click the download button.", "error"));
+  } catch (_) {}
 }
 
 function findDownloadURL(obj, depth = 0) {

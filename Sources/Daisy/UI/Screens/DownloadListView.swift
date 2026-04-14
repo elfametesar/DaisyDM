@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 
 struct RightClickModifier: ViewModifier {
     let action: () -> Void
@@ -524,7 +525,8 @@ struct DownloadRow: View {
     
     var fileIcon: NSImage {
         let ext = (item.filename as NSString).pathExtension
-        return ext.isEmpty ? NSWorkspace.shared.icon(forFileType: "public.data") : NSWorkspace.shared.icon(forFileType: ext)
+        if ext.isEmpty { return NSWorkspace.shared.icon(for: .data) }
+        return NSWorkspace.shared.icon(for: UTType(filenameExtension: ext) ?? .data)
     }
 
     var dynamicTextColor: Color {
@@ -670,7 +672,7 @@ struct DownloadRow: View {
         switch item.status {
         case .downloading, .completed, .failed, .stopped:
             return matchProgressBarToAccent ? Color(hex: accentColorHex) : Color(hex: progressBarColorHex)
-        default: return .secondary
+        case .queued: return .secondary
         }
     }
 }
@@ -712,7 +714,6 @@ struct StatusPill: View {
         case .failed:               baseColor = Color(hex: failedColorHex)
         case .downloading, .queued: baseColor = Color(hex: downloadingColorHex)
         case .stopped:              baseColor = Color(hex: stoppedColorHex)
-        default:                    return .secondary
         }
         
         let matchedColor = matchBadgesToAccent

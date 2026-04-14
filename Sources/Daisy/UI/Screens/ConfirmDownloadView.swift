@@ -60,7 +60,7 @@ struct ConfirmDownloadView: View {
                     Text($filename.wrappedValue)
                         .font(.system(size: 13, weight: .semibold))
                         .lineLimit(1).truncationMode(.middle)
-                        .foregroundStyle(Color(hex: accentColorHex))
+                        .foregroundStyle(.primary)
                     
                     HStack(spacing: 6) {
                         Text(fileExt)
@@ -76,7 +76,7 @@ struct ConfirmDownloadView: View {
                             
                         if resolvedSize > 0 {
                             Text("•")
-                                .foregroundStyle(.tertiary)
+                                .foregroundStyle(.primary)
                             Text(formatBytes(resolvedSize))
                                 .font(.system(size: 11, weight: .semibold))
                                 .foregroundStyle(.secondary)
@@ -96,7 +96,7 @@ struct ConfirmDownloadView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("File Name")
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(Color(hex: accentColorHex))
+                        .foregroundStyle(.primary)
                     TextField("filename", text: $filename)
                         .textFieldStyle(.roundedBorder)
                         .font(.system(size: 11))
@@ -106,7 +106,7 @@ struct ConfirmDownloadView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Save To")
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(Color(hex: accentColorHex))
+                        .foregroundStyle(.primary)
                     HStack {
                         Text(destination.path(percentEncoded: false))
                             .font(.system(size: 11))
@@ -133,43 +133,43 @@ struct ConfirmDownloadView: View {
                     HStack {
                         Text("Connections")
                             .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(Color(hex: accentColorHex))
+                            .foregroundStyle(.primary)
                         Spacer()
                         Text("\(connections)")
                             .font(.system(size: 11, weight: .bold))
-                            .foregroundStyle(Color(hex: accentColorHex))
+                            .foregroundStyle(.primary)
                             .monospacedDigit()
                     }
                     HStack(spacing: 8) {
-                        Text("1").font(.system(size: 10)).foregroundStyle(Color(hex: accentColorHex))
+                        Text("1").font(.system(size: 10)).foregroundStyle(.primary)
                         Slider(value: Binding(get: { Double(connections) },
                                               set: { connections = Int($0) }),
                                in: 1...32, step: 1)
                         .tint(Color(hex: accentColorHex))
-                        Text("32").font(.system(size: 10)).foregroundStyle(Color(hex: accentColorHex))
+                        Text("32").font(.system(size: 10)).foregroundStyle(.primary)
                     }
                 }
 
                 DisclosureGroup(isExpanded: $showDetails) {
                     VStack(alignment: .leading, spacing: 6) {
-                        DetailRowView(label: "URL", value: request.url.absoluteString, labelWidth: 76).foregroundStyle(Color(hex: accentColorHex))
+                        DetailRowView(label: "URL", value: request.url.absoluteString, labelWidth: 76).foregroundStyle(.primary)
                         if !request.referer.isEmpty {
-                            DetailRowView(label: "Referer", value: request.referer, labelWidth: 76).foregroundStyle(Color(hex: accentColorHex))
+                            DetailRowView(label: "Referer", value: request.referer, labelWidth: 76).foregroundStyle(.primary)
                         }
                         if !request.cookies.isEmpty {
                             DetailRowView(label: "Cookies",
                                           value: String(request.cookies.prefix(120)) + (request.cookies.count > 120 ? "…" : ""),
-                                          labelWidth: 76).foregroundStyle(Color(hex: accentColorHex))
+                                          labelWidth: 76).foregroundStyle(.primary)
                         }
                         if !request.ua.isEmpty {
-                            DetailRowView(label: "User-Agent", value: request.ua, labelWidth: 76).foregroundStyle(Color(hex: accentColorHex))
+                            DetailRowView(label: "User-Agent", value: request.ua, labelWidth: 76).foregroundStyle(.primary)
                         }
                     }
                     .padding(.top, 8)
                 } label: {
                     Text("Advanced Details")
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(Color(hex: accentColorHex))
+                        .foregroundStyle(.primary)
                 }
                 .disclosureGroupStyle(.automatic)
                 .tint(Color(hex: accentColorHex))

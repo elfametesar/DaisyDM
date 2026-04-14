@@ -64,6 +64,22 @@ chrome.downloads.onCreated.addListener((item) => {
         const referer  = item.referrer || "";
         const filename = item.filename ? item.filename.split(/[\/\\]/).pop() : extractFilename(url);
 
+        // Claude.ai uses HttpOnly cookies — must fetch in the page context
+        if (/claude\.ai/.test(new URL(url).hostname)) {
+            chrome.tabs.query({ active: true, currentWindow: true }).then(tabs => {
+                if (tabs?.[0]?.id) {
+                    chrome.tabs.sendMessage(tabs[0].id, {
+                        type: "CREDENTIALED_FETCH",
+                        url,
+                        filename
+                    }).catch(() => triggerDownload(url, filename, referer));
+                } else {
+                    triggerDownload(url, filename, referer);
+                }
+            });
+            return;
+        }
+
         triggerDownload(url, filename, referer);
     });
 });

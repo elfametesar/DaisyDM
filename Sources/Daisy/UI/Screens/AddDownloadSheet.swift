@@ -55,14 +55,14 @@ struct AddDownloadSheet: View {
 
             VStack(alignment: .leading, spacing: 16) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("URL").font(.callout.weight(.medium)).foregroundStyle(Color(hex: accentColorHex))
+                    Text("URL").font(.callout.weight(.medium)).foregroundStyle(.primary)
                     HStack(alignment: .top) {
-                        Image(systemName: "link").foregroundStyle(.tertiary).font(.system(size: 13)).padding(.top, 4)
+                        Image(systemName: "link").foregroundStyle(.primary).font(.system(size: 13)).padding(.top, 4)
 
                         ZStack(alignment: .topLeading) {
                             if urlText.isEmpty {
                                 Text("https://example.com/file1.zip\nPaste multiple links to extract the direct URLs")
-                                    .foregroundStyle(.tertiary)
+                                    .foregroundStyle(.primary)
                                     .font(.system(size: 13))
                                     .padding(.top, 4)
                                     .allowsHitTesting(false)
@@ -81,7 +81,7 @@ struct AddDownloadSheet: View {
 
                         if !urlText.isEmpty {
                             Button { urlText = "" } label: {
-                                Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary)
+                                Image(systemName: "xmark.circle.fill").foregroundStyle(.primary)
                             }.buttonStyle(.plain).padding(.top, 4).disabled(isResolving)
                         }
                         Divider().padding(.vertical, 4)
@@ -98,9 +98,9 @@ struct AddDownloadSheet: View {
                 }
 
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Save to").font(.callout.weight(.medium)).foregroundStyle(Color(hex: accentColorHex))
+                    Text("Save to").font(.callout.weight(.medium)).foregroundStyle(.primary)
                     HStack {
-                        Image(systemName: "folder").foregroundStyle(.tertiary).font(.system(size: 13))
+                        Image(systemName: "folder").foregroundStyle(.primary).font(.system(size: 13))
                         Text(destination.path(percentEncoded: false))
                             .font(.system(size: 12))
                             .foregroundStyle(.secondary)
@@ -124,25 +124,25 @@ struct AddDownloadSheet: View {
 
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
-                        Text("Connections").font(.callout.weight(.medium)).foregroundStyle(Color(hex: accentColorHex))
+                        Text("Connections").font(.callout.weight(.medium)).foregroundStyle(.primary)
                         Spacer()
                         Text("\(connections)")
                             .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(Color(hex: accentColorHex))
+                            .foregroundStyle(.primary)
                     }
                     HStack(spacing: 10) {
-                        Text("1").font(.caption).foregroundStyle(Color(hex: accentColorHex))
+                        Text("1").font(.caption).foregroundStyle(.primary)
                         Slider(value: Binding(
                             get: { Double(connections) },
                             set: { connections = Int($0) }
                         ), in: 1...32, step: 1)
-                        .foregroundStyle(Color(hex: accentColorHex))
+                        .foregroundStyle(.primary)
                         .disabled(isResolving)
-                        Text("32").font(.caption).foregroundStyle(Color(hex: accentColorHex))
+                        Text("32").font(.caption).foregroundStyle(.primary)
                     }
                     Text("More connections saturate high-bandwidth servers faster. P2P (Torrent) ignores this.")
                         .font(.caption)
-                        .foregroundStyle(Color(hex: accentColorHex))
+                        .foregroundStyle(.primary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
