@@ -20,16 +20,15 @@ struct SidebarView: View {
                         .padding(.bottom, 4)
                     
                     ForEach(SidebarFilter.allCases) { filter in
-                        Button(action: { selected = filter }) {
-                            SidebarRow(
-                                filter: filter,
-                                count: count(for: filter),
-                                isSelected: selected == filter,
-                                accentColorHex: accentColorHex
-                            )
+                        SidebarRow(
+                            filter: filter,
+                            count: count(for: filter),
+                            isSelected: selected == filter,
+                            accentColorHex: accentColorHex
+                        )
+                        .onTapGesture {
+                            selected = filter
                         }
-                        .buttonStyle(.plain)
-                        .focusable()
                     }
                 }
                 .padding(.horizontal, 8)
@@ -45,7 +44,6 @@ struct SidebarView: View {
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
                 .font(.system(size: 12))
-                .focusable()
                 
                 Spacer()
                 
@@ -63,7 +61,6 @@ struct SidebarView: View {
             .background(.ultraThinMaterial)
             .background(enableBackgroundTint ? Color(hex: accentColorHex).opacity(0.04) : Color.clear)
         }
-        .tint(Color(hex: accentColorHex))
     }
 
     private func count(for filter: SidebarFilter) -> Int {

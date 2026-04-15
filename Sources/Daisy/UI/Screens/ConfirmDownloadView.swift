@@ -231,7 +231,7 @@ struct ConfirmDownloadView: View {
             if let win = newWindow {
                 win.isOpaque = false
                 win.backgroundColor = .clear
-                win.animationBehavior = .none // Prevents native OS sliding window glitch
+                win.animationBehavior = .none
             }
         }
     }
