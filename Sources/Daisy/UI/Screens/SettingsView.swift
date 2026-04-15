@@ -125,6 +125,7 @@ struct SettingsView: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .strokeBorder(Color(NSColor.separatorColor), lineWidth: 0.5)
         )
+        .tint(Color(hex: accentColorHex)) // Colors standard controls & focus rings
         .interactiveDismissDisabled()
     }
     
@@ -227,18 +228,22 @@ struct SettingsView: View {
                         HStack(spacing: 6) {
                             TextField("Host (e.g. 127.0.0.1)", text: $proxyHost)
                                 .textFieldStyle(.roundedBorder).frame(width: 140)
+                                .onChange(of: proxyHost) { _, new in if new.contains("\t") { proxyHost = new.replacingOccurrences(of: "\t", with: "") } }
                             Text(":")
                             TextField("Port", text: $proxyPort)
                                 .textFieldStyle(.roundedBorder).frame(width: 60)
+                                .onChange(of: proxyPort) { _, new in if new.contains("\t") { proxyPort = new.replacingOccurrences(of: "\t", with: "") } }
                         }
                     }
                     SettingsRow("Username (Optional)", addDivider: true) {
                         SecureField("Username", text: $proxyUsername)
                             .textFieldStyle(.roundedBorder).frame(width: 216)
+                            .onChange(of: proxyUsername) { _, new in if new.contains("\t") { proxyUsername = new.replacingOccurrences(of: "\t", with: "") } }
                     }
                     SettingsRow("Password (Optional)", addDivider: true) {
                         SecureField("Password", text: $proxyPassword)
                             .textFieldStyle(.roundedBorder).frame(width: 216)
+                            .onChange(of: proxyPassword) { _, new in if new.contains("\t") { proxyPassword = new.replacingOccurrences(of: "\t", with: "") } }
                     }
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Supported protocols: HTTP, HTTPS, SOCKS5.")

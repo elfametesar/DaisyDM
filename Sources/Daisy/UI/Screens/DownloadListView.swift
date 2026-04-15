@@ -62,7 +62,6 @@ struct DownloadListView: View {
     @Binding var search: String
     var engine = DownloadEngine.shared
 
-    // Routes back to ContentView to trigger your custom RemoveDialog
     let onRequestRemove: ([DownloadItem]) -> Void
 
     @State private var anchorIndex: Int? = nil
@@ -76,11 +75,9 @@ struct DownloadListView: View {
     @AppStorage("accentColorHex") private var accentColorHex = "#0A84FF"
     @AppStorage("enableBackgroundTint") private var enableBackgroundTint = false
     
-    // Sort sync
     @AppStorage("sortColumn") private var sortColumn: SortColumn = .dateAdded
     @AppStorage("sortAscending") private var sortAscending: Bool = false
 
-    // ── Unified Sorting Logic ─────────────────────────────────
     var sortedItems: [DownloadItem] {
         items.sorted { a, b in
             let isAsc = sortAscending
@@ -132,6 +129,7 @@ struct DownloadListView: View {
             mainContent
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .tint(Color(hex: accentColorHex))
         .sheet(item: $propertiesItem) { item in
             PropertiesSheet(item: item)
         }
@@ -492,6 +490,9 @@ struct DownloadListView: View {
                 .textFieldStyle(.plain)
                 .font(.system(size: 14))
                 .focused($isSearchFocused)
+                .onChange(of: search) { _, new in
+                    if new.contains("\t") { search = new.replacingOccurrences(of: "\t", with: "") }
+                }
             
             searchActionButtons
         }
@@ -512,7 +513,6 @@ struct DownloadListView: View {
                     .font(.system(size: 16))
             }
             .buttonStyle(.plain)
-            .focusable(false)
         } else {
             dictationButton
         }
@@ -530,7 +530,6 @@ struct DownloadListView: View {
                 .font(.system(size: 16))
         }
         .buttonStyle(.plain)
-        .focusable(false)
         .help("Start Dictation")
     }
     
@@ -978,7 +977,6 @@ struct SubFileRow: View {
                     
                     if parent.status == .stopped || parent.status == .failed {
                         if !parent.subFiles[index].isStopped {
-                            // Resume parent, but do NOT override the flags of other subfiles
                             engine.resume(parent, resumeSubFiles: false)
                         } else {
                             engine.persist()

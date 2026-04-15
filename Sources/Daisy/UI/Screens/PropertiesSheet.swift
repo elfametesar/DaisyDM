@@ -92,7 +92,8 @@ struct PropertiesSheet: View {
                                         .font(.system(size: 12, design: .monospaced))
                                         .foregroundColor(urlIsValid ? .primary : .red)
                                         .onChange(of: urlText) { _, new in
-                                            urlIsValid = URL(string: new) != nil && !new.isEmpty
+                                            if new.contains("\t") { urlText = new.replacingOccurrences(of: "\t", with: "") }
+                                            urlIsValid = URL(string: urlText) != nil && !urlText.isEmpty
                                         }
                                     if !urlIsValid {
                                         Text("Invalid URL")
@@ -147,7 +148,9 @@ struct PropertiesSheet: View {
                     NSWorkspace.shared.activateFileViewerSelecting([item.destinationURL])
                 }
                 .buttonStyle(ActionButtonStyle(prominent: false, hex: accentColorHex))
+                
                 Spacer()
+                
                 Button("Done") {
                     applyURLChangeIfNeeded()
                     dismiss()
@@ -161,6 +164,7 @@ struct PropertiesSheet: View {
         .background(enableBackgroundTint
                     ? Color(hex: accentColorHex).opacity(0.04)
                     : Color(NSColor.windowBackgroundColor))
+        .tint(Color(hex: accentColorHex))
         .onAppear { urlText = item.url.absoluteString }
     }
 

@@ -17,6 +17,15 @@ struct AddDownloadSheet: View {
     @AppStorage("accentColorHex") private var accentColorHex = "#0A84FF"
     @AppStorage("enableBackgroundTint") private var enableBackgroundTint = false
 
+    enum Field: Hashable {
+        case urlInput
+        case chooseFolder
+        case connectionsSlider
+        case cancelBtn
+        case addBtn
+    }
+    @FocusState private var focusedField: Field?
+
     var parsedURLs: [URL] {
         urlText.components(separatedBy: .whitespacesAndNewlines)
             .filter { !$0.isEmpty }
@@ -72,9 +81,14 @@ struct AddDownloadSheet: View {
                                 .scrollContentBackground(.hidden)
                                 .background(Color.clear)
                                 .frame(minHeight: 60, maxHeight: 120)
+                                .focused($focusedField, equals: .urlInput)
                                 .onChange(of: urlText) { _, newText in
+                                    if newText.contains("\t") {
+                                        urlText = newText.replacingOccurrences(of: "\t", with: "")
+                                        focusedField = .chooseFolder
+                                    }
                                     isValid = !parsedURLs.isEmpty
-                                    triggerAutoResolveIfNeed(newText: newText)
+                                    triggerAutoResolveIfNeed(newText: urlText)
                                 }
                                 .disabled(isResolving)
                         }
@@ -82,14 +96,21 @@ struct AddDownloadSheet: View {
                         if !urlText.isEmpty {
                             Button { urlText = "" } label: {
                                 Image(systemName: "xmark.circle.fill").foregroundStyle(.primary)
-                            }.buttonStyle(.plain).padding(.top, 4).disabled(isResolving)
+                            }
+                            .buttonStyle(.plain)
+                            .padding(.top, 4)
+                            .disabled(isResolving)
                         }
                         Divider().padding(.vertical, 4)
                         Button {
                             if let s = NSPasteboard.general.string(forType: .string), !s.isEmpty { urlText = s }
                         } label: {
                             Image(systemName: "doc.on.clipboard").foregroundStyle(.secondary)
-                        }.buttonStyle(.plain).help("Paste from clipboard").padding(.top, 4).disabled(isResolving)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Paste from clipboard")
+                        .padding(.top, 4)
+                        .disabled(isResolving)
                     }
                     .padding(9)
                     .background(Color.white.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
@@ -116,6 +137,7 @@ struct AddDownloadSheet: View {
                         }
                         .buttonStyle(ActionButtonStyle(prominent: false, hex: accentColorHex))
                         .disabled(isResolving)
+                        .focused($focusedField, equals: .chooseFolder)
                     }
                     .padding(9)
                     .background(Color.white.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
@@ -138,6 +160,7 @@ struct AddDownloadSheet: View {
                         ), in: 1...32, step: 1)
                         .foregroundStyle(.primary)
                         .disabled(isResolving)
+                        .focused($focusedField, equals: .connectionsSlider)
                         Text("32").font(.caption).foregroundStyle(.primary)
                     }
                     Text("More connections saturate high-bandwidth servers faster. P2P (Torrent) ignores this.")
@@ -159,6 +182,7 @@ struct AddDownloadSheet: View {
                 }
                 .buttonStyle(ActionButtonStyle(prominent: false, hex: accentColorHex))
                 .keyboardShortcut(.escape)
+                .focused($focusedField, equals: .cancelBtn)
 
                 Spacer()
 
@@ -182,12 +206,14 @@ struct AddDownloadSheet: View {
                 .buttonStyle(ActionButtonStyle(prominent: true, hex: accentColorHex))
                 .disabled(!isValid || isResolving || urlText.isEmpty)
                 .keyboardShortcut(.return)
+                .focused($focusedField, equals: .addBtn)
             }
             .padding(16)
         }
         .frame(width: 480)
         .background(VisualEffectView(material: .popover, blendingMode: .behindWindow).ignoresSafeArea())
         .background(enableBackgroundTint ? Color(hex: accentColorHex).opacity(0.04) : Color.clear)
+        .tint(Color(hex: accentColorHex))
         .alert("Duplicate Download", isPresented: $showingDuplicateAlert) {
             Button("Add Anyway") {
                 if let req = duplicateAddRequest {
@@ -200,6 +226,8 @@ struct AddDownloadSheet: View {
             Text("This URL is already in your download list. Do you want to add it again?")
         }
         .onAppear {
+            focusedField = .urlInput
+            
             if let clip = NSPasteboard.general.string(forType: .string),
                !clip.trimmingCharacters(in: .whitespaces).isEmpty {
                 let lines = clip.components(separatedBy: .whitespacesAndNewlines)

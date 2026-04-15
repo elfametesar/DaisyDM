@@ -11,7 +11,6 @@ struct ProgressWindowView: View {
     @State private var limitEnabled = false
     @State private var limitInput   = ""
     @State private var isPinned     = false
-    @State private var isSourceExpanded = false
     @State private var now = Date()
     @State private var window: NSWindow?
 
@@ -43,7 +42,7 @@ struct ProgressWindowView: View {
             statusTab.tabItem     { Text("Status") }.tag(0)
             speedLimitTab.tabItem { Text("Speed Limit") }.tag(1)
         }
-        .frame(width: 460, height: isSourceExpanded ? 450 : 370)
+        .frame(width: 460, height: 380)
         .background(VisualEffectView(material: .popover, blendingMode: .behindWindow).ignoresSafeArea())
         .background(WindowAccessor(window: $window))
         .onAppear {
@@ -141,52 +140,25 @@ struct ProgressWindowView: View {
 
             // Source URL
             VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text("Source")
-                        .font(.system(size: 10, weight: .semibold)).foregroundStyle(.tertiary)
-                    Spacer()
-                    if item.url.absoluteString.count > 60 {
-                        Button(action: {
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                                isSourceExpanded.toggle()
-                            }
-                        }) {
-                            Image(systemName: isSourceExpanded ? "chevron.up" : "chevron.down")
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundStyle(.secondary)
-                        }
-                        .buttonStyle(.plain)
-                        .padding(.trailing, 4)
-                    }
-                }
+                Text("Source")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.tertiary)
                 
-                if isSourceExpanded {
-                    ScrollView(.vertical, showsIndicators: true) {
-                        Text(item.url.absoluteString)
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(nil)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.trailing, 8)
-                    }
-                    .frame(height: 70)
-                    .clipped() // Fixes the bleed over
-                } else {
+                ScrollView(.vertical, showsIndicators: true) {
                     Text(item.url.absoluteString)
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                        .truncationMode(.middle)
+                        .lineLimit(nil)
                         .textSelection(.enabled)
-                        .frame(height: 28, alignment: .topLeading)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                        .padding(.trailing, 8)
                 }
+                .frame(maxHeight: .infinity) // Automatically fills all the gap space natively
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 16)
+            .padding(.bottom, 12)
 
-            Spacer()
             Divider()
 
             // Actions

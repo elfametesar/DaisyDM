@@ -108,12 +108,17 @@ struct ConfirmDownloadView: View {
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(.primary)
                     HStack {
-                        Text(destination.path(percentEncoded: false))
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.head)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                        // 1-line height vertical scrollview for wrapping text
+                        ScrollView(.vertical, showsIndicators: false) {
+                            Text(destination.path(percentEncoded: false))
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(nil)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .frame(height: 16) // Exactly 1 line of height
+                        
                         Button("Choose…") {
                             let panel = NSOpenPanel()
                             panel.canChooseFiles       = false
@@ -150,34 +155,48 @@ struct ConfirmDownloadView: View {
                     }
                 }
 
-                DisclosureGroup(isExpanded: $showDetails) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        DetailRowView(label: "URL", value: request.url.absoluteString, labelWidth: 76).foregroundStyle(.primary)
-                        if !request.referer.isEmpty {
-                            DetailRowView(label: "Referer", value: request.referer, labelWidth: 76).foregroundStyle(.primary)
+                // Replaced DisclosureGroup with custom instant toggle
+                VStack(alignment: .leading, spacing: 4) {
+                    Button(action: {
+                        withAnimation(nil) {
+                            showDetails.toggle()
                         }
-                        if !request.cookies.isEmpty {
-                            DetailRowView(label: "Cookies",
-                                          value: String(request.cookies.prefix(120)) + (request.cookies.count > 120 ? "…" : ""),
-                                          labelWidth: 76).foregroundStyle(.primary)
+                    }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: showDetails ? "chevron.down" : "chevron.right")
+                                .font(.system(size: 10, weight: .bold))
+                                .frame(width: 12)
+                            Text("Advanced Details")
+                                .font(.system(size: 10, weight: .semibold))
                         }
-                        if !request.ua.isEmpty {
-                            DetailRowView(label: "User-Agent", value: request.ua, labelWidth: 76).foregroundStyle(.primary)
-                        }
-                    }
-                    .padding(.top, 8)
-                } label: {
-                    Text("Advanced Details")
-                        .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(.primary)
+                    }
+                    .buttonStyle(.plain)
+
+                    if showDetails {
+                        VStack(alignment: .leading, spacing: 10) {
+                            ScrollableDetailRow(label: "URL", value: request.url.absoluteString, labelWidth: 70)
+                            
+                            if !request.referer.isEmpty {
+                                ScrollableDetailRow(label: "Referer", value: request.referer, labelWidth: 70)
+                            }
+                            if !request.cookies.isEmpty {
+                                ScrollableDetailRow(label: "Cookies", value: request.cookies, labelWidth: 70)
+                            }
+                            if !request.ua.isEmpty {
+                                ScrollableDetailRow(label: "User-Agent", value: request.ua, labelWidth: 70)
+                            }
+                        }
+                        .padding(.top, 8)
+                        .padding(.bottom, 4)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
-                .disclosureGroupStyle(.automatic)
-                .tint(Color(hex: accentColorHex))
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 16)
 
-            Spacer()
+            Spacer(minLength: 16)
             Divider()
 
             HStack(spacing: 10) {
@@ -203,6 +222,8 @@ struct ConfirmDownloadView: View {
             .padding(.horizontal, 16).padding(.vertical, 12)
         }
         .frame(width: 460)
+        .fixedSize(horizontal: false, vertical: true)
+        .animation(nil, value: showDetails) // Prevents root window interpolation
         .task { await performBackgroundSniff() }
         .background(VisualEffectView(material: .popover, blendingMode: .behindWindow).ignoresSafeArea())
         .background(WindowAccessor(window: $window))
@@ -210,6 +231,7 @@ struct ConfirmDownloadView: View {
             if let win = newWindow {
                 win.isOpaque = false
                 win.backgroundColor = .clear
+                win.animationBehavior = .none // Prevents native OS sliding window glitch
             }
         }
     }
