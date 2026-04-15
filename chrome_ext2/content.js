@@ -83,14 +83,6 @@ function extractFilename(url, anchor) {
   } catch { return "download"; }
 }
 
-function extractMagnetName(magnetUrl) {
-    try {
-        const params = new URLSearchParams(magnetUrl.replace('magnet:', '?'));
-        const dn = params.get('dn');
-        return dn ? decodeURIComponent(dn).replace(/\+/g, ' ') : "Torrent";
-    } catch { return "Torrent"; }
-}
-
 function nativeFallback(url, filename) {
   const a = document.createElement('a');
   a.href = url;
@@ -127,19 +119,14 @@ document.addEventListener("click", (e) => {
   const hasDownload = el.hasAttribute("download");
   const isFile      = isDownloadURL(href);
 
-  if (href.startsWith("magnet:")) {
-    e.preventDefault(); e.stopImmediatePropagation();
-    sendToDispatch(href, extractMagnetName(href));
-    return;
-  }
-
-  if (href.startsWith("blob:") || hasDownload || isFile) {
+  if (href.startsWith("magnet:") || href.startsWith("blob:") || hasDownload || isFile) {
     e.preventDefault(); e.stopImmediatePropagation();
     sendToDispatch(href, extractFilename(href, el));
     return;
   }
 }, { capture: true });
 
+// Strips the browser's guessed MIME type and forces a generic binary stream
 function fixMimeType(dataUri) {
   if (!dataUri || !dataUri.startsWith("data:")) return dataUri;
   return dataUri.replace(/^data:[^;]+;base64,/, "data:application/octet-stream;base64,");
@@ -225,10 +212,6 @@ document.createElement = function(tag, ...args) {
       if (el.hasAttribute('data-daisy-bypass')) { _click(); return; }
       if (shouldBypass()) { _click(); return; }
       if (!el.href) { _click(); return; }
-      if (el.href.startsWith("magnet:")) {
-        sendToDispatch(el.href, extractMagnetName(el.href));
-        return;
-      }
       if (el.href.startsWith("blob:") || el.hasAttribute("download") || isDownloadURL(el.href)) {
         sendToDispatch(el.href, el.getAttribute("download") || extractFilename(el.href));
         return;

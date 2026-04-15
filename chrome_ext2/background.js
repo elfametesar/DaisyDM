@@ -26,7 +26,7 @@ function needsCredentialedFetch(url) {
     try { return /claude\.ai$/.test(new URL(url).hostname); } catch { return false; }
 }
 
-// KILL browser downloads immediately before they start
+// FIX: Use onDeterminingFilename to cancel before the browser touches the file
 chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
     if (!dispatchEnabled) return;
     const url = item.finalUrl || item.url;
@@ -36,6 +36,7 @@ chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
         return; 
     }
 
+    // Stop the browser download immediately
     chrome.downloads.cancel(item.id);
 
     const referer = item.referrer || "";
@@ -52,6 +53,7 @@ chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
     } else {
         triggerDownload(url, filename, referer, null);
     }
+    
     return true;
 });
 
@@ -88,11 +90,6 @@ async function sendViaLocalHost(url, filename, cookies, referer) {
 
 function extractFilename(url) {
     try {
-        if (url.startsWith("magnet:")) {
-            const params = new URLSearchParams(url.replace('magnet:', '?'));
-            const dn = params.get('dn');
-            return dn ? decodeURIComponent(dn).replace(/\+/g, ' ') : "Torrent Download";
-        }
         const u = new URL(url);
         const parts = u.pathname.split("/");
         return decodeURIComponent(parts[parts.length - 1]) || "download";
