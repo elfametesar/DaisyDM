@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 
+// MARK: - Right Click Handling
 struct RightClickModifier: ViewModifier {
     let action: () -> Void
     func body(content: Content) -> some View {
@@ -41,7 +42,7 @@ extension View {
     }
 }
 
-// MARK: - Flattened Row Item for Keyboard Navigation
+// MARK: - List Items
 enum ListRowItem: Identifiable {
     case main(DownloadItem)
     case sub(parent: DownloadItem, file: SubFile, index: Int)
@@ -71,6 +72,7 @@ struct DownloadListView: View {
     
     @FocusState private var isSearchFocused: Bool
     @FocusState private var isListFocused: Bool
+    @FocusState private var focusedRowID: UUID? // The specific row focus "Tab Stop"
 
     @AppStorage("accentColorHex") private var accentColorHex = "#0A84FF"
     @AppStorage("enableBackgroundTint") private var enableBackgroundTint = false
@@ -187,14 +189,22 @@ struct DownloadListView: View {
                                     }
                                 }
                                 .contentShape(Rectangle())
+                                // Tab stop logic
+                                .focusable()
+                                .focused($focusedRowID, equals: rowItem.id)
                                 .onRightClick {
+                                    // Update focus and selection on right click
+                                    focusedRowID = rowItem.id
                                     if !selected.contains(rowItem.id) {
                                         selected = [rowItem.id]
                                         anchorIndex = index
                                         focusedIndex = index
                                     }
                                 }
-                                .onTapGesture { handleRowTap(rowItem: rowItem, index: index) }
+                                .onTapGesture {
+                                    focusedRowID = rowItem.id
+                                    handleRowTap(rowItem: rowItem, index: index)
+                                }
                                 .contextMenu { rowContextMenu(rowItem) }
                                 .id(rowItem.id)
 
@@ -211,6 +221,7 @@ struct DownloadListView: View {
                     .contentShape(Rectangle())
                     .onTapGesture {
                         isListFocused = true
+                        focusedRowID = nil
                         selected.removeAll()
                         anchorIndex = nil
                         focusedIndex = nil
@@ -218,7 +229,9 @@ struct DownloadListView: View {
                 }
                 .onChange(of: focusedIndex) { _, newIndex in
                     if let idx = newIndex, idx >= 0, idx < flattenedRows.count {
-                        proxy.scrollTo(flattenedRows[idx].id)
+                        let id = flattenedRows[idx].id
+                        proxy.scrollTo(id)
+                        focusedRowID = id // Sync focus with arrow navigation
                     }
                 }
             }
@@ -227,7 +240,6 @@ struct DownloadListView: View {
         .focusable()
         .focused($isListFocused)
         .focusEffectDisabled()
-        // Selection & Deletion
         .onKeyPress(.init("a"), phases: .down) { press in
             guard press.modifiers.contains(.command) else { return .ignored }
             selected = Set(flattenedRows.map { $0.id })
@@ -245,7 +257,6 @@ struct DownloadListView: View {
             onRequestRemove(toDelete)
             return .handled
         }
-        // Action Keys
         .onKeyPress(.space, phases: .down) { _ in
             togglePlayPause()
             return .handled
@@ -464,7 +475,6 @@ struct DownloadListView: View {
             return
         }
 
-        // Apply Selection for Up/Down
         if dir == .up || dir == .down {
             if isShift {
                 focusedIndex = nextIndex
@@ -598,7 +608,7 @@ struct DownloadListView: View {
                     Button("Show Progress Window") {
                         NotificationCenter.default.post(name: .openProgressWindow, object: nil, userInfo: ["id": single.id])
                     }
-                    .keyboardShortcut("p", modifiers: [.command]) // Visually document shortcut
+                    .keyboardShortcut("p", modifiers: [.command])
                 }
                 
                 Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([single.destinationURL]) }
@@ -884,12 +894,22 @@ struct DownloadRow: View {
                 .lineLimit(1)
                 .frame(width: 80, alignment: .leading)
 
-            // 5. SPEED
-            Text(item.status == .downloading ? item.formattedSpeed : "–")
-                .font(.system(size: 12))
-                .foregroundStyle(isSelected ? dynamicTextColor.opacity(0.85) : .secondary)
-                .lineLimit(1)
-                .frame(width: 70, alignment: .leading)
+            // 5. SPEED & ETA
+            VStack(alignment: .leading, spacing: 3) {
+                Text(item.status == .downloading ? item.formattedSpeed : "–")
+                    .font(.system(size: 12))
+                    .foregroundStyle(isSelected ? dynamicTextColor.opacity(0.85) : .secondary)
+                    .lineLimit(1)
+                
+                if item.status == .downloading, let eta = item.formattedETA {
+                    Text(eta)
+                        .font(.system(size: 10))
+                        // THE FIX:
+                        .foregroundStyle(isSelected ? dynamicTextColor.opacity(0.7) : Color.secondary.opacity(0.7))
+                        .lineLimit(1)
+                }
+            }
+            .frame(width: 70, alignment: .leading)
 
         }
         .padding(.horizontal, 12)

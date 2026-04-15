@@ -186,12 +186,12 @@ struct ProgressWindowView: View {
                     .buttonStyle(ActionButtonStyle(prominent: false, hex: accentColorHex))
                     
                 } else if item.status == .completed {
-                    Button(action: { NSWorkspace.shared.open(item.destinationURL) }) {
+                    Button(action: { NSWorkspace.shared.open(item.destinationURL); dismiss() }) {
                         Label("Open File", systemImage: "doc.text.magnifyingglass")
                     }
                     .buttonStyle(ActionButtonStyle(prominent: true, hex: accentColorHex))
                     
-                    Button(action: { NSWorkspace.shared.activateFileViewerSelecting([item.destinationURL]) }) {
+                    Button(action: { NSWorkspace.shared.activateFileViewerSelecting([item.destinationURL]); dismiss() }) {
                         Label("Reveal in Finder", systemImage: "folder")
                     }
                     .buttonStyle(ActionButtonStyle(prominent: false, hex: accentColorHex))

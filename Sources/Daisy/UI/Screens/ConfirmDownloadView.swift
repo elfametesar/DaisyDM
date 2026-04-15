@@ -108,7 +108,6 @@ struct ConfirmDownloadView: View {
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(.primary)
                     HStack {
-                        // 1-line height vertical scrollview for wrapping text
                         ScrollView(.vertical, showsIndicators: false) {
                             Text(destination.path(percentEncoded: false))
                                 .font(.system(size: 11))
@@ -117,7 +116,7 @@ struct ConfirmDownloadView: View {
                                 .fixedSize(horizontal: false, vertical: true)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
-                        .frame(height: 16) // Exactly 1 line of height
+                        .frame(height: 16)
                         
                         Button("Choose…") {
                             let panel = NSOpenPanel()
@@ -155,7 +154,6 @@ struct ConfirmDownloadView: View {
                     }
                 }
 
-                // Replaced DisclosureGroup with custom instant toggle
                 VStack(alignment: .leading, spacing: 4) {
                     Button(action: {
                         withAnimation(nil) {
@@ -223,7 +221,7 @@ struct ConfirmDownloadView: View {
         }
         .frame(width: 460)
         .fixedSize(horizontal: false, vertical: true)
-        .animation(nil, value: showDetails) // Prevents root window interpolation
+        .animation(nil, value: showDetails)
         .task { await performBackgroundSniff() }
         .background(VisualEffectView(material: .popover, blendingMode: .behindWindow).ignoresSafeArea())
         .background(WindowAccessor(window: $window))
@@ -242,10 +240,15 @@ struct ConfirmDownloadView: View {
         isResolving = true
         defer { isResolving = false }
         
+        let isHLSUrl = request.url.absoluteString.lowercased().contains(".m3u8") || request.filename.lowercased().contains(".m3u8")
+        
         var req = URLRequest(url: request.url)
         req.httpMethod = "GET"
         
-        req.setValue("bytes=0-1", forHTTPHeaderField: "Range")
+        if !isHLSUrl {
+            req.setValue("bytes=0-1", forHTTPHeaderField: "Range")
+        }
+        
         req.setValue("text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8", forHTTPHeaderField: "Accept")
         req.setValue("document", forHTTPHeaderField: "Sec-Fetch-Dest")
         req.setValue("navigate", forHTTPHeaderField: "Sec-Fetch-Mode")
@@ -258,6 +261,10 @@ struct ConfirmDownloadView: View {
         do {
             let (_, response) = try await URLSession.shared.data(for: req)
             if let httpResp = response as? HTTPURLResponse {
+                
+                let ct = (httpResp.value(forHTTPHeaderField: "Content-Type") ?? httpResp.value(forHTTPHeaderField: "content-type"))?.lowercased() ?? ""
+                let isHLS = isHLSUrl || ct.contains("mpegurl") || ct.contains("m3u8") || ct.contains("apple.mpegurl")
+                
                 await MainActor.run {
                     var foundName: String? = nil
                     
@@ -266,23 +273,11 @@ struct ConfirmDownloadView: View {
                             var fn = String(disposition[range.upperBound...]).trimmingCharacters(in: .whitespaces)
                             if fn.hasPrefix("\"") {
                                 fn = String(fn.dropFirst())
-                                if let endQuote = fn.firstIndex(of: "\"") {
-                                    fn = String(fn[..<endQuote])
-                                }
+                                if let endQuote = fn.firstIndex(of: "\"") { fn = String(fn[..<endQuote]) }
                             } else {
-                                if let endSemi = fn.firstIndex(of: ";") {
-                                    fn = String(fn[..<endSemi])
-                                }
+                                if let endSemi = fn.firstIndex(of: ";") { fn = String(fn[..<endSemi]) }
                             }
                             if !fn.isEmpty { foundName = fn }
-                        }
-                        
-                        if let rfcMatch = disposition.range(of: "filename\\*=[^']+'[^']*'([^;]+)", options: .regularExpression) {
-                            let matchStr = String(disposition[rfcMatch])
-                            if let split = matchStr.components(separatedBy: "''").last,
-                               let decoded = split.removingPercentEncoding {
-                                foundName = decoded
-                            }
                         }
                     }
                     
@@ -298,17 +293,28 @@ struct ConfirmDownloadView: View {
                         self.filename = fn
                     }
                     
-                    if let cr = httpResp.value(forHTTPHeaderField: "Content-Range") ?? httpResp.value(forHTTPHeaderField: "content-range") {
-                        if let totalStr = cr.components(separatedBy: "/").last, let total = Int64(totalStr.trimmingCharacters(in: .whitespaces)) {
+                    if isHLS {
+                        if self.filename.lowercased().hasSuffix(".m3u8") {
+                            self.filename = String(self.filename.dropLast(5)) + ".mp4"
+                        } else if !self.filename.lowercased().hasSuffix(".mp4") {
+                            self.filename += ".mp4"
+                        }
+                        
+                        // Drop size guessing completely for HLS
+                        self.resolvedSize = 0
+                    } else {
+                        // Standard size resolution
+                        if let cr = httpResp.value(forHTTPHeaderField: "Content-Range") ?? httpResp.value(forHTTPHeaderField: "content-range") {
+                            if let totalStr = cr.components(separatedBy: "/").last, let total = Int64(totalStr.trimmingCharacters(in: .whitespaces)) {
+                                self.resolvedSize = total
+                            }
+                        } else if let cl = httpResp.value(forHTTPHeaderField: "Content-Length") ?? httpResp.value(forHTTPHeaderField: "content-length"), let total = Int64(cl) {
                             self.resolvedSize = total
                         }
-                    } else if let cl = httpResp.value(forHTTPHeaderField: "Content-Length"), let total = Int64(cl) {
-                        self.resolvedSize = total
                     }
                 }
             }
-        } catch {
-        }
+        } catch { }
     }
 }
 

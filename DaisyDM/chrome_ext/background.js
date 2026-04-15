@@ -9,6 +9,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 function triggerDownload(url, filename, referer, youtubeQuality, forceHLS) {
+    // If it's a blob/data URL, we don't need cookies from the remote server
     const cookieUrl = (url.startsWith('data:') || url.startsWith('blob:')) ? referer : url;
     
     chrome.cookies.getAll({ url: cookieUrl }).then(cookiesArr => {
@@ -31,6 +32,7 @@ async function sendViaLocalHost(url, filename, cookies, referer, youtubeQuality,
     });
     
     let success = false;
+    // Attempt multiple ports in case of local server conflicts
     for (let port = 6840; port <= 6850; port++) {
         try {
             const resp = await fetch(`http://127.0.0.1:${port}/dispatch`, {
@@ -42,11 +44,13 @@ async function sendViaLocalHost(url, filename, cookies, referer, youtubeQuality,
         } catch (_) {}
     }
 
+    // Fallback: If local server isn't running, use browser downloader (unless it's a raw blob string)
     if (!success && !url.startsWith('data:')) {
         chrome.downloads.download({ url: url, filename: filename + ".mp4" || undefined });
     }
 }
 
+// Network sniffer to catch m3u8 playlists that don't appear in video.src
 chrome.webRequest.onHeadersReceived.addListener(
     function(details) {
         if (details.tabId === -1) return;

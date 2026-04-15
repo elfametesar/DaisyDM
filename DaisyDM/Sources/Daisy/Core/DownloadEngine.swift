@@ -1,7 +1,6 @@
 import Foundation
 import AppKit
 import UserNotifications
-import Darwin // Needed for O_RDONLY and fstat bypass
 
 // MARK: - Extensions & UI Components
 
@@ -188,9 +187,8 @@ public final class DownloadItem: Identifiable, Codable, Hashable {
     public var cookies: String?
     public var userAgent: String?
     public var referer: String?
-    
-    public var youtubeFormatID: String? = nil
 
+    public var isHLS: Bool = false
     public var _managesOwnSpeed: Bool = false
     public var batchGroupID: UUID? = nil
     public var needsFuckingFastResolve: Bool = false
@@ -231,7 +229,6 @@ public final class DownloadItem: Identifiable, Codable, Hashable {
     }
     public var formattedETA: String? {
         guard let eta else { return nil }
-        if eta <= 0 { return nil }
         if eta < 60 { return "\(Int(eta))s" }
         if eta < 3600 { return "\(Int(eta/60))m \(Int(eta.truncatingRemainder(dividingBy:60)))s" }
         return "\(Int(eta/3600))h \(Int((eta.truncatingRemainder(dividingBy:3600))/60))m"
@@ -265,7 +262,7 @@ public final class DownloadItem: Identifiable, Codable, Hashable {
         case id, url, filename, destinationURL, status, type, totalBytes, downloadedBytes
         case error, dateAdded, dateCompleted, connectionCount, mimeType, sourceHost
         case isPrepared, supportsRanges, speedLimit, subFiles, batchURLs
-        case cookies, userAgent, referer, retryCount, youtubeFormatID
+        case cookies, userAgent, referer, retryCount, isHLS
     }
 
     public required init(from decoder: Decoder) throws {
@@ -285,7 +282,7 @@ public final class DownloadItem: Identifiable, Codable, Hashable {
         batchURLs = try c.decodeIfPresent([String].self, forKey: .batchURLs); cookies = try c.decodeIfPresent(String.self, forKey: .cookies)
         userAgent = try c.decodeIfPresent(String.self, forKey: .userAgent); referer = try c.decodeIfPresent(String.self, forKey: .referer)
         retryCount = try c.decodeIfPresent(Int.self, forKey: .retryCount) ?? 0
-        youtubeFormatID = try c.decodeIfPresent(String.self, forKey: .youtubeFormatID)
+        isHLS = try c.decodeIfPresent(Bool.self, forKey: .isHLS) ?? false
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -300,28 +297,7 @@ public final class DownloadItem: Identifiable, Codable, Hashable {
         try c.encode(speedLimit, forKey: .speedLimit); try c.encode(subFiles, forKey: .subFiles)
         try c.encodeIfPresent(batchURLs, forKey: .batchURLs); try c.encodeIfPresent(cookies, forKey: .cookies)
         try c.encodeIfPresent(userAgent, forKey: .userAgent); try c.encodeIfPresent(referer, forKey: .referer)
-        try c.encode(retryCount, forKey: .retryCount)
-        try c.encodeIfPresent(youtubeFormatID, forKey: .youtubeFormatID)
-    }
-}
-
-public struct YouTubeQuality: Identifiable, Hashable {
-    public var id: String { formatID }
-    public let formatID: String
-    public let label: String
-}
-
-extension DownloadEngine {
-    public static func getYouTubePresets() -> [YouTubeQuality] {
-        return [
-            YouTubeQuality(formatID: "b", label: "Best Available (Default)"),
-            YouTubeQuality(formatID: "bestvideo[height<=2160]+bestaudio/best", label: "4K (2160p) - High Quality"),
-            YouTubeQuality(formatID: "bestvideo[height<=1440]+bestaudio/best", label: "2K (1440p) - High Quality"),
-            YouTubeQuality(formatID: "bestvideo[height<=1080]+bestaudio/best", label: "Full HD (1080p) - High Quality"),
-            YouTubeQuality(formatID: "22", label: "720p (Single Stream)"),
-            YouTubeQuality(formatID: "18", label: "360p (Single Stream)"),
-            YouTubeQuality(formatID: "bestaudio/best", label: "Audio Only")
-        ]
+        try c.encode(retryCount, forKey: .retryCount); try c.encode(isHLS, forKey: .isHLS)
     }
 }
 
@@ -353,11 +329,6 @@ public final class DownloadEngine {
         let paths = ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/usr/bin/ffmpeg"]
         return paths.first { FileManager.default.fileExists(atPath: $0) }
     }
-    
-    private var ytdlpPath: String? {
-        let paths = ["/opt/homebrew/bin/yt-dlp", "/usr/local/bin/yt-dlp", "/usr/bin/yt-dlp"]
-        return paths.first { FileManager.default.fileExists(atPath: $0) }
-    }
 
     private init() {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
@@ -384,32 +355,23 @@ public final class DownloadEngine {
             let url = urls[0]
             let isTorrentFile = url.isFileURL && url.pathExtension.lowercased() == "torrent"
 
-            let originalFilename = filename ?? ""
-            let isHLSOriginal = url.absoluteString.lowercased().contains("m3u8") || originalFilename.lowercased().contains("m3u8")
-
-            var computedFilename: String
-            if let provided = filename, !provided.isEmpty { computedFilename = provided }
+            let computedFilename: String
+            if let provided = filename { computedFilename = provided }
             else if url.scheme == "magnet" { computedFilename = suggestMagnetName(from: url) }
             else if isTorrentFile {
                 let base = url.deletingPathExtension().lastPathComponent
                 computedFilename = base.isEmpty ? "Torrent Download" : base
             } else { computedFilename = suggestFilename(from: url) }
-            
-            if isHLSOriginal {
-                if computedFilename.lowercased().hasSuffix(".m3u8") {
-                    computedFilename = String(computedFilename.dropLast(5)) + ".mp4"
-                } else if computedFilename.lowercased().contains(".m3u8") {
-                    computedFilename = computedFilename.replacingOccurrences(of: ".m3u8", with: ".mp4", options: .caseInsensitive)
-                } else if !computedFilename.lowercased().hasSuffix(".mp4") {
-                    computedFilename += ".mp4"
-                }
-            }
 
             let item = DownloadItem(url: url, filename: computedFilename, destination: dest)
             item.connectionCount = connections
             item.cookies = cookies; item.userAgent = userAgent; item.referer = referer
             
-            if isHLSOriginal { item.mimeType = "application/x-mpegurl" }
+            if url.pathExtension.lowercased() == "m3u8" || item.filename.hasSuffix(".m3u8") {
+                item.isHLS = true
+                item.filename = item.filename.replacingOccurrences(of: ".m3u8", with: ".mp4")
+                item.destinationURL = item.destinationURL.deletingPathExtension().appendingPathExtension("mp4")
+            }
             
             item.status = .queued
             items.insert(item, at: 0)
@@ -422,28 +384,12 @@ public final class DownloadEngine {
             var newItems: [DownloadItem] = []
             for (_, url) in urls.enumerated() {
                 let isFuckingFast = url.host?.contains("fuckingfast.co") == true && !url.path.starts(with: "/dl/")
-                let originalFilename = suggestFilename(from: url)
-                let isHLSOriginal = url.absoluteString.lowercased().contains("m3u8") || originalFilename.lowercased().contains("m3u8")
-                
-                var fn = isFuckingFast ? "Resolving…" : originalFilename
-                if isHLSOriginal && !isFuckingFast {
-                    if fn.lowercased().hasSuffix(".m3u8") {
-                        fn = String(fn.dropLast(5)) + ".mp4"
-                    } else if fn.lowercased().contains(".m3u8") {
-                        fn = fn.replacingOccurrences(of: ".m3u8", with: ".mp4", options: .caseInsensitive)
-                    } else if !fn.lowercased().hasSuffix(".mp4") {
-                        fn += ".mp4"
-                    }
-                }
-                
+                let fn = isFuckingFast ? "Resolving…" : suggestFilename(from: url)
                 let item = DownloadItem(url: url, filename: fn, destination: dest)
                 item.connectionCount = connections
                 item.cookies = cookies; item.userAgent = userAgent; item.referer = referer
                 item.batchGroupID = groupID
                 item.sourceHost = url.host ?? ""
-                
-                if isHLSOriginal { item.mimeType = "application/x-mpegurl" }
-                
                 if isFuckingFast {
                     item.type = .directLink
                     item.needsFuckingFastResolve = true
@@ -460,6 +406,23 @@ public final class DownloadEngine {
                 NotificationCenter.default.post(name: .openProgressWindow, object: nil, userInfo: ["id": first.id])
             }
         }
+    }
+    
+    private func getProxyString() -> String? {
+        let defaults = UserDefaults.standard
+        guard defaults.bool(forKey: "proxyEnabled") else { return nil }
+        let host = defaults.string(forKey: "proxyHost") ?? ""
+        let port = defaults.string(forKey: "proxyPort") ?? "8080"
+        let user = defaults.string(forKey: "proxyUsername") ?? ""
+        let pass = defaults.string(forKey: "proxyPassword") ?? ""
+        
+        guard !host.isEmpty else { return nil }
+        var prefix = host.hasPrefix("http") || host.hasPrefix("socks") ? host : "http://\(host)"
+        if !user.isEmpty {
+            let auth = pass.isEmpty ? "\(user)@" : "\(user):\(pass)@"
+            if let schemeRange = prefix.range(of: "://") { prefix.insert(contentsOf: auth, at: schemeRange.upperBound) }
+        }
+        return "\(prefix):\(port)"
     }
 
     private func notifyCompletion(for item: DownloadItem) {
@@ -572,10 +535,95 @@ public final class DownloadEngine {
         }
     }
 
+    private func resolveHLS(_ item: DownloadItem) async -> Bool {
+        guard let manifestString = try? String(contentsOf: item.url) else { return false }
+        var targetM3U8 = item.url
+
+        if manifestString.contains("#EXT-X-STREAM-INF") {
+            let lines = manifestString.components(separatedBy: .newlines)
+            var bestURL: String? = nil
+            var maxBandwidth = 0
+            for (i, line) in lines.enumerated() {
+                if line.hasPrefix("#EXT-X-STREAM-INF") {
+                    if let range = line.range(of: "BANDWIDTH=") {
+                        let bwStr = line[range.upperBound...].prefix(while: { $0.isNumber })
+                        if let bw = Int(bwStr), bw > maxBandwidth, i + 1 < lines.count {
+                            maxBandwidth = bw
+                            bestURL = lines[i + 1]
+                        }
+                    }
+                }
+            }
+            if let best = bestURL, let resolved = URL(string: best, relativeTo: item.url) {
+                targetM3U8 = resolved
+            }
+        }
+
+        guard let playlistString = try? String(contentsOf: targetM3U8) else { return false }
+        let lines = playlistString.components(separatedBy: .newlines)
+        var tsURLs: [String] = []
+
+        for line in lines {
+            if !line.hasPrefix("#") && !line.trimmingCharacters(in: .whitespaces).isEmpty {
+                if let resolved = URL(string: line, relativeTo: targetM3U8) {
+                    tsURLs.append(resolved.absoluteString)
+                }
+            }
+        }
+
+        guard !tsURLs.isEmpty else { return false }
+
+        await MainActor.run {
+            item.batchURLs = tsURLs
+            item.type = .batch
+            item.isHLS = true
+        }
+        return true
+    }
+
+    private func processHLSCompletion(_ item: DownloadItem, tempDir: URL, destDirURL: URL) async -> Bool {
+        guard let exe = ffmpegPath else {
+            await MainActor.run { item.error = "ffmpeg is missing (brew install ffmpeg)" }
+            return false
+        }
+        
+        let masterTS = tempDir.appendingPathComponent("master.ts")
+        FileManager.default.createFile(atPath: masterTS.path, contents: nil)
+        guard let handle = try? FileHandle(forWritingTo: masterTS) else { return false }
+
+        let sortedSubFiles = await MainActor.run { item.subFiles.sorted { $0.index < $1.index } }
+        for sub in sortedSubFiles {
+            let tsURL = tempDir.appendingPathComponent(sub.path)
+            if let data = try? Data(contentsOf: tsURL) {
+                try? handle.seekToEnd()
+                try? handle.write(contentsOf: data)
+            }
+        }
+        try? handle.close()
+
+        let finalMP4 = tempDir.appendingPathComponent(await MainActor.run { item.filename })
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: exe)
+        proc.arguments = ["-y", "-i", masterTS.path, "-c", "copy", "-bsf:a", "aac_adtstoasc", finalMP4.path]
+
+        await withCheckedContinuation { cont in
+            proc.terminationHandler = { _ in cont.resume() }
+            try? proc.run()
+        }
+
+        if proc.terminationStatus == 0 {
+            let dst = destDirURL.appendingPathComponent(await MainActor.run { item.filename })
+            try? FileManager.default.removeItem(at: dst)
+            try? FileManager.default.moveItem(at: finalMP4, to: dst)
+            return true
+        }
+        return false
+    }
+
     private func startDownload(_ item: DownloadItem) {
         if item.url.scheme == "blob" {
             item.status = .failed
-            item.error = "Blob URLs are browser-local and cannot be downloaded directly. Please download the .torrent file to your Mac and add it to Dispatch manually."
+            item.error = "Blob URLs cannot be downloaded directly."
             persist(); scheduleNext(); return
         }
 
@@ -590,11 +638,29 @@ public final class DownloadEngine {
                         item.destinationURL = item.destinationURL.deletingLastPathComponent().appendingPathComponent(item.filename)
                         item.sourceHost = directURL.host ?? item.sourceHost
                         item.needsFuckingFastResolve = false
+                        self.continueStartDownload(item)
                     }
+                } else {
+                    await MainActor.run {
+                        item.status = .failed; item.error = "Could not resolve fuckingfast.co link"
+                        persist(); scheduleNext()
+                    }
+                }
+            }
+            return
+        }
+
+        if item.isHLS && item.type != .batch {
+            item.status = .downloading
+            item.error = nil; persist()
+            Task {
+                let success = await resolveHLS(item)
+                if success {
                     await MainActor.run { self.continueStartDownload(item) }
                 } else {
                     await MainActor.run {
-                        item.status = .failed; item.error = "Could not resolve direct link from fuckingfast.co"
+                        item.status = .failed
+                        item.error = "Failed to parse m3u8 playlist."
                         persist(); scheduleNext()
                     }
                 }
@@ -611,373 +677,25 @@ public final class DownloadEngine {
     }
 
     private func continueStartDownload(_ item: DownloadItem) {
-        if item.url.scheme == "data" {
+        if item.type == .directLink && item.url.scheme == "data" {
             Task { await writeDataURL(item) }
-            return
-        }
-
-        let urlLower = item.url.absoluteString.lowercased()
-        let isHLS = urlLower.contains(".m3u8") || urlLower.contains("m3u8") || item.filename.lowercased().hasSuffix(".m3u8") || item.mimeType == "application/x-mpegurl"
-
-        if isHLS {
-            Task { await runManualHLS(item) }
-            return
-        }
-
-        if item.url.host?.contains("youtube.com") == true || item.url.host?.contains("youtu.be") == true {
-            if let exe = ytdlpPath {
-                Task { await runYtdlp(item, executable: exe, formatID: item.youtubeFormatID ?? "b") }
-            } else {
-                item.status = .failed; item.error = "yt-dlp missing."; persist(); scheduleNext()
-            }
             return
         }
 
         if let exe = aria2Path {
             Task { await runAria2(item, executable: exe) }
-        } else {
+        } else if item.type == .directLink {
             Task { await runCurl(item) }
-        }
-    }
-    
-    // MARK: - MANUAL HLS IMPLEMENTATION (No guessing file size)
-    private func runManualHLS(_ item: DownloadItem) async {
-        guard let manifest = await scrapeManifest(item) else {
-            await MainActor.run { item.status = .failed; item.error = "Manifest Scrape Failed" }
-            return
-        }
-
-        let tempDir = item.tempDirURL
-        try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-
-        await MainActor.run {
-            if !item.isPrepared {
-                let policy = UserDefaults.standard.string(forKey: "fileCollisionBehavior") ?? "rename"
-                var dest = item.destinationURL.deletingPathExtension().appendingPathExtension("mp4")
-                if policy == "replace" { try? FileManager.default.removeItem(at: dest) }
-                else { dest = uniqueURL(dest) }
-                item.destinationURL = dest
-                item.filename = dest.lastPathComponent
-                item.isPrepared = true
-                persist()
-            }
-        }
-
-        // Step 1: Save Decryption Key if it exists
-        if let keyData = manifest.keyData {
-            let keyFile = tempDir.appendingPathComponent("video.key")
-            try? keyData.write(to: keyFile)
-            
-            // Generate a local manifest for FFmpeg to use as an index for local files
-            var m3u8 = "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:10\n"
-            let ivStr = manifest.iv != nil ? ",IV=\(manifest.iv!)" : ""
-            m3u8 += "#EXT-X-KEY:METHOD=AES-128,URI=\"video.key\"\(ivStr)\n"
-            
-            for i in 0..<manifest.segments.count {
-                m3u8 += "#EXTINF:10.0,\nsegment_\(String(format: "%05d", i)).ts\n"
-            }
-            m3u8 += "#EXT-X-ENDLIST"
-            try? m3u8.write(to: tempDir.appendingPathComponent("local.m3u8"), atomically: true, encoding: .utf8)
-        }
-
-        // Step 2: Download Fragments via Aria2
-        let inputFilePath = tempDir.appendingPathComponent("fragments.txt")
-        var inputContent = ""
-        for (index, segURL) in manifest.segments.enumerated() {
-            inputContent += "\(segURL.absoluteString)\n"
-            inputContent += "  out=segment_\(String(format: "%05d", index)).ts\n"
-        }
-        try? inputContent.write(to: inputFilePath, atomically: true, encoding: .utf8)
-
-        let ariaProc = Process()
-        ariaProc.executableURL = URL(fileURLWithPath: aria2Path!)
-        ariaProc.arguments = ["-i", inputFilePath.path, "-d", tempDir.path, "-j", "16", "--auto-file-renaming=false", "--show-console-readout=false"]
-
-        await MainActor.run { item.processes.append(ariaProc) }
-
-        let pollTask = Task { [weak self, weak item] in
-            guard let self = self, let item = item else { return }
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 500_000_000)
-                let files = (try? FileManager.default.contentsOfDirectory(atPath: tempDir.path)) ?? []
-                var downloaded: Int64 = 0
-                for f in files where f.hasSuffix(".ts") {
-                    downloaded += self.getLiveFileSize(at: tempDir.appendingPathComponent(f).path).logical
-                }
-                await MainActor.run { item.downloadedBytes = downloaded }
-            }
-        }
-
-        await withCheckedContinuation { cont in
-            ariaProc.terminationHandler = { _ in cont.resume() }
-            do { try ariaProc.run() } catch { cont.resume() }
-        }
-        pollTask.cancel()
-
-        // Step 3: Decrypt and Merge via FFmpeg
-        let isEncrypted = manifest.keyData != nil
-        let mergeProc = Process()
-        mergeProc.executableURL = URL(fileURLWithPath: ffmpegPath!)
-        
-        // IF encrypted: use the local m3u8 to decrypt. IF NOT: use the master.ts concat.
-        if isEncrypted {
-            mergeProc.arguments = [
-                "-allowed_extensions", "ALL",
-                "-protocol_whitelist", "file,crypto,tcp",
-                "-i", tempDir.appendingPathComponent("local.m3u8").path,
-                "-c", "copy", "-movflags", "+faststart", "-y", item.destinationURL.path
-            ]
         } else {
-            let masterTS = tempDir.appendingPathComponent("master.ts").path
-            let tsFiles = (try? FileManager.default.contentsOfDirectory(atPath: tempDir.path).filter{$0.hasSuffix(".ts")}.sorted()) ?? []
-            let cat = Process(); cat.executableURL = URL(fileURLWithPath: "/bin/cat")
-            cat.arguments = tsFiles.map { tempDir.appendingPathComponent($0).path }
-            FileManager.default.createFile(atPath: masterTS, contents: nil)
-            cat.standardOutput = FileHandle(forWritingAtPath: masterTS)
-            try? cat.run(); cat.waitUntilExit()
-            
-            mergeProc.arguments = ["-i", masterTS, "-c", "copy", "-movflags", "+faststart", "-y", item.destinationURL.path]
-        }
-
-        await withCheckedContinuation { cont in
-            mergeProc.terminationHandler = { _ in cont.resume() }
-            do { try mergeProc.run() } catch { cont.resume() }
-        }
-
-        try? FileManager.default.removeItem(at: tempDir)
-        await MainActor.run {
-            item.status = mergeProc.terminationStatus == 0 ? .completed : .failed
-            item.dateCompleted = Date()
+            item.status = .failed
+            item.error = "Missing Engine. Please run 'brew install aria2' in your Terminal."
             persist(); scheduleNext()
         }
-    }
-    
-    // MARK: - YTDLP Runner
-    private func runYtdlp(_ item: DownloadItem, executable: String, formatID: String) async {
-        await MainActor.run { item._managesOwnSpeed = false }
-        
-        await MainActor.run {
-            if !item.isPrepared {
-                let policy = UserDefaults.standard.string(forKey: "fileCollisionBehavior") ?? "rename"
-                var dest = item.destinationURL
-                if dest.pathExtension.lowercased() != "mp4" {
-                    dest = dest.deletingPathExtension().appendingPathExtension("mp4")
-                }
-                if policy == "replace" { try? FileManager.default.removeItem(at: dest) }
-                else { dest = uniqueURL(dest) }
-                item.destinationURL = dest; item.filename = dest.lastPathComponent
-                item.isPrepared = true; persist()
-            }
-        }
-
-        let destFile = await MainActor.run { item.destinationURL.path }
-        let url = await MainActor.run { item.url }
-        let cookies = await MainActor.run { item.cookies }
-        let referer = await MainActor.run { item.referer }
-        let userAgent = await MainActor.run { item.userAgent }
-
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: executable)
-        var env = ProcessInfo.processInfo.environment
-        env["PATH"] = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:" + (env["PATH"] ?? "")
-        proc.environment = env
-
-        var args = [
-            "--newline",
-            "--no-playlist",
-            "-f", formatID,
-            "--remux-video", "mp4",
-            "-o", destFile,
-            "--fragment-retries", "10",
-            "--concurrent-fragments", "16"
-        ]
-        
-        if let ffmpeg = ffmpegPath { args.append(contentsOf: ["--ffmpeg-location", ffmpeg]) }
-        
-        if let cookies = cookies, !cookies.isEmpty { args.append(contentsOf: ["--add-header", "Cookie: \(cookies)"]) }
-        else { args.append(contentsOf: ["--cookies-from-browser", "chrome"]) }
-
-        let resolvedReferer = (referer != nil && !referer!.isEmpty) ? referer! : "https://\(url.host ?? "")/"
-        args.append(contentsOf: ["--referer", resolvedReferer])
-        
-        if let ua = userAgent, !ua.isEmpty { args.append(contentsOf: ["--user-agent", ua]) }
-        else { args.append(contentsOf: ["--user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36"]) }
-
-        args.append(url.absoluteString)
-        proc.arguments = args
-
-        let stdoutPipe = Pipe(); proc.standardOutput = stdoutPipe
-        let stderrPipe = Pipe(); proc.standardError = stderrPipe
-
-        let progressTask = Task { [weak item] in
-            guard let item else { return }
-            for await line in readTerminalLines(stdoutPipe) {
-                if line.hasPrefix("[download]") && line.contains("%") {
-                    let parts = line.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
-                    
-                    if let pctStr = parts.first(where: { $0.hasSuffix("%") }), let pct = Double(pctStr.dropLast()) {
-                        
-                        var total: Int64 = 0
-                        if let sizeIdx = parts.firstIndex(of: "of") {
-                            let sizeStr = parts.dropFirst(sizeIdx + 1).first(where: { $0.contains("iB") || $0.contains("B") })?
-                                .replacingOccurrences(of: "~", with: "") ?? ""
-                            total = parseAriaSize(sizeStr)
-                        }
-                        
-                        var speed: Double = 0
-                        if let atIdx = parts.firstIndex(of: "at") {
-                            let speedStr = parts.dropFirst(atIdx + 1).first(where: { $0.contains("iB/s") || $0.contains("B/s") })?
-                                .replacingOccurrences(of: "~", with: "") ?? ""
-                            speed = Double(parseAriaSize(speedStr))
-                        }
-                        
-                        await MainActor.run {
-                            if total > 0 {
-                                item.totalBytes = total
-                                item.downloadedBytes = Int64(Double(total) * (pct / 100.0))
-                            }
-                            
-                            if speed > 0 {
-                                item.speed = speed
-                                item._lastTickDate = Date()
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        
-        let errorTask = Task {
-            var lastError = ""
-            for await line in readTerminalLines(stderrPipe) {
-                let lowerLine = line.lowercased()
-                if lowerLine.contains("error:") { lastError = line.replacingOccurrences(of: "ERROR:", with: "").trimmingCharacters(in: .whitespaces) }
-                else if lastError.isEmpty && (lowerLine.contains("warning:") || lowerLine.contains("failed")) { lastError = line }
-            }
-            return lastError
-        }
-
-        await MainActor.run { item._lastBytes = item.downloadedBytes; item._lastTickDate = Date(); item.processes.append(proc) }
-
-        var didLaunch = false
-        await withCheckedContinuation { cont in
-            proc.terminationHandler = { _ in cont.resume() }
-            do { try proc.run(); didLaunch = true } catch { cont.resume() }
-        }
-
-        progressTask.cancel()
-        let realError = await errorTask.value
-
-        let isStillTracked = await MainActor.run {
-            let tracked = item.processes.contains(where: { $0 === proc })
-            item.processes.removeAll { $0 === proc }
-            return tracked
-        }
-        let currentStatus = await MainActor.run { item.status }
-
-        guard didLaunch else {
-            if currentStatus == .downloading && isStillTracked {
-                await MainActor.run { item.status = .failed; item.error = "Failed to launch yt-dlp."; item.speed = 0; persist(); scheduleNext() }
-            }
-            return
-        }
-
-        if proc.terminationStatus == 0 {
-            await MainActor.run {
-                let sz = self.getLiveFileSize(at: destFile).logical
-                if sz > 0 { item.downloadedBytes = sz; item.totalBytes = sz }
-                item.status = .completed; item.dateCompleted = Date(); item.speed = 0; item._lastTickDate = nil
-                self.notifyCompletion(for: item); persist(); scheduleNext()
-            }
-        } else if currentStatus == .downloading && isStillTracked {
-            let r = await MainActor.run { item.retryCount }
-            let maxRetries = UserDefaults.standard.object(forKey: "maxRetryCount") as? Int ?? 3
-            if r < maxRetries {
-                await MainActor.run { item.retryCount += 1; item.status = .queued; item.speed = 0; item._lastTickDate = nil }
-                try? await Task.sleep(nanoseconds: 2_000_000_000)
-                await MainActor.run { scheduleNext() }
-            } else {
-                await MainActor.run {
-                    item.status = .failed
-                    item.error = "yt-dlp (Code \(proc.terminationStatus)): \(realError.isEmpty ? "Unknown Error" : realError)"
-                    item.speed = 0; item._lastTickDate = nil; persist(); scheduleNext()
-                }
-            }
-        }
-    }
-
-    private func scrapeManifest(_ item: DownloadItem) async -> (segments: [URL], keyData: Data?, iv: String?)? {
-        let baseURL = await MainActor.run { item.url }
-        let cookies = await MainActor.run { item.cookies }
-        let ua = await MainActor.run { item.userAgent }
-        let referer = await MainActor.run { item.referer }
-
-        var req = URLRequest(url: baseURL)
-        req.timeoutInterval = 20
-        if let c = cookies { req.setValue(c, forHTTPHeaderField: "Cookie") }
-        if let u = ua { req.setValue(u, forHTTPHeaderField: "User-Agent") }
-        if let r = referer { req.setValue(r, forHTTPHeaderField: "Referer") }
-
-        guard let (data, _) = try? await URLSession.shared.data(for: req),
-              let text = String(data: data, encoding: .utf8) else { return nil }
-
-        let lines = text.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespaces) }
-        
-        // Master Playlist Redirect
-        if text.contains("#EXT-X-STREAM-INF") {
-            var bestURL: URL? = nil
-            var maxBW = -1
-            for (i, line) in lines.enumerated() where line.hasPrefix("#EXT-X-STREAM-INF") {
-                if let bwRange = line.range(of: "BANDWIDTH="),
-                   let bw = Int(line[bwRange.upperBound...].prefix(while: { $0.isNumber })), bw > maxBW {
-                    maxBW = bw
-                    if i + 1 < lines.count, let streamURL = URL(string: lines[i+1], relativeTo: baseURL) {
-                        bestURL = streamURL
-                    }
-                }
-            }
-            if let chosen = bestURL {
-                await MainActor.run { item.url = chosen }
-                return await scrapeManifest(item)
-            }
-        }
-
-        var keyData: Data? = nil
-        var iv: String? = nil
-        var fragmentURLs: [URL] = []
-
-        for line in lines {
-            if line.hasPrefix("#EXT-X-KEY") {
-                // Extract Key URI
-                if let uriRange = line.range(of: "URI=\"") {
-                    let remainder = line[uriRange.upperBound...]
-                    if let endQuote = remainder.firstIndex(of: "\"") {
-                        let keyURLString = String(remainder[..<endQuote])
-                        if let keyURL = URL(string: keyURLString, relativeTo: baseURL) {
-                            var keyReq = URLRequest(url: keyURL)
-                            if let c = cookies { keyReq.setValue(c, forHTTPHeaderField: "Cookie") }
-                            keyReq.setValue(ua ?? "Mozilla/5.0", forHTTPHeaderField: "User-Agent")
-                            keyData = try? await URLSession.shared.data(for: keyReq).0
-                        }
-                    }
-                }
-                // Extract IV
-                if let ivRange = line.range(of: "IV=") {
-                    iv = String(line[ivRange.upperBound...].prefix(while: { $0 != "," }))
-                }
-            } else if !line.isEmpty && !line.hasPrefix("#") {
-                if let segURL = URL(string: line, relativeTo: baseURL) {
-                    fragmentURLs.append(segURL.absoluteURL)
-                }
-            }
-        }
-        
-        return fragmentURLs.isEmpty ? nil : (fragmentURLs, keyData, iv)
     }
 
     private func resolveFuckingFast(_ url: URL) async -> URL? {
         var request = URLRequest(url: url)
-        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36", forHTTPHeaderField: "User-Agent")
+        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
         request.setValue("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", forHTTPHeaderField: "Accept")
         request.timeoutInterval = 20
         guard let (data, resp) = try? await URLSession.shared.data(for: request),
@@ -1048,7 +766,7 @@ public final class DownloadEngine {
         var args = [
             "--dir=\(destDir)", "--continue=true", "--file-allocation=none",
             "--max-connection-per-server=\(conns)", "--split=\(conns)", "--min-split-size=1M",
-            "--seed-time=0", "--auto-file-renaming=false", "--summary-interval=1", "--show-console-readout=true"
+            "--seed-time=0", "--auto-file-renaming=false", "--summary-interval=1", "--console-log-level=notice"
         ]
 
         if speedLimit > 0 { args.append("--max-overall-download-limit=\(speedLimit)K") }
@@ -1061,21 +779,26 @@ public final class DownloadEngine {
         let isSameOrigin = host.hasSuffix(refHost) || refHost.hasSuffix(host)
         
         args.append("--referer=\(resolvedReferer)")
-        args.append("--header=Origin: https://\(refHost)")
+        args.append("--header=Origin: https://\(host)")
         args.append("--header=Sec-Fetch-Site: \(isSameOrigin ? "same-origin" : "cross-site")")
         args.append("--header=Sec-Fetch-Dest: document")
         args.append("--header=Sec-Fetch-Mode: navigate")
         args.append("--header=Sec-Fetch-User: ?1")
         args.append("--header=Upgrade-Insecure-Requests: 1")
         
-        let ua = (userAgent != nil && !userAgent!.isEmpty) ? userAgent! : "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/131.0.0.0"
+        let ua = (userAgent != nil && !userAgent!.isEmpty) ? userAgent! : "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
         args.append("--user-agent=\(ua)")
+        args.append("--header=Sec-Ch-Ua: \"Google Chrome\";v=\"131\", \"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"")
+        args.append("--header=Sec-Ch-Ua-Mobile: ?0")
+        args.append("--header=Sec-Ch-Ua-Platform: \"macOS\"")
+        args.append("--header=Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8")
+        args.append("--header=Accept-Language: en-US,en;q=0.9")
 
         if type == .torrent {
             args += [
                 "--enable-dht=true", "--bt-enable-lpd=true", "--enable-peer-exchange=true", "--bt-save-metadata=true",
                 "--dht-listen-port=6881-6999",
-                "--bt-tracker=udp://tracker.opentrackr.org:1337/announce,udp://open.stealth.si:80/announce,udp://tracker.torrent.eu.org:451/announce"
+                "--bt-tracker=udp://tracker.opentrackr.org:1337/announce,udp://open.stealth.si:80/announce,udp://tracker.torrent.eu.org:451/announce,udp://tracker.dler.org:6969/announce,udp://exodus.desync.com:6969/announce,udp://retracker.lanta-net.ru:2710/announce,udp://tracker.moeking.me:6969/announce,udp://tracker.pomf.se:80/announce,udp://tracker.publicbt.com:80/announce,udp://tracker.tiny-vps.com:6969/announce,udp://tracker.files.fm:6969/announce"
             ]
         }
         
@@ -1098,7 +821,7 @@ public final class DownloadEngine {
         
         let sizeSnifferTask = Task { [weak item] in
             guard let item else { return }
-            for await line in readTerminalLines(stdoutPipe) {
+            for try await line in stdoutPipe.fileHandleForReading.bytes.lines {
                 if line.contains("Length: ") {
                     if let range = line.range(of: "Length: ") {
                         let sub = line[range.upperBound...]
@@ -1128,7 +851,7 @@ public final class DownloadEngine {
                                 let transferPart = parts[1]
                                 let sizes = transferPart.components(separatedBy: "(")[0]
                                 let sizeParts = sizes.components(separatedBy: "/")
-                                if sizeParts.count > 0 { totalDl += parseAriaSize(sizeParts[0]) }
+                                totalDl += parseAriaSize(sizeParts[0])
                                 if sizeParts.count > 1 { totalSz += parseAriaSize(sizeParts[1]) }
                             }
                         }
@@ -1176,13 +899,12 @@ public final class DownloadEngine {
                             let sub = updatedSubFiles[i]
                             let fileURL = tempDir.appendingPathComponent(sub.path)
                             
-                            let sizes = self.getLiveFileSize(at: fileURL.path)
-                            let physical = sizes.physical
-                            let logical = sizes.logical
-                            let downloaded = Int64(min(physical, logical))
-                            
-                            if !sub.isStopped {
-                                updatedSubFiles[i].downloadedBytes = downloaded
+                            if let vals = try? fileURL.resourceValues(forKeys: [.totalFileAllocatedSizeKey, .fileSizeKey]) {
+                                let physical = vals.totalFileAllocatedSize ?? 0
+                                let logical = vals.fileSize ?? 0
+                                let downloaded = Int64(min(physical, logical))
+                                
+                                if !sub.isStopped { updatedSubFiles[i].downloadedBytes = downloaded }
                             }
                             
                             totalDownloaded += updatedSubFiles[i].downloadedBytes
@@ -1196,18 +918,17 @@ public final class DownloadEngine {
                     }
                 } else if item.type == .batch {
                     var updatedSubFiles: [SubFile] = []
-                    if let enumerator = FileManager.default.enumerator(at: tempDir, includingPropertiesForKeys: nil, options: [.skipsSubdirectoryDescendants]) {
+                    if let enumerator = FileManager.default.enumerator(at: tempDir, includingPropertiesForKeys: [.totalFileAllocatedSizeKey, .fileSizeKey], options: [.skipsSubdirectoryDescendants]) {
                         var index = 1
                         let fileURLs = enumerator.allObjects.compactMap { $0 as? URL }
                         for fileURL in fileURLs {
                             let fname = fileURL.lastPathComponent
                             if fname == "batch_list.txt" || fname.hasSuffix(".aria2") { continue }
-                            
-                            let sizes = self.getLiveFileSize(at: fileURL.path)
-                            let physical = sizes.physical
-                            let logical = sizes.logical
-                            updatedSubFiles.append(SubFile(id: UUID(), index: index, path: fname, filename: fname, totalBytes: logical, downloadedBytes: Int64(min(physical, logical)), isStopped: false))
-                            index += 1
+                            if let vals = try? fileURL.resourceValues(forKeys: [.totalFileAllocatedSizeKey, .fileSizeKey]) {
+                                let physical = vals.totalFileAllocatedSize ?? 0; let logical = vals.fileSize ?? 0
+                                updatedSubFiles.append(SubFile(id: UUID(), index: index, path: fname, filename: fname, totalBytes: Int64(logical), downloadedBytes: Int64(min(physical, logical)), isStopped: false))
+                                index += 1
+                            }
                         }
                     }
                     await MainActor.run {
@@ -1260,10 +981,23 @@ public final class DownloadEngine {
 
         if proc.terminationStatus == 0 {
             let destinationURL = await MainActor.run { item.destinationURL }
+            let isItemHLS = await MainActor.run { item.isHLS }
+            
             if type == .directLink {
                 let downloadedFile = tempDir.appendingPathComponent(fileName)
                 _ = try? FileManager.default.removeItem(at: destinationURL)
                 try? FileManager.default.moveItem(at: downloadedFile, to: destinationURL)
+            } else if type == .batch && isItemHLS {
+                let destDirURL = destinationURL.deletingLastPathComponent()
+                let success = await processHLSCompletion(item, tempDir: tempDir, destDirURL: destDirURL)
+                if !success {
+                    await MainActor.run {
+                        item.status = .failed
+                        item.error = "HLS Merge Failed (ensure ffmpeg is installed via brew)."
+                        persist(); scheduleNext()
+                    }
+                    return
+                }
             } else {
                 let destDirURL = type == .batch ? destinationURL : destinationURL.deletingLastPathComponent()
                 let subFiles = await MainActor.run { item.subFiles }
@@ -1357,9 +1091,20 @@ public final class DownloadEngine {
         let isSameOrigin = host.hasSuffix(refHost) || refHost.hasSuffix(host)
         
         args.append(contentsOf: ["--referer", resolvedReferer])
-        args.append(contentsOf: ["--header", "Origin: https://\(refHost)"])
+        args.append(contentsOf: ["--header", "Origin: https://\(host)"])
+        args.append(contentsOf: ["--header", "Sec-Fetch-Site: \(isSameOrigin ? "same-origin" : "cross-site")"])
+        args.append(contentsOf: ["--header", "Sec-Fetch-Dest: document"])
+        args.append(contentsOf: ["--header", "Sec-Fetch-Mode: navigate"])
+        args.append(contentsOf: ["--header", "Sec-Fetch-User: ?1"])
         
-        args.append(contentsOf: ["--user-agent", userAgent ?? "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/131.0.0.0 Safari/537.36"])
+        let ua = (userAgent != nil && !userAgent!.isEmpty) ? userAgent! : "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+        args.append(contentsOf: ["--user-agent", ua])
+        args.append(contentsOf: [
+            "--header", "Sec-Ch-Ua: \"Google Chrome\";v=\"131\", \"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"",
+            "--header", "Sec-Ch-Ua-Mobile: ?0", "--header", "Sec-Ch-Ua-Platform: \"macOS\"",
+            "--header", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+            "--header", "Accept-Language: en-US,en;q=0.9"
+        ])
         args.append(url.absoluteString)
         proc.arguments = args
 
@@ -1369,10 +1114,9 @@ public final class DownloadEngine {
             guard let item else { return }
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 200_000_000)
-                
-                let sizes = self.getLiveFileSize(at: destFile)
-                if sizes.logical > 0 {
-                    await MainActor.run { item.downloadedBytes = sizes.logical; if item.totalBytes > 0 && sizes.logical > item.totalBytes { item.totalBytes = sizes.logical } }
+                if let vals = try? URL(fileURLWithPath: destFile).resourceValues(forKeys: [.fileSizeKey]) {
+                    let sz = Int64(vals.fileSize ?? 0)
+                    await MainActor.run { item.downloadedBytes = sz; if item.totalBytes > 0 && sz > item.totalBytes { item.totalBytes = sz } }
                 }
                 
                 if let headersStr = try? String(contentsOfFile: headersFile, encoding: .utf8) {
@@ -1390,6 +1134,28 @@ public final class DownloadEngine {
                             }
                         }
                         if foundTotal > 0 { await MainActor.run { item.totalBytes = foundTotal } }
+                    }
+
+                    let needsFilename = await MainActor.run { item.filename == "download" || item.filename.starts(with: "download_") || item.filename.starts(with: "attachment_") }
+                    if needsFilename {
+                        for line in lines {
+                            guard line.lowercased().hasPrefix("content-disposition:") else { continue }
+                            var fn = ""
+                            if let r = line.range(of: "filename*=", options: .caseInsensitive) {
+                                var raw = String(line[r.upperBound...]).trimmingCharacters(in: .whitespaces)
+                                if let q = raw.range(of: "''") { raw = String(raw[q.upperBound...]) }
+                                fn = (raw.removingPercentEncoding ?? raw).components(separatedBy: ";").first?.trimmingCharacters(in: .init(charactersIn: "\"' \r\n")) ?? ""
+                            } else if let r = line.range(of: "filename=", options: .caseInsensitive) {
+                                fn = String(line[r.upperBound...]).trimmingCharacters(in: .init(charactersIn: "\"' \r\n")).components(separatedBy: ";").first?.trimmingCharacters(in: .init(charactersIn: "\"' \r\n")) ?? ""
+                            }
+                            if !fn.isEmpty {
+                                await MainActor.run {
+                                    let dir = item.destinationURL.deletingLastPathComponent(); let newDest = self.uniqueURL(dir.appendingPathComponent(fn))
+                                    item.filename = fn; item.destinationURL = newDest
+                                }
+                                break
+                            }
+                        }
                     }
                 }
             }
@@ -1468,74 +1234,197 @@ public final class DownloadEngine {
     }
     
     private func writeDataURL(_ item: DownloadItem) async {
-        let dataURL = item.url.absoluteString
+            let dataURL = item.url.absoluteString
 
-        guard let commaIdx = dataURL.firstIndex(of: ",") else {
-            await MainActor.run {
-                item.status = .failed
-                item.error = "Invalid Data: Missing comma separator."
-                persist()
+            guard let commaIdx = dataURL.firstIndex(of: ",") else {
+                await MainActor.run { item.status = .failed; item.error = "Invalid data URL — missing comma separator."; item.speed = 0; persist(); scheduleNext() }
+                return
             }
-            return
-        }
 
-        let header = String(dataURL[..<commaIdx])
-        let body = String(dataURL[dataURL.index(after: commaIdx)...])
-        let isBase64 = header.contains("base64")
+            let header  = String(dataURL[dataURL.index(after: dataURL.startIndex)..<commaIdx])
+            let body    = String(dataURL[dataURL.index(after: commaIdx)...])
+            let isBase64 = header.contains("base64")
+            let mime    = header.split(separator: ";").first.map(String.init) ?? ""
 
-        guard let data = isBase64 ? Data(base64Encoded: body, options: .ignoreUnknownCharacters) : body.removingPercentEncoding?.data(using: .utf8) else {
-            await MainActor.run {
-                item.status = .failed
-                item.error = "Failed to decode Base64 data from browser."
-                persist()
+            guard let data = isBase64 ? Data(base64Encoded: body, options: .ignoreUnknownCharacters) : body.removingPercentEncoding?.data(using: .utf8) else {
+                await MainActor.run { item.status = .failed; item.error = "Failed to decode attachment data."; item.speed = 0; persist(); scheduleNext() }
+                return
             }
-            return
-        }
 
-        let destDir = item.destinationURL.deletingLastPathComponent()
-        var fn = item.filename
-        if fn.isEmpty || fn == "download" { fn = "video_export.mp4" }
-        let finalDest = uniqueURL(destDir.appendingPathComponent(fn))
+            let dest = await MainActor.run { item.destinationURL.deletingLastPathComponent() }
+            var fn   = await MainActor.run { item.filename }
+            if fn.isEmpty || fn == "download" || fn.starts(with: "download_") || fn.starts(with: "attachment_") { fn = "attachment\(mimeToExt(mime))" }
 
-        do {
-            try data.write(to: finalDest, options: .atomic)
-            
+            let finalDest = uniqueURL(dest.appendingPathComponent(fn))
+
+            do { try data.write(to: finalDest) }
+            catch {
+                await MainActor.run { item.status = .failed; item.error = "Failed to write file: \(error.localizedDescription)"; item.speed = 0; persist(); scheduleNext() }
+                return
+            }
+
             await MainActor.run {
                 item.filename = fn
                 item.destinationURL = finalDest
-                item.totalBytes = Int64(data.count)
-                item.downloadedBytes = Int64(data.count)
-                item.status = .completed
-                item.dateCompleted = Date()
-                item.speed = 0
-                self.notifyCompletion(for: item)
-                persist()
-                scheduleNext()
+                
+                if fn.lowercased().hasSuffix(".torrent") {
+                    let downloadAsFile = UserDefaults.standard.bool(forKey: "downloadTorrentsAsFiles")
+                    if downloadAsFile {
+                        item.totalBytes = Int64(data.count)
+                        item.downloadedBytes = Int64(data.count)
+                        item.status = .completed
+                        item.dateCompleted = Date()
+                        item.speed = 0
+                        self.notifyCompletion(for: item)
+                        persist()
+                        scheduleNext()
+                    } else {
+                        item.url = finalDest
+                        item.type = .torrent
+                        item.status = .queued
+                        item.downloadedBytes = 0
+                        item.totalBytes = 0
+                        item.speed = 0
+                        persist()
+                        scheduleNext()
+                    }
+                } else {
+                    item.totalBytes = Int64(data.count)
+                    item.downloadedBytes = Int64(data.count)
+                    item.status = .completed
+                    item.dateCompleted = Date()
+                    item.speed = 0
+                    self.notifyCompletion(for: item)
+                    persist()
+                    scheduleNext()
+                }
             }
-        } catch {
-            await MainActor.run {
-                item.status = .failed
-                item.error = "File System Error: \(error.localizedDescription)"
-                persist()
-                scheduleNext()
-            }
+        }
+    private func mimeToExt(_ mime: String) -> String {
+        switch mime {
+        case "video/mp4": return ".mp4"; case "video/webm": return ".webm"; case "audio/mpeg": return ".mp3"; case "audio/mp4": return ".m4a"
+        case "application/zip": return ".zip"; case "application/pdf": return ".pdf"; case "image/jpeg": return ".jpg"; case "image/png": return ".png"
+        case "image/gif": return ".gif"; case "application/octet-stream": return ".bin"; default: return ""
         }
     }
 
-    private func aria2HumanError(exitCode: Int32) -> String { return "Download failed (aria2 error \(exitCode))." }
-    private func curlHumanError(exitCode: Int32, stderr: String, stdout: String) -> String { return "Download failed (curl error \(exitCode))." }
+    private func aria2HumanError(exitCode: Int32) -> String {
+        switch exitCode {
+        case 2:  return "Connection timed out."
+        case 3:  return "HTTP 404 Not Found — the resource was not found."
+        case 6:  return "Network problem — connection reset or dropped."
+        case 8:  return "Server does not support resume."
+        case 9:  return "Not enough disk space."
+        case 11: return "File is already being downloaded."
+        case 13: return "File already exists."
+        case 16, 17, 18: return "File I/O error — could not write to disk."
+        case 19: return "Name resolution failed — check your internet connection or the URL host."
+        case 22: return "HTTP Error — the server rejected the request (e.g., 403 Forbidden or 500 Error)."
+        case 23: return "Too many redirects."
+        case 24: return "HTTP 401 Unauthorized — authentication failed."
+        default: return "Download failed (aria2 error \(exitCode))."
+        }
+    }
 
-    private func fetchLocalTorrentInfo(path: String, executable: String) async -> [SubFile] { return [] }
-    private func fetchTorrentInfo(item: DownloadItem, executable: String) async -> [SubFile] { return [] }
-    private func parseShowFiles(_ output: String) -> [SubFile] { return [] }
+    private func curlHumanError(exitCode: Int32, stderr: String, stdout: String) -> String {
+        let httpStatus: Int? = stdout.components(separatedBy: "\n").compactMap { Int($0.split(separator: " ").first ?? "") }.last
+        if let status = httpStatus, status >= 400 {
+            switch status {
+            case 400: return "HTTP 400 Bad Request."
+            case 401: return "HTTP 401 Unauthorized — login required. Add cookies in Download Properties."
+            case 403: return "HTTP 403 Forbidden — access denied. The URL may require authentication or has expired."
+            case 404: return "HTTP 404 Not Found — the file no longer exists at this URL."
+            case 407: return "HTTP 407 Proxy Authentication Required."
+            case 408: return "HTTP 408 Request Timeout."
+            case 410: return "HTTP 410 Gone — the file has been permanently removed."
+            case 429: return "HTTP 429 Too Many Requests — rate limited, wait and retry."
+            case 500: return "HTTP 500 Internal Server Error."
+            case 502: return "HTTP 502 Bad Gateway."
+            case 503: return "HTTP 503 Service Unavailable."
+            default:  return "HTTP \(status) error."
+            }
+        }
+        switch exitCode {
+        case 6:  return "Could not resolve host — check your internet connection."
+        case 7:  return "Failed to connect to server."
+        case 18: return "Partial download — connection was interrupted."
+        case 23: return "Failed to write to disk — check available space."
+        case 28: return "Connection timed out."
+        case 33: return "Server does not support range requests (resume)."
+        case 35: return "SSL/TLS handshake failed."
+        case 47: return "Too many redirects."
+        case 52: return "Server returned no data."
+        case 56: return "Network connection was reset."
+        default: let detail = stderr.isEmpty ? "" : "\n\n\(stderr)"; return "Download failed (curl error \(exitCode)).\(detail)"
+        }
+    }
+    
+    private func fetchLocalTorrentInfo(path: String, executable: String) async -> [SubFile] {
+        return await withCheckedContinuation { cont in
+            let proc = Process(); proc.executableURL = URL(fileURLWithPath: executable); proc.arguments = ["--show-files", path]
+            let pipe = Pipe(); proc.standardOutput = pipe; proc.standardError = Pipe()
+            let readTask = Task {
+                var outputData = Data()
+                do { if let data = try pipe.fileHandleForReading.readToEnd() { outputData = data } } catch {}
+                return String(data: outputData, encoding: .utf8) ?? ""
+            }
+            proc.terminationHandler = { _ in Task { let output = await readTask.value; cont.resume(returning: self.parseShowFiles(output)) } }
+            do { try proc.run() } catch { cont.resume(returning: []) }
+        }
+    }
+
+    private func fetchTorrentInfo(item: DownloadItem, executable: String) async -> [SubFile] {
+        let tempDir = await MainActor.run { item.tempDirURL.path }
+        let targetPath = item.url.isFileURL ? item.url.path : item.url.absoluteString
+        
+        return await withCheckedContinuation { cont in
+            let proc = Process(); proc.executableURL = URL(fileURLWithPath: executable)
+            proc.arguments = [
+                "--show-files", "--enable-dht=true", "--bt-enable-lpd=true", "--enable-peer-exchange=true", "--dht-listen-port=6881-6999",
+                "--bt-tracker=udp://tracker.opentrackr.org:1337/announce,udp://open.stealth.si:80/announce,udp://tracker.torrent.eu.org:451/announce,udp://tracker.dler.org:6969/announce,udp://exodus.desync.com:6969/announce,udp://retracker.lanta-net.ru:2710/announce,udp://tracker.moeking.me:6969/announce,udp://tracker.pomf.se:80/announce,udp://tracker.publicbt.com:80/announce,udp://tracker.tiny-vps.com:6969/announce,udp://tracker.files.fm:6969/announce",
+                "--dir=\(tempDir)", targetPath
+            ]
+            let pipe = Pipe(); proc.standardOutput = pipe; proc.standardError = Pipe()
+            let readTask = Task {
+                var outputData = Data()
+                do { if let data = try pipe.fileHandleForReading.readToEnd() { outputData = data } } catch {}
+                return String(data: outputData, encoding: .utf8) ?? ""
+            }
+            proc.terminationHandler = { _ in Task { let output = await readTask.value; let parsed = self.parseShowFiles(output); cont.resume(returning: parsed) } }
+            do {
+                try proc.run()
+                Task { try? await Task.sleep(nanoseconds: 120_000_000_000); if proc.isRunning { proc.terminate() } }
+            } catch { cont.resume(returning: []) }
+        }
+    }
+    
+    nonisolated private func parseShowFiles(_ output: String) -> [SubFile] {
+        var files: [SubFile] = []
+        let lines = output.components(separatedBy: .newlines)
+        var currentIndex: Int?; var currentPath: String?
+
+        for line in lines {
+            if let sepRange = line.range(of: "|") {
+                let left = line[..<sepRange.lowerBound].trimmingCharacters(in: .whitespaces)
+                let right = line[sepRange.upperBound...].trimmingCharacters(in: .whitespaces)
+                if let idx = Int(left) { currentIndex = idx; currentPath = right }
+                else if let idx = currentIndex, let path = currentPath, left.isEmpty {
+                    if let start = right.firstIndex(of: "("), let end = right.lastIndex(of: ")") {
+                        let bytesStr = right[right.index(after: start)..<end].replacingOccurrences(of: ",", with: "")
+                        if let bytes = Int64(bytesStr) {
+                            files.append(SubFile(id: UUID(), index: idx, path: path, filename: URL(fileURLWithPath: path).lastPathComponent, totalBytes: bytes, downloadedBytes: 0, isStopped: false))
+                        }
+                    }
+                    currentIndex = nil; currentPath = nil
+                }
+            }
+        }
+        return files
+    }
 
     private func startSpeedTimer() {
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            self.speedTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-                Task { @MainActor [weak self] in self?.tick() }
-            }
-            if let timer = self.speedTimer { RunLoop.main.add(timer, forMode: .common) }
+        speedTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.tick() }
         }
     }
 
@@ -1568,15 +1457,49 @@ public final class DownloadEngine {
 
         for item in items where item.status != .downloading && item.speed > 0 { item.speed = 0 }
         globalDownloadSpeed = totalSpeed
-        updateDockProgress(progress: totalActiveBytes > 0 ? Double(totalActiveDownloaded) / Double(totalActiveBytes) : 0.0, totalActive: activeCount)
+        
+        let progress = totalActiveBytes > 0 ? Double(totalActiveDownloaded) / Double(totalActiveBytes) : 0.0
+        updateDockProgress(progress: progress, totalActive: activeCount)
     }
     
-    private func updateDockProgress(progress: Double, totalActive: Int) { }
-    private func killProcesses(_ item: DownloadItem) { item.processes.forEach { guard $0.isRunning else { return }; $0.terminate() }; item.processes = [] }
-    private func downloadsDir() -> URL { FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first! }
-    private func suggestFilename(from url: URL) -> String { return url.lastPathComponent }
-    private func suggestMagnetName(from url: URL) -> String { return "Torrent" }
+    private func updateDockProgress(progress: Double, totalActive: Int) {
+        DispatchQueue.main.async {
+            let dockTile = NSApp.dockTile
+            if totalActive == 0 { dockTile.contentView = nil; dockTile.badgeLabel = nil; dockTile.display(); return }
+            if let customView = dockTile.contentView as? DockProgressView { customView.progress = progress }
+            else {
+                let size = dockTile.size.width > 0 ? dockTile.size : NSSize(width: 128, height: 128)
+                let view = DockProgressView(frame: NSRect(origin: .zero, size: size))
+                view.progress = progress; dockTile.contentView = view
+            }
+            dockTile.badgeLabel = "\(totalActive)"; dockTile.display()
+        }
+    }
+
+    private func killProcesses(_ item: DownloadItem) {
+        item.processes.forEach { guard $0.isRunning else { return }; $0.terminate() }
+        item.processes = []
+    }
     
+    private func downloadsDir() -> URL { FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first! }
+
+    private func suggestFilename(from url: URL) -> String {
+        if url.scheme == "data" { return "attachment_\(Int(Date().timeIntervalSince1970))" }
+        var c = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        c?.query = nil
+        let last = (c?.url ?? url).lastPathComponent
+        let dec = last.removingPercentEncoding ?? last
+        return (!dec.isEmpty && dec != "/") ? dec : "download_\(Int(Date().timeIntervalSince1970))"
+    }
+
+    private func suggestMagnetName(from url: URL) -> String {
+        guard let comps = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let dn = comps.queryItems?.first(where: { $0.name == "dn" })?.value else {
+            return "Torrent_\(Int(Date().timeIntervalSince1970))"
+        }
+        return dn.removingPercentEncoding ?? dn
+    }
+
     private func uniqueURL(_ url: URL) -> URL {
         guard FileManager.default.fileExists(atPath: url.path) else { return url }
         let ext = url.pathExtension, base = url.deletingPathExtension().lastPathComponent
@@ -1590,11 +1513,17 @@ public final class DownloadEngine {
         }
     }
 
-    func persist() { if let d = try? JSONEncoder().encode(items) { try? d.write(to: persistenceURL, options: .atomic) } }
-    private func loadPersisted() { guard let d = try? Data(contentsOf: persistenceURL), let dec = try? JSONDecoder().decode([DownloadItem].self, from: d) else { return }; items = dec }
+    func persist() {
+        if let d = try? JSONEncoder().encode(items) { try? d.write(to: persistenceURL, options: .atomic) }
+    }
+
+    private func loadPersisted() {
+        guard let d = try? Data(contentsOf: persistenceURL), let dec = try? JSONDecoder().decode([DownloadItem].self, from: d) else { return }
+        items = dec
+    }
     
     nonisolated private func parseAriaSize(_ str: String) -> Int64 {
-        let s = str.uppercased().replacingOccurrences(of: "~", with: "").trimmingCharacters(in: .whitespaces)
+        let s = str.uppercased().trimmingCharacters(in: .whitespaces)
         var multiplier: Double = 1; var numStr = s
         if s.hasSuffix("KIB") { multiplier = 1024; numStr = String(s.dropLast(3)) }
         else if s.hasSuffix("KB") { multiplier = 1000; numStr = String(s.dropLast(2)) }
@@ -1602,48 +1531,12 @@ public final class DownloadEngine {
         else if s.hasSuffix("MB") { multiplier = 1000 * 1000; numStr = String(s.dropLast(2)) }
         else if s.hasSuffix("GIB") { multiplier = 1024 * 1024 * 1024; numStr = String(s.dropLast(3)) }
         else if s.hasSuffix("GB") { multiplier = 1000 * 1000 * 1000; numStr = String(s.dropLast(2)) }
+        else if s.hasSuffix("TIB") { multiplier = 1024 * 1024 * 1024 * 1024; numStr = String(s.dropLast(3)) }
+        else if s.hasSuffix("TB") { multiplier = 1000 * 1000 * 1000 * 1000; numStr = String(s.dropLast(2)) }
         else if s.hasSuffix("B") { multiplier = 1; numStr = String(s.dropLast(1)) }
+        
         if let val = Double(numStr) { return Int64(val * multiplier) }
         return 0
-    }
-    
-    private func readTerminalLines(_ pipe: Pipe) -> AsyncStream<String> {
-        AsyncStream { continuation in
-            Task {
-                var buffer = [UInt8]()
-                do {
-                    let bytesStream = try pipe.fileHandleForReading.bytes
-                    for try await byte in bytesStream {
-                        if byte == 13 || byte == 10 {
-                            if !buffer.isEmpty {
-                                if let line = String(bytes: buffer, encoding: .utf8) {
-                                    continuation.yield(line)
-                                }
-                                buffer.removeAll(keepingCapacity: true)
-                            }
-                        } else {
-                            buffer.append(byte)
-                        }
-                    }
-                    if !buffer.isEmpty, let line = String(bytes: buffer, encoding: .utf8) {
-                        continuation.yield(line)
-                    }
-                } catch { }
-                continuation.finish()
-            }
-        }
-    }
-    
-    private func getLiveFileSize(at path: String) -> (logical: Int64, physical: Int64) {
-        let file = open(path, O_RDONLY | O_NONBLOCK)
-        guard file != -1 else { return (0, 0) }
-        var st = stat()
-        let result = fstat(file, &st)
-        close(file)
-        if result == 0 {
-            return (Int64(st.st_size), Int64(st.st_blocks * 512))
-        }
-        return (0, 0)
     }
 }
 
