@@ -13,6 +13,7 @@ struct SettingsView: View {
     // Updated Removal Settings
     @AppStorage("askBeforeRemoving")     private var askBeforeRemoving = true
     @AppStorage("defaultRemoveAction")   private var defaultRemoveAction = "keep"
+    @AppStorage("downloadTorrentsAsFiles") private var downloadTorrentsAsFiles = false
     
     // Network
     @AppStorage("maxConcurrentDownloads") private var maxConcurrent = 5
@@ -178,11 +179,14 @@ struct SettingsView: View {
                 SettingsRow("Ask for confirmation before removing", addDivider: true) {
                     Toggle("", isOn: $askBeforeRemoving).labelsHidden().toggleStyle(.switch)
                 }
-                SettingsRow("Default removal action", addDivider: false) {
+                SettingsRow("Default removal action", addDivider: true) {
                     Picker("", selection: $defaultRemoveAction) {
                         Text("Remove from List Only").tag("keep")
                         Text("Move File to Trash").tag("trash")
                     }.labelsHidden().frame(width: 200)
+                }
+                SettingsRow("Save .torrent files without seeding", addDivider: false) {
+                    Toggle("", isOn: $downloadTorrentsAsFiles).labelsHidden().toggleStyle(.switch)
                 }
             }
         }

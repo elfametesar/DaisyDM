@@ -60,22 +60,18 @@ class LocalServer {
             var newData = accumulatedData
             if let data = data { newData.append(data) }
 
-            // Define \r\n\r\n natively in Data to avoid String.Index completely
             let separator = Data([13, 10, 13, 10])
 
             if let range = newData.range(of: separator) {
-                // Use pure Int boundaries for slicing
                 let headerData = newData.subdata(in: 0..<range.lowerBound)
                 let headers = String(data: headerData, encoding: .utf8) ?? ""
 
-                // 1. Instant Ping Response for extension port scanning
                 if headers.hasPrefix("GET /ping") {
                     let res = "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\nOK"
                     connection.send(content: res.data(using: .utf8)!, completion: .contentProcessed { _ in connection.cancel() })
                     return
                 }
 
-                // 2. Parse Content-Length
                 var expectedLength = 0
                 for line in headers.components(separatedBy: "\r\n") {
                     let lower = line.lowercased()
@@ -88,13 +84,11 @@ class LocalServer {
                 let bodyStartIndex = range.upperBound
                 let currentBodyLength = newData.count - bodyStartIndex
 
-                // 3. Keep buffering if the massive Base64 payload hasn't finished arriving
                 if currentBodyLength < expectedLength {
                     self.receiveData(on: connection, accumulatedData: newData)
                     return
                 }
 
-                // 4. Extract exactly the JSON body using Int ranges
                 let bodyData = newData.subdata(in: bodyStartIndex..<(bodyStartIndex + expectedLength))
                 
                 let resHeaders = "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: POST, OPTIONS, GET\r\nAccess-Control-Allow-Headers: Content-Type, X-Filename\r\nConnection: close\r\n\r\n"
@@ -104,8 +98,8 @@ class LocalServer {
                     return
                 }
 
+                // Handle binary torrent file upload explicitly
                 if headers.hasPrefix("POST /torrent") {
-                    // Binary torrent file upload — extract filename from header
                     var filename = "download.torrent"
                     for line in headers.components(separatedBy: "\r\n") {
                         let lower = line.lowercased()
@@ -118,7 +112,6 @@ class LocalServer {
                     let dest = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first!
                     var finalURL = dest.appendingPathComponent(filename)
                     
-                    // Prevent overwriting existing files
                     var i = 1
                     let base = finalURL.deletingPathExtension().lastPathComponent
                     let ext = finalURL.pathExtension
@@ -130,7 +123,6 @@ class LocalServer {
 
                     if (try? bodyData.write(to: finalURL)) != nil {
                         DispatchQueue.main.async {
-                            // Just save it as a completed file download in the UI, do not fetch torrent contents
                             let item = DownloadItem(url: URL(string: "data:blank")!, filename: finalURL.lastPathComponent, destination: dest)
                             item.status = .completed
                             item.totalBytes = Int64(bodyData.count)
@@ -147,9 +139,24 @@ class LocalServer {
                     return
                 }
 
+                // Handle JSON POST requests (Standard dispatch)
                 if headers.hasPrefix("POST") {
                     if let payload = try? JSONDecoder().decode(DownloadPayload.self, from: bodyData) {
-                        DispatchQueue.main.async { self.showConfirmation(for: payload) }
+                        // Safeguard: Check if the browser still managed to sniff it as a torrent
+                        var sanitizedUrl = payload.url
+                        if sanitizedUrl.contains("application/x-bittorrent") {
+                            sanitizedUrl = sanitizedUrl.replacingOccurrences(of: "application/x-bittorrent", with: "application/octet-stream")
+                        }
+                        
+                        let sanitizedPayload = DownloadPayload(
+                            url: sanitizedUrl,
+                            filename: payload.filename,
+                            cookies: payload.cookies,
+                            referer: payload.referer,
+                            ua: payload.ua
+                        )
+                        
+                        DispatchQueue.main.async { self.showConfirmation(for: sanitizedPayload) }
                     }
                     connection.send(content: resHeaders.data(using: .utf8)!, completion: .contentProcessed { _ in connection.cancel() })
                     return

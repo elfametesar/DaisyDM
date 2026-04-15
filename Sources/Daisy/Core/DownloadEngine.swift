@@ -241,8 +241,21 @@ public final class DownloadItem: Identifiable, Codable, Hashable {
         self.id = UUID(); self.url = url; self.filename = filename
         self.destinationURL = destination.appendingPathComponent(filename)
         self.status = .queued
-        let isTorrentFile = url.isFileURL && url.pathExtension.lowercased() == "torrent"
-        let computedType: DownloadType = (url.scheme == "magnet" || isTorrentFile) ? .torrent : .directLink
+        let isTorrentExtension = url.pathExtension.lowercased() == "torrent"
+        let downloadTorrentsAsFiles = UserDefaults.standard.bool(forKey: "downloadTorrentsAsFiles")
+        let computedType: DownloadType
+        if url.scheme == "magnet" {
+            computedType = .torrent
+        } else if isTorrentExtension && url.isFileURL && !downloadTorrentsAsFiles {
+            // Local .torrent file explicitly opened by the user — seed it
+            computedType = .torrent
+        } else if isTorrentExtension && !url.isFileURL && !downloadTorrentsAsFiles {
+            // Remote .torrent URL with seeding enabled — treat as torrent
+            computedType = .torrent
+        } else {
+            // Either downloadTorrentsAsFiles is on, or it's not a torrent at all
+            computedType = .directLink
+        }
         self.type = computedType; self.totalBytes = 0; self.downloadedBytes = 0; self.speed = 0; self.dateAdded = Date()
         self.connectionCount = 16; self.sourceHost = url.host ?? (computedType == .torrent ? "P2P Network" : "")
     }
@@ -1133,16 +1146,29 @@ public final class DownloadEngine {
                 item.filename = fn
                 item.destinationURL = finalDest
                 
-                // Torrent Handoff: If the extension sniffed magic bytes and marked it as .torrent, route it to Aria2
+                // Torrent Handoff: If the extension sniffed magic bytes and marked it as .torrent,
+                // either route it to Aria2 (seed) or treat as a completed file download.
                 if fn.lowercased().hasSuffix(".torrent") {
-                    item.url = finalDest
-                    item.type = .torrent
-                    item.status = .queued // Push it back into the queue so Aria2 natively grabs the file path
-                    item.downloadedBytes = 0
-                    item.totalBytes = 0
-                    item.speed = 0
-                    persist()
-                    scheduleNext()
+                    let downloadAsFile = UserDefaults.standard.bool(forKey: "downloadTorrentsAsFiles")
+                    if downloadAsFile {
+                        item.totalBytes = Int64(data.count)
+                        item.downloadedBytes = Int64(data.count)
+                        item.status = .completed
+                        item.dateCompleted = Date()
+                        item.speed = 0
+                        self.notifyCompletion(for: item)
+                        persist()
+                        scheduleNext()
+                    } else {
+                        item.url = finalDest
+                        item.type = .torrent
+                        item.status = .queued // Push it back into the queue so Aria2 natively grabs the file path
+                        item.downloadedBytes = 0
+                        item.totalBytes = 0
+                        item.speed = 0
+                        persist()
+                        scheduleNext()
+                    }
                 } else {
                     item.totalBytes = Int64(data.count)
                     item.downloadedBytes = Int64(data.count)
