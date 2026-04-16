@@ -50,12 +50,10 @@ struct RemoveDialog: View {
                 Toggle("Move downloaded file(s) to Trash", isOn: $trashFile)
                     .toggleStyle(.checkbox)
                     .font(.callout)
-                    .focusable()
                 
                 Toggle("Never ask for confirmation again", isOn: $remember)
                     .toggleStyle(.checkbox)
                     .font(.callout)
-                    .focusable()
             }
             .padding(20)
 
@@ -70,14 +68,12 @@ struct RemoveDialog: View {
                 }
                 .buttonStyle(ActionButtonStyle(prominent: false, hex: accentColorHex))
                 .keyboardShortcut(.cancelAction) // Fixes the Escape key issue natively
-                .focusable()
                 
                 Button(action: { onConfirm(trashFile, remember) }) {
                     Label("Remove", systemImage: "trash")
                 }
                 .buttonStyle(ActionButtonStyle(prominent: true, hex: accentColorHex))
                 .keyboardShortcut(.defaultAction) // Enter key triggers this automatically
-                .focusable()
             }
             .padding(16)
         }

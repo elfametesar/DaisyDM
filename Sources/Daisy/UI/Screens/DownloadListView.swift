@@ -65,14 +65,15 @@ struct DownloadListView: View {
 
     let onRequestRemove: ([DownloadItem]) -> Void
 
-    @State private var anchorIndex: Int? = nil
-    @State private var focusedIndex: Int? = nil
+    // REWRITTEN: Bulletproof UUID tracking instead of fragile numerical indices
+    @State private var cursorID: UUID? = nil
+    @State private var anchorID: UUID? = nil
+    
     @State private var propertiesItem: DownloadItem? = nil
     @State private var expandedItems: Set<UUID> = []
     
     @FocusState private var isSearchFocused: Bool
     @FocusState private var isListFocused: Bool
-    @FocusState private var focusedRowID: UUID? // The specific row focus "Tab Stop"
 
     @AppStorage("accentColorHex") private var accentColorHex = "#0A84FF"
     @AppStorage("enableBackgroundTint") private var enableBackgroundTint = false
@@ -164,7 +165,7 @@ struct DownloadListView: View {
                 ScrollView {
                     VStack(spacing: 0) {
                         LazyVStack(spacing: 0) {
-                            ForEach(Array(flattenedRows.enumerated()), id: \.element.id) { index, rowItem in
+                            ForEach(flattenedRows) { rowItem in
                                 Group {
                                     switch rowItem {
                                     case .main(let item):
@@ -189,21 +190,16 @@ struct DownloadListView: View {
                                     }
                                 }
                                 .contentShape(Rectangle())
-                                // Tab stop logic
-                                .focusable()
-                                .focused($focusedRowID, equals: rowItem.id)
+                                // Row focus stripped intentionally to avoid macOS SwiftUI bugs
                                 .onRightClick {
-                                    // Update focus and selection on right click
-                                    focusedRowID = rowItem.id
+                                    cursorID = rowItem.id
                                     if !selected.contains(rowItem.id) {
                                         selected = [rowItem.id]
-                                        anchorIndex = index
-                                        focusedIndex = index
+                                        anchorID = rowItem.id
                                     }
                                 }
                                 .onTapGesture {
-                                    focusedRowID = rowItem.id
-                                    handleRowTap(rowItem: rowItem, index: index)
+                                    handleRowTap(rowItem: rowItem)
                                 }
                                 .contextMenu { rowContextMenu(rowItem) }
                                 .id(rowItem.id)
@@ -221,22 +217,21 @@ struct DownloadListView: View {
                     .contentShape(Rectangle())
                     .onTapGesture {
                         isListFocused = true
-                        focusedRowID = nil
                         selected.removeAll()
-                        anchorIndex = nil
-                        focusedIndex = nil
+                        cursorID = nil
+                        anchorID = nil
                     }
                 }
-                .onChange(of: focusedIndex) { _, newIndex in
-                    if let idx = newIndex, idx >= 0, idx < flattenedRows.count {
-                        let id = flattenedRows[idx].id
-                        proxy.scrollTo(id)
-                        focusedRowID = id // Sync focus with arrow navigation
+                .onChange(of: cursorID) { _, newID in
+                    if let id = newID {
+                        // Dynamically scroll to keep selection in view
+                        proxy.scrollTo(id, anchor: nil)
                     }
                 }
             }
         }
         .background(enableBackgroundTint ? Color(hex: accentColorHex).opacity(0.04) : Color(NSColor.controlBackgroundColor))
+        // Parent Container catches all keyboard focus
         .focusable()
         .focused($isListFocused)
         .focusEffectDisabled()
@@ -419,73 +414,69 @@ struct DownloadListView: View {
         }
     }
     
-    // MARK: - Arrow Navigation Logic
+    // MARK: - REWRITTEN: Bulletproof Arrow Navigation Logic
     private func handleArrow(_ dir: ArrowDirection) {
-        guard !flattenedRows.isEmpty else { return }
+        let rows = flattenedRows
+        guard !rows.isEmpty else { return }
 
         let flags = NSApp.currentEvent?.modifierFlags ?? []
         let isShift = flags.contains(.shift)
 
-        var currentIndex = focusedIndex ?? anchorIndex ?? 0
-        if currentIndex >= flattenedRows.count { currentIndex = flattenedRows.count - 1 }
-        if currentIndex < 0 { currentIndex = 0 }
+        var currentIndex: Int? = nil
+        
+        // Find current position securely using UUID
+        if let cid = cursorID, let idx = rows.firstIndex(where: { $0.id == cid }) {
+            currentIndex = idx
+        } else if let sel = selected.first, selected.count == 1, let idx = rows.firstIndex(where: { $0.id == sel }) {
+            currentIndex = idx
+        }
 
-        var nextIndex = currentIndex
+        var nextIndex = currentIndex ?? 0
 
         switch dir {
         case .down:
-            if currentIndex < flattenedRows.count - 1 { nextIndex = currentIndex + 1 }
+            if let curr = currentIndex { nextIndex = min(curr + 1, rows.count - 1) }
         case .up:
-            if currentIndex > 0 { nextIndex = currentIndex - 1 }
+            if let curr = currentIndex { nextIndex = max(curr - 1, 0) }
         case .right:
-            if !isShift {
-                if case .main(let item) = flattenedRows[currentIndex] {
-                    if (item.type == .torrent || item.type == .batch) && !item.subFiles.isEmpty {
-                        if !expandedItems.contains(item.id) {
-                            expandedItems.insert(item.id)
-                            anchorIndex = currentIndex
-                            focusedIndex = currentIndex
-                        } else if currentIndex < flattenedRows.count - 1 {
-                            nextIndex = currentIndex + 1
-                            anchorIndex = nextIndex
-                            focusedIndex = nextIndex
-                            selected = [flattenedRows[nextIndex].id]
-                        }
-                    }
+            guard !isShift, let curr = currentIndex else { return }
+            if case .main(let item) = rows[curr], (item.type == .torrent || item.type == .batch) && !item.subFiles.isEmpty {
+                if !expandedItems.contains(item.id) {
+                    expandedItems.insert(item.id)
+                    nextIndex = curr
+                } else if curr < rows.count - 1 {
+                    nextIndex = curr + 1
                 }
-            }
-            return
+            } else { return }
         case .left:
-            if !isShift {
-                switch flattenedRows[currentIndex] {
-                case .main(let item):
-                    if expandedItems.contains(item.id) {
-                        expandedItems.remove(item.id)
-                        anchorIndex = currentIndex
-                        focusedIndex = currentIndex
-                    }
-                case .sub(let parent, _, _):
-                    if let pIndex = flattenedRows.firstIndex(where: { $0.id == parent.id }) {
-                        anchorIndex = pIndex
-                        focusedIndex = pIndex
-                        selected = [parent.id]
-                    }
-                }
+            guard !isShift, let curr = currentIndex else { return }
+            switch rows[curr] {
+            case .main(let item):
+                if expandedItems.contains(item.id) {
+                    expandedItems.remove(item.id)
+                    nextIndex = curr
+                } else { return }
+            case .sub(let parent, _, _):
+                if let pIdx = rows.firstIndex(where: { $0.id == parent.id }) {
+                    nextIndex = pIdx
+                } else { return }
             }
-            return
         }
 
-        if dir == .up || dir == .down {
-            if isShift {
-                focusedIndex = nextIndex
-                if anchorIndex == nil { anchorIndex = currentIndex }
-                let anchor = anchorIndex!
-                let range = min(anchor, nextIndex)...max(anchor, nextIndex)
-                selected = Set(flattenedRows[range].map { $0.id })
+        // Apply robust state updates
+        let targetID = rows[nextIndex].id
+        cursorID = targetID
+
+        if dir == .up || dir == .down || dir == .left || dir == .right {
+            if isShift && (dir == .up || dir == .down) {
+                if anchorID == nil { anchorID = currentIndex != nil ? rows[currentIndex!].id : targetID }
+                if let aID = anchorID, let aIdx = rows.firstIndex(where: { $0.id == aID }) {
+                    let range = min(aIdx, nextIndex)...max(aIdx, nextIndex)
+                    selected = Set(rows[range].map { $0.id })
+                }
             } else {
-                focusedIndex = nextIndex
-                anchorIndex = nextIndex
-                selected = [flattenedRows[nextIndex].id]
+                anchorID = targetID
+                selected = [targetID]
             }
         }
     }
@@ -543,8 +534,9 @@ struct DownloadListView: View {
         .help("Start Dictation")
     }
     
-    private func handleRowTap(rowItem: ListRowItem, index: Int) {
+    private func handleRowTap(rowItem: ListRowItem) {
         isListFocused = true
+        cursorID = rowItem.id
         
         let event = NSApp.currentEvent
         let flags = event?.modifierFlags ?? []
@@ -555,25 +547,23 @@ struct DownloadListView: View {
             return
         }
         
+        let rows = flattenedRows
         if flags.contains(.command) {
             if selected.contains(rowItem.id) { selected.remove(rowItem.id) }
             else { selected.insert(rowItem.id) }
-            anchorIndex = index
-            focusedIndex = index
+            anchorID = rowItem.id
         } else if flags.contains(.shift) {
-            guard let anchor = anchorIndex, anchor < flattenedRows.count else {
+            guard let aID = anchorID, let aIdx = rows.firstIndex(where: { $0.id == aID }),
+                  let curIdx = rows.firstIndex(where: { $0.id == rowItem.id }) else {
                 selected = [rowItem.id]
-                anchorIndex = index
-                focusedIndex = index
+                anchorID = rowItem.id
                 return
             }
-            focusedIndex = index
-            let range = min(anchor, index)...max(anchor, index)
-            selected = Set(flattenedRows[range].map { $0.id })
+            let range = min(aIdx, curIdx)...max(aIdx, curIdx)
+            selected = Set(rows[range].map { $0.id })
         } else {
             selected = [rowItem.id]
-            anchorIndex = index
-            focusedIndex = index
+            anchorID = rowItem.id
         }
     }
 
@@ -904,7 +894,6 @@ struct DownloadRow: View {
                 if item.status == .downloading, let eta = item.formattedETA {
                     Text(eta)
                         .font(.system(size: 10))
-                        // THE FIX:
                         .foregroundStyle(isSelected ? dynamicTextColor.opacity(0.7) : Color.secondary.opacity(0.7))
                         .lineLimit(1)
                 }

@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 
 enum SidebarFilter: String, CaseIterable, Identifiable {
     case all       = "All Downloads"
@@ -47,7 +48,11 @@ struct ContentView: View {
     @State private var selectedFilter: SidebarFilter = .all
     @State private var selectedItems: Set<UUID> = []
     @State private var showingSettings = false
+    
+    // UI Logic Triggers
     @State private var showingAddDownload = false
+    @State private var initialAddText = ""
+    
     @State private var searchText = ""
     @State private var isDropTargeted = false
     @State private var itemsToRemove: RemovalContext? = nil
@@ -58,11 +63,9 @@ struct ContentView: View {
     @AppStorage("isCompactList") private var isCompactList = false
     @AppStorage("accentColorHex") private var accentColorHex = "#0A84FF"
     
-    // Updated Removal Settings
     @AppStorage("askBeforeRemoving") private var askBeforeRemoving = true
     @AppStorage("defaultRemoveAction") private var defaultRemoveAction = "keep"
     
-    // Shared sorting state for the Toolbar Menu
     @AppStorage("sortColumn") private var sortColumn: SortColumn = .dateAdded
     @AppStorage("sortAscending") private var sortAscending: Bool = false
     
@@ -89,7 +92,10 @@ struct ContentView: View {
     var body: some View {
         mainLayout
             .sheet(isPresented: $showingAddDownload) {
-                AddDownloadSheet(onClose: { showingAddDownload = false })
+                AddDownloadSheet(initialURLText: initialAddText, onClose: {
+                    showingAddDownload = false
+                    initialAddText = ""
+                })
             }
             .sheet(isPresented: $showingSettings) { SettingsView().interactiveDismissDisabled() }
             .sheet(item: $itemsToRemove) { context in
@@ -148,11 +154,10 @@ struct ContentView: View {
             let existingIds = Set(engine.items.map { $0.id })
             selectedItems.formIntersection(existingIds)
         }
-        .dropDestination(for: URL.self) { urls, _ in handleDrop(urls: urls) } isTargeted: { targeted in
-            isDropTargeted = targeted && activeDragHasValidExternalItems()
-        }
-        .dropDestination(for: String.self) { strings, _ in handleDrop(strings: strings) } isTargeted: { targeted in
-            isDropTargeted = targeted && activeDragHasValidExternalItems()
+        // Native NSItemProvider loop for reliable Drag & Drop
+        .onDrop(of: [.url, .fileURL, .plainText], isTargeted: $isDropTargeted) { providers in
+            handleProviders(providers)
+            return true
         }
         .overlay {
             if isDropTargeted {
@@ -165,10 +170,6 @@ struct ContentView: View {
     private var sidebarColumn: some View {
         SidebarView(selected: $selectedFilter, engine: engine, onSettings: { showingSettings = true })
             .navigationSplitViewColumnWidth(min: 170, ideal: 190, max: 220)
-            .toolbar {
-                ToolbarItem(placement: .primaryAction) {
-                }
-            }
     }
 
     @ViewBuilder
@@ -264,62 +265,101 @@ struct ContentView: View {
         }
     }
     
-    private func activeDragHasValidExternalItems() -> Bool {
-        let pb = NSPasteboard(name: .drag)
+    // MARK: - Bulletproof Drag & Drop Handling
+    
+    private func handleProviders(_ providers: [NSItemProvider]) {
+        let group = DispatchGroup()
+        let collectedPaths = NSMutableArray()
         
-        if let urls = pb.readObjects(forClasses: [NSURL.self], options: nil) as? [URL] {
-            for url in urls {
-                let isInternal = engine.items.contains { $0.url == url || $0.destinationURL == url }
-                let isValid = (url.isFileURL && url.pathExtension.lowercased() == "torrent") || url.scheme?.hasPrefix("http") == true || url.scheme == "magnet"
-                if !isInternal && isValid { return true }
+        for provider in providers {
+            group.enter()
+            
+            // 1. Handle File URLs (Torrents/Local files)
+            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { (data, error) in
+                    if let urlData = data as? Data, let url = URL(dataRepresentation: urlData, relativeTo: nil) {
+                        self.syncProcessFileURL(url, list: collectedPaths)
+                    } else if let url = data as? URL {
+                        self.syncProcessFileURL(url, list: collectedPaths)
+                    }
+                    group.leave()
+                }
+            }
+            // 2. Handle Web URLs (Direct links/Magnets)
+            else if provider.hasItemConformingToTypeIdentifier(UTType.url.identifier) {
+                provider.loadObject(ofClass: URL.self) { (url, error) in
+                    if let url = url {
+                        if url.scheme?.hasPrefix("http") == true || url.scheme == "magnet" {
+                            collectedPaths.add(url.absoluteString)
+                        }
+                    }
+                    group.leave()
+                }
+            }
+            // 3. Handle Plain Text (Pasted/Dragged strings)
+            else if provider.hasItemConformingToTypeIdentifier(UTType.plainText.identifier) {
+                provider.loadObject(ofClass: String.self) { (str, error) in
+                    if let str = str {
+                        let lines = str.components(separatedBy: .newlines)
+                        for line in lines {
+                            let clean = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                            if let url = URL(string: clean), (url.scheme?.hasPrefix("http") == true || url.scheme == "magnet") {
+                                collectedPaths.add(clean)
+                            }
+                        }
+                    }
+                    group.leave()
+                }
+            } else {
+                group.leave()
             }
         }
         
-        if let strings = pb.readObjects(forClasses: [NSString.self], options: nil) as? [String] {
-            for str in strings {
-                if let url = URL(string: str.trimmingCharacters(in: .whitespaces)) {
-                    let isInternal = engine.items.contains { $0.url == url || $0.destinationURL == url }
-                    let isValid = url.scheme?.hasPrefix("http") == true || url.scheme == "magnet"
-                    if !isInternal && isValid { return true }
+        group.notify(queue: .main) {
+            let finalArray = collectedPaths.compactMap { $0 as? String }
+            if !finalArray.isEmpty {
+                self.initialAddText = finalArray.joined(separator: "\n")
+                // Small delay ensures the "Drop" animation completes before the Sheet tries to slide up
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    self.showingAddDownload = true
                 }
+            }
+        }
+    }
+
+    private func syncProcessFileURL(_ url: URL, list: NSMutableArray) {
+        let isInternal = engine.items.contains { $0.url == url || $0.destinationURL == url }
+        if isInternal { return }
+        
+        if url.isFileURL && url.pathExtension.lowercased() == "torrent" {
+            let accessing = url.startAccessingSecurityScopedResource()
+            defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+            
+            if let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
+                let dir = support.appendingPathComponent("Dispatch/Torrents", isDirectory: true)
+                try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                let dest = dir.appendingPathComponent(UUID().uuidString + "_" + url.lastPathComponent)
+                
+                do {
+                    try FileManager.default.copyItem(at: url, to: dest)
+                    list.add(dest.path(percentEncoded: false))
+                } catch {
+                    print("DaisyDM Drop Error: \(error)")
+                }
+            }
+        }
+    }
+
+    private func activeDragHasValidExternalItems() -> Bool {
+        let pb = NSPasteboard(name: .drag)
+        if let urls = pb.readObjects(forClasses: [NSURL.self], options: nil) as? [URL] {
+            return urls.contains { url in
+                let isTorrent = url.isFileURL && url.pathExtension.lowercased() == "torrent"
+                let isLink = url.scheme?.hasPrefix("http") == true || url.scheme == "magnet"
+                return isTorrent || isLink
             }
         }
         return false
-    }
-
-    private func handleDrop(urls: [URL]) -> Bool {
-        var handled = false
-        var validURLs = [URL]()
-        for url in urls {
-            let isInternal = engine.items.contains { $0.url == url || $0.destinationURL == url }
-            if isInternal { continue }
-            
-            let isTorrent = url.isFileURL && url.pathExtension.lowercased() == "torrent"
-            if isTorrent || url.scheme?.hasPrefix("http") == true || url.scheme == "magnet" {
-                validURLs.append(url)
-                handled = true
-            }
-        }
-        if !validURLs.isEmpty { processAddRequest(urls: validURLs) }
-        return handled
-    }
-    
-    private func handleDrop(strings: [String]) -> Bool {
-        var handled = false
-        var validURLs = [URL]()
-        for str in strings {
-            if let url = URL(string: str.trimmingCharacters(in: .whitespaces)) {
-                let isInternal = engine.items.contains { $0.url == url || $0.destinationURL == url }
-                if isInternal { continue }
-                
-                if url.scheme?.hasPrefix("http") == true || url.scheme == "magnet" {
-                    validURLs.append(url)
-                    handled = true
-                }
-            }
-        }
-        if !validURLs.isEmpty { processAddRequest(urls: validURLs) }
-        return handled
     }
 
     private func requestRemove(items: [DownloadItem]) {
@@ -332,29 +372,40 @@ struct ContentView: View {
     }
 
     private func handlePaste() {
-        if let string = NSPasteboard.general.string(forType: .string) {
-            let lines = string.components(separatedBy: .newlines).compactMap { URL(string: $0.trimmingCharacters(in: .whitespaces)) }.filter { $0.scheme?.hasPrefix("http") == true || $0.scheme == "magnet" }
-            if !lines.isEmpty {
-                NotificationCenter.default.post(name: .showAddDownload, object: nil)
+        let pb = NSPasteboard.general
+        if let urls = pb.readObjects(forClasses: [NSURL.self], options: nil) as? [URL] {
+            let collectedPaths = NSMutableArray()
+            for u in urls { syncProcessFileURL(u, list: collectedPaths) }
+            let finalArray = collectedPaths.compactMap { $0 as? String }
+            if !finalArray.isEmpty {
+                self.initialAddText = finalArray.joined(separator: "\n")
+                self.showingAddDownload = true
+            }
+        } else if let str = pb.string(forType: .string) {
+            let lines = str.components(separatedBy: .newlines)
+            var found = [String]()
+            for line in lines {
+                let clean = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                if let url = URL(string: clean), (url.scheme?.hasPrefix("http") == true || url.scheme == "magnet") {
+                    found.append(clean)
+                }
+            }
+            if !found.isEmpty {
+                self.initialAddText = found.joined(separator: "\n")
+                self.showingAddDownload = true
             }
         }
     }
 }
 
 // MARK: - Helper Views
-
 struct EmptyDetailView: View {
     @AppStorage("enableBackgroundTint") private var enableBackgroundTint = false
     @AppStorage("accentColorHex") private var accentColorHex = "#0A84FF"
-
     var body: some View {
         VStack(spacing: 10) {
-            Image(systemName: "sidebar.trailing")
-                .font(.system(size: 40))
-                .foregroundStyle(.tertiary)
-            Text("Select a download to inspect")
-                .font(.callout)
-                .foregroundStyle(.tertiary)
+            Image(systemName: "sidebar.trailing").font(.system(size: 40)).foregroundStyle(.tertiary)
+            Text("Select a download to inspect").font(.callout).foregroundStyle(.tertiary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(enableBackgroundTint ? Color(hex: accentColorHex).opacity(0.04) : Color(NSColor.controlBackgroundColor))
@@ -365,15 +416,10 @@ struct MultipleSelectionView: View {
     let count: Int
     @AppStorage("enableBackgroundTint") private var enableBackgroundTint = false
     @AppStorage("accentColorHex") private var accentColorHex = "#0A84FF"
-
     var body: some View {
         VStack(spacing: 10) {
-            Image(systemName: "square.stack.3d.up")
-                .font(.system(size: 40))
-                .foregroundStyle(.tertiary)
-            Text("\(count) items selected")
-                .font(.callout)
-                .foregroundStyle(.tertiary)
+            Image(systemName: "square.stack.3d.up").font(.system(size: 40)).foregroundStyle(.tertiary)
+            Text("\(count) items selected").font(.callout).foregroundStyle(.tertiary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(enableBackgroundTint ? Color(hex: accentColorHex).opacity(0.04) : Color(NSColor.controlBackgroundColor))

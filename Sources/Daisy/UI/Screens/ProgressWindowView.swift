@@ -13,6 +13,9 @@ struct ProgressWindowView: View {
     @State private var isPinned     = false
     @State private var now = Date()
     @State private var window: NSWindow?
+    
+    // For robust Keyboard handling
+    @State private var eventMonitor: Any?
 
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
@@ -46,25 +49,65 @@ struct ProgressWindowView: View {
         .background(VisualEffectView(material: .popover, blendingMode: .behindWindow).ignoresSafeArea())
         .background(WindowAccessor(window: $window))
         .onAppear {
-            if item.speedLimit > 0 {
-                limitEnabled = true
-                limitInput = "\(item.speedLimit)"
-            }
-            
-            if alwaysPinProgressWindows {
-                isPinned = true
-                window?.level = .floating
+            setupWindowSettings()
+            setupEventMonitor()
+        }
+        .onDisappear {
+            if let monitor = eventMonitor {
+                NSEvent.removeMonitor(monitor)
             }
         }
         .onReceive(timer) { _ in now = Date() }
-        .onChange(of: window) { _, newWindow in
-            if let win = newWindow {
-                win.isOpaque = false
-                win.backgroundColor = .clear
-                if alwaysPinProgressWindows {
-                    win.level = .floating
+        .onChange(of: window) { _, _ in setupWindowSettings() }
+    }
+    
+    private func setupWindowSettings() {
+        if item.speedLimit > 0 {
+            limitEnabled = true
+            limitInput = "\(item.speedLimit)"
+        }
+        
+        if let win = window {
+            win.isOpaque = false
+            win.backgroundColor = .clear
+            win.titlebarAppearsTransparent = true
+            win.makeKeyAndOrderFront(nil)
+            
+            if alwaysPinProgressWindows || isPinned {
+                isPinned = true
+                win.level = .floating
+            }
+        }
+    }
+    
+    // MARK: - Global Key Monitor (Space & Escape)
+    private func setupEventMonitor() {
+        eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            // 1. Handle Escape (Key Code 53)
+            if event.keyCode == 53 {
+                dismiss()
+                return nil
+            }
+            
+            // 2. Handle Space (Key Code 49)
+            if event.keyCode == 49 {
+                // Don't toggle if the user is typing in the speed limit box
+                let responder = window?.firstResponder
+                if !(responder is NSTextView || responder is NSTextField) {
+                    toggleDownload()
+                    return nil // Consume event to prevent scrolling
                 }
             }
+            
+            return event
+        }
+    }
+
+    private func toggleDownload() {
+        if item.status == .downloading || item.status == .queued {
+            engine.stop(item)
+        } else if item.status == .stopped || item.status == .failed {
+            engine.resume(item)
         }
     }
 
@@ -72,7 +115,6 @@ struct ProgressWindowView: View {
 
     var statusTab: some View {
         VStack(spacing: 0) {
-            // Header
             HStack(alignment: .top, spacing: 14) {
                 let ext  = (item.filename as NSString).pathExtension
                 let type = UTType(filenameExtension: ext) ?? .data
@@ -99,7 +141,6 @@ struct ProgressWindowView: View {
             }
             .padding(.horizontal, 16).padding(.top, 16).padding(.bottom, 12)
 
-            // Progress
             VStack(spacing: 6) {
                 GeometryReader { geo in
                     ZStack(alignment: .leading) {
@@ -127,7 +168,6 @@ struct ProgressWindowView: View {
 
             Divider().padding(.vertical, 10)
 
-            // Stats Row
             HStack(spacing: 8) {
                 ActiveStatCell(label: "Speed",     value: item.status == .downloading ? item.formattedSpeed : "–")
                 ActiveStatCell(label: "ETA",       value: item.formattedETA ?? "–")
@@ -138,7 +178,6 @@ struct ProgressWindowView: View {
 
             Divider().padding(.vertical, 10)
 
-            // Source URL
             VStack(alignment: .leading, spacing: 4) {
                 Text("Source")
                     .font(.system(size: 10, weight: .semibold))
@@ -153,7 +192,7 @@ struct ProgressWindowView: View {
                         .frame(maxWidth: .infinity, alignment: .topLeading)
                         .padding(.trailing, 8)
                 }
-                .frame(maxHeight: .infinity) // Automatically fills all the gap space natively
+                .frame(maxHeight: .infinity)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 16)
@@ -161,7 +200,6 @@ struct ProgressWindowView: View {
 
             Divider()
 
-            // Actions
             HStack(spacing: 8) {
                 if item.status == .downloading || item.status == .queued {
                     Button(action: { engine.stop(item) }) {
@@ -203,13 +241,10 @@ struct ProgressWindowView: View {
                     Label(item.status == .completed ? "Close" : "Hide", systemImage: item.status == .completed ? "xmark" : "eye.slash")
                 }
                 .buttonStyle(ActionButtonStyle(prominent: false, hex: accentColorHex))
-                .keyboardShortcut(.escape)
             }
             .padding(.horizontal, 16).padding(.vertical, 12)
         }
     }
-
-    // MARK: - Speed Limit Tab
 
     var speedLimitTab: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -227,8 +262,6 @@ struct ProgressWindowView: View {
         }
         .padding(24)
     }
-
-    // MARK: - Subviews
 
     var pinButton: some View {
         Button {
@@ -255,8 +288,6 @@ struct ProgressWindowView: View {
     }
 }
 
-// MARK: - Stat Cell
-
 struct ActiveStatCell: View {
     let label: String
     let value: String
@@ -273,9 +304,9 @@ struct ActiveStatCell: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
         }
-        .frame(width: 81, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .background(Color(NSColor.separatorColor).opacity(0.2), in: RoundedRectangle(cornerRadius: 8))
+        .background(Color(NSColor.separatorColor).opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
     }
 }

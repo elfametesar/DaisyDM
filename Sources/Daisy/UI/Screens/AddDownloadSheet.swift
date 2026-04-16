@@ -1,7 +1,9 @@
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 
 struct AddDownloadSheet: View {
+    var initialURLText: String = ""
     var onClose: () -> Void = {}
 
     @State private var urlText = ""
@@ -27,10 +29,25 @@ struct AddDownloadSheet: View {
     @FocusState private var focusedField: Field?
 
     var parsedURLs: [URL] {
-        urlText.components(separatedBy: .whitespacesAndNewlines)
+        urlText.components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
-            .compactMap { URL(string: $0) }
-            .filter { $0.scheme?.hasPrefix("http") == true || $0.scheme == "magnet" }
+            .compactMap { str -> URL? in
+                if str.hasPrefix("/") { return URL(fileURLWithPath: str) }
+                if str.hasPrefix("file://") {
+                    let clean = str.replacingOccurrences(of: "file://", with: "")
+                    return URL(fileURLWithPath: clean.removingPercentEncoding ?? clean)
+                }
+                if let url = URL(string: str), url.scheme != nil { return url }
+                if let enc = str.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+                   let url = URL(string: enc), url.scheme != nil { return url }
+                return nil
+            }
+            .filter {
+                $0.scheme?.hasPrefix("http") == true ||
+                $0.scheme == "magnet" ||
+                ($0.isFileURL && $0.pathExtension.lowercased() == "torrent")
+            }
     }
 
     var body: some View {
@@ -41,9 +58,7 @@ struct AddDownloadSheet: View {
                         .fill(Color(hex: accentColorHex).opacity(0.15))
                         .frame(width: 40, height: 40)
                     if isResolving {
-                        ProgressView()
-                            .scaleEffect(0.8)
-                            .tint(Color(hex: accentColorHex))
+                        ProgressView().scaleEffect(0.8).tint(Color(hex: accentColorHex))
                     } else {
                         Image(systemName: "arrow.down.circle.fill")
                             .font(.system(size: 20))
@@ -51,9 +66,8 @@ struct AddDownloadSheet: View {
                     }
                 }
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("New Download")
-                        .font(.title3.weight(.semibold))
-                    Text(isResolving ? "Extracting direct links..." : "Enter a direct link or paste multiple links for a batch")
+                    Text("New Download").font(.title3.weight(.semibold))
+                    Text(isResolving ? "Extracting direct links..." : "Enter a direct link, torrent file, or batch list")
                         .font(.callout)
                         .foregroundStyle(isResolving ? Color(hex: accentColorHex) : .secondary)
                 }
@@ -64,17 +78,13 @@ struct AddDownloadSheet: View {
 
             VStack(alignment: .leading, spacing: 16) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("URL").font(.callout.weight(.medium)).foregroundStyle(.primary)
+                    Text("URL / File").font(.callout.weight(.medium))
                     HStack(alignment: .top) {
                         Image(systemName: "link").foregroundStyle(.primary).font(.system(size: 13)).padding(.top, 4)
-
                         ZStack(alignment: .topLeading) {
                             if urlText.isEmpty {
-                                Text("https://example.com/file1.zip\nPaste multiple links to extract the direct URLs")
-                                    .foregroundStyle(.primary)
-                                    .font(.system(size: 13))
-                                    .padding(.top, 4)
-                                    .allowsHitTesting(false)
+                                Text("https://example.com/file1.zip\nPaste links, magnets, or drag .torrent files here")
+                                    .foregroundStyle(.primary).font(.system(size: 13)).padding(.top, 4).allowsHitTesting(false)
                             }
                             TextEditor(text: $urlText)
                                 .font(.system(size: 13))
@@ -83,34 +93,11 @@ struct AddDownloadSheet: View {
                                 .frame(minHeight: 60, maxHeight: 120)
                                 .focused($focusedField, equals: .urlInput)
                                 .onChange(of: urlText) { _, newText in
-                                    if newText.contains("\t") {
-                                        urlText = newText.replacingOccurrences(of: "\t", with: "")
-                                        focusedField = .chooseFolder
-                                    }
                                     isValid = !parsedURLs.isEmpty
                                     triggerAutoResolveIfNeed(newText: urlText)
                                 }
                                 .disabled(isResolving)
                         }
-
-                        if !urlText.isEmpty {
-                            Button { urlText = "" } label: {
-                                Image(systemName: "xmark.circle.fill").foregroundStyle(.primary)
-                            }
-                            .buttonStyle(.plain)
-                            .padding(.top, 4)
-                            .disabled(isResolving)
-                        }
-                        Divider().padding(.vertical, 4)
-                        Button {
-                            if let s = NSPasteboard.general.string(forType: .string), !s.isEmpty { urlText = s }
-                        } label: {
-                            Image(systemName: "doc.on.clipboard").foregroundStyle(.secondary)
-                        }
-                        .buttonStyle(.plain)
-                        .help("Paste from clipboard")
-                        .padding(.top, 4)
-                        .disabled(isResolving)
                     }
                     .padding(9)
                     .background(Color.white.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
@@ -119,54 +106,30 @@ struct AddDownloadSheet: View {
                 }
 
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Save to").font(.callout.weight(.medium)).foregroundStyle(.primary)
+                    Text("Save to").font(.callout.weight(.medium))
                     HStack {
                         Image(systemName: "folder").foregroundStyle(.primary).font(.system(size: 13))
                         Text(destination.path(percentEncoded: false))
-                            .font(.system(size: 12))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.head)
+                            .font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.head)
                             .frame(maxWidth: .infinity, alignment: .leading)
                         Button("Choose…") {
                             let p = NSOpenPanel()
-                            p.canChooseFiles = false
-                            p.canChooseDirectories = true
-                            p.prompt = "Select"
+                            p.canChooseFiles = false; p.canChooseDirectories = true
                             if p.runModal() == .OK, let u = p.url { destination = u }
                         }
                         .buttonStyle(ActionButtonStyle(prominent: false, hex: accentColorHex))
-                        .disabled(isResolving)
-                        .focused($focusedField, equals: .chooseFolder)
                     }
                     .padding(9)
                     .background(Color.white.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.primary.opacity(0.08), lineWidth: 1))
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
-                        Text("Connections").font(.callout.weight(.medium)).foregroundStyle(.primary)
+                        Text("Connections").font(.callout.weight(.medium))
                         Spacer()
-                        Text("\(connections)")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(.primary)
+                        Text("\(connections)").font(.system(size: 13, weight: .semibold))
                     }
-                    HStack(spacing: 10) {
-                        Text("1").font(.caption).foregroundStyle(.primary)
-                        Slider(value: Binding(
-                            get: { Double(connections) },
-                            set: { connections = Int($0) }
-                        ), in: 1...32, step: 1)
-                        .foregroundStyle(.primary)
-                        .disabled(isResolving)
-                        .focused($focusedField, equals: .connectionsSlider)
-                        Text("32").font(.caption).foregroundStyle(.primary)
-                    }
-                    Text("More connections saturate high-bandwidth servers faster. P2P (Torrent) ignores this.")
-                        .font(.caption)
-                        .foregroundStyle(.primary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    Slider(value: Binding(get: { Double(connections) }, set: { connections = Int($0) }), in: 1...32, step: 1)
                 }
             }
             .padding(20)
@@ -174,137 +137,96 @@ struct AddDownloadSheet: View {
             Divider()
 
             HStack {
-                Button(action: {
-                    resolveTask?.cancel()
-                    onClose()
-                }) {
-                    Text("Cancel")
-                }
-                .buttonStyle(ActionButtonStyle(prominent: false, hex: accentColorHex))
-                .keyboardShortcut(.escape)
-                .focused($focusedField, equals: .cancelBtn)
-
+                Button("Cancel") { resolveTask?.cancel(); onClose() }
+                    .buttonStyle(ActionButtonStyle(prominent: false, hex: accentColorHex))
                 Spacer()
-
-                Button(action: {
+                Button("Add Download") {
                     let urls = parsedURLs
-                    if urls.count == 1 {
-                        if engine.items.contains(where: { $0.url.absoluteString == urls[0].absoluteString }) {
-                            duplicateAddRequest = DuplicateAddRequest(urls: urls, destination: destination, connections: connections)
-                            showingDuplicateAlert = true
-                        } else {
-                            engine.addDownload(urls: urls, destination: destination, connections: connections)
-                            onClose()
-                        }
-                    } else if urls.count > 1 {
-                        engine.addDownload(urls: urls, destination: destination, connections: connections)
-                        onClose()
-                    }
-                }) {
-                    Text("Add Download")
+                    engine.addDownload(urls: urls, destination: destination, connections: connections)
+                    onClose()
                 }
                 .buttonStyle(ActionButtonStyle(prominent: true, hex: accentColorHex))
-                .disabled(!isValid || isResolving || urlText.isEmpty)
-                .keyboardShortcut(.return)
-                .focused($focusedField, equals: .addBtn)
+                .disabled(!isValid || urlText.isEmpty)
             }
             .padding(16)
         }
         .frame(width: 480)
         .background(VisualEffectView(material: .popover, blendingMode: .behindWindow).ignoresSafeArea())
-        .background(enableBackgroundTint ? Color(hex: accentColorHex).opacity(0.04) : Color.clear)
-        .tint(Color(hex: accentColorHex))
-        .alert("Duplicate Download", isPresented: $showingDuplicateAlert) {
-            Button("Add Anyway") {
-                if let req = duplicateAddRequest {
-                    engine.addDownload(urls: req.urls, destination: req.destination, connections: req.connections)
-                    onClose()
-                }
-            }
-            Button("Cancel", role: .cancel) { }
-        } message: {
-            Text("This URL is already in your download list. Do you want to add it again?")
-        }
         .onAppear {
             focusedField = .urlInput
             
-            if let clip = NSPasteboard.general.string(forType: .string),
-               !clip.trimmingCharacters(in: .whitespaces).isEmpty {
-                let lines = clip.components(separatedBy: .whitespacesAndNewlines)
-                    .compactMap { URL(string: $0.trimmingCharacters(in: .whitespaces)) }
-                    .filter { $0.scheme?.hasPrefix("http") == true || $0.scheme == "magnet" }
-                if !lines.isEmpty {
-                    urlText = clip.trimmingCharacters(in: .whitespaces)
-                    isValid = true
-                    triggerAutoResolveIfNeed(newText: urlText)
-                }
+            var startingText = ""
+            
+            // Prioritize Drag & Drop context
+            if !initialURLText.isEmpty {
+                startingText = initialURLText
+            }
+            // Fallback to Clipboard
+            else if let clip = NSPasteboard.general.string(forType: .string), !clip.trimmingCharacters(in: .whitespaces).isEmpty {
+                let lines = clip.components(separatedBy: .newlines)
+                    .map { $0.trimmingCharacters(in: .whitespaces) }
+                    .filter { !$0.isEmpty }
+                    .compactMap { str -> URL? in
+                        if str.hasPrefix("/") { return URL(fileURLWithPath: str) }
+                        if str.hasPrefix("file://") {
+                            let clean = str.replacingOccurrences(of: "file://", with: "")
+                            return URL(fileURLWithPath: clean.removingPercentEncoding ?? clean)
+                        }
+                        if let url = URL(string: str), url.scheme != nil { return url }
+                        if let enc = str.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+                           let url = URL(string: enc), url.scheme != nil { return url }
+                        return nil
+                    }
+                    .filter {
+                        $0.scheme?.hasPrefix("http") == true ||
+                        $0.scheme == "magnet" ||
+                        ($0.isFileURL && $0.pathExtension.lowercased() == "torrent")
+                    }
+                if !lines.isEmpty { startingText = clip.trimmingCharacters(in: .whitespaces) }
+            }
+            
+            if !startingText.isEmpty {
+                urlText = startingText
+                isValid = true
+                triggerAutoResolveIfNeed(newText: urlText)
             }
         }
     }
 
-    // MARK: - Auto Resolve HTML Regex Logic
-
     private func triggerAutoResolveIfNeed(newText: String) {
         let urls = parsedURLs
         let targetURLs = urls.filter { $0.host?.contains("fuckingfast.co") == true && !$0.path.starts(with: "/dl/") }
-
         guard !targetURLs.isEmpty && !isResolving else { return }
         isResolving = true
-
         resolveTask = Task {
-            var finalLinks: [String] = []
-
+            var finalLinks = [String]()
             for url in urls {
                 if Task.isCancelled { return }
-
                 if targetURLs.contains(url) {
-                    if let directLinks = await fetchDirectLinks(for: url) {
-                        finalLinks.append(contentsOf: directLinks)
-                    }
-                } else {
-                    finalLinks.append(url.absoluteString)
-                }
+                    if let direct = await fetchDirectLinks(for: url) { finalLinks.append(contentsOf: direct) }
+                } else { finalLinks.append(url.isFileURL ? url.path(percentEncoded: false) : url.absoluteString) }
             }
-
             if Task.isCancelled { return }
-
             await MainActor.run {
-                let joinedLinks = finalLinks.joined(separator: "\n")
-                if self.urlText.trimmingCharacters(in: .whitespacesAndNewlines) == newText.trimmingCharacters(in: .whitespacesAndNewlines) {
-                    self.urlText = joinedLinks
-                }
+                self.urlText = finalLinks.joined(separator: "\n")
                 self.isResolving = false
             }
         }
     }
 
     private func fetchDirectLinks(for url: URL) async -> [String]? {
-        var request = URLRequest(url: url)
-        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
-        request.setValue("text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8", forHTTPHeaderField: "Accept")
-
+        var req = URLRequest(url: url)
+        req.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Safari/537.36", forHTTPHeaderField: "User-Agent")
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200,
-                  let html = String(data: data, encoding: .utf8) else {
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            guard (resp as? HTTPURLResponse)?.statusCode == 200, let html = String(data: data, encoding: .utf8) else { return nil }
+            let pattern = "window\\.open\\([\"'](https://fuckingfast\\.co/dl/[^\"']+)[\"']"
+            let regex = try? NSRegularExpression(pattern: pattern)
+            let matches = regex?.matches(in: html, range: NSRange(location: 0, length: html.utf16.count))
+            return matches?.compactMap { m in
+                if m.numberOfRanges > 1, let r = Range(m.range(at: 1), in: html) { return String(html[r]) }
                 return nil
             }
-
-            let pattern = "window\\.open\\([\"'](https://fuckingfast\\.co/dl/[^\"']+)[\"']"
-            guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else { return nil }
-
-            let range = NSRange(location: 0, length: html.utf16.count)
-            let matches = regex.matches(in: html, options: [], range: range)
-
-            var extracted: [String] = []
-            for match in matches {
-                if match.numberOfRanges > 1, let swiftRange = Range(match.range(at: 1), in: html) {
-                    extracted.append(String(html[swiftRange]))
-                }
-            }
-            return extracted.isEmpty ? nil : extracted
-        } catch {
-            return nil
-        }
+        } catch { return nil }
     }
 }

@@ -553,12 +553,15 @@ public final class DownloadEngine {
 
     public func updateTorrentSelection(for item: DownloadItem) {
         persist()
+        // If it's running, we need to restart the process with the new file selection
         if item.status == .downloading {
             stop(item, stopSubFiles: false)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self.resume(item, resumeSubFiles: false) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                self.resume(item, resumeSubFiles: false)
+            }
         }
     }
-
+    
     private func scheduleNext() {
         for next in items where next.status == .queued {
             if activeCount >= maxConcurrent { break }
@@ -640,7 +643,7 @@ public final class DownloadEngine {
         }
     }
     
-    // MARK: - MANUAL HLS IMPLEMENTATION (No guessing file size)
+    // MARK: - MANUAL HLS IMPLEMENTATION
     private func runManualHLS(_ item: DownloadItem) async {
         guard let manifest = await scrapeManifest(item) else {
             await MainActor.run { item.status = .failed; item.error = "Manifest Scrape Failed" }
@@ -1122,18 +1125,18 @@ public final class DownloadEngine {
                             totalSpeed += Double(parseAriaSize(String(speedStr)))
                             foundMatch = true
                         }
-                        if item.type == .directLink {
-                            let parts = block.split(separator: " ")
-                            if parts.count >= 2 {
-                                let transferPart = parts[1]
-                                let sizes = transferPart.components(separatedBy: "(")[0]
-                                let sizeParts = sizes.components(separatedBy: "/")
-                                if sizeParts.count > 0 { totalDl += parseAriaSize(sizeParts[0]) }
-                                if sizeParts.count > 1 { totalSz += parseAriaSize(sizeParts[1]) }
-                            }
+                        
+                        let parts = block.split(separator: " ")
+                        if parts.count >= 2 {
+                            let transferPart = parts[1]
+                            let sizes = transferPart.components(separatedBy: "(")[0]
+                            let sizeParts = sizes.components(separatedBy: "/")
+                            if sizeParts.count > 0 { totalDl += parseAriaSize(sizeParts[0]) }
+                            if sizeParts.count > 1 { totalSz += parseAriaSize(sizeParts[1]) }
                         }
                     }
                     
+                    // FIX: Stop Aria2 output from overriding physical sub-item sync for Batches/Torrents
                     if foundMatch {
                         await MainActor.run {
                             if item.type == .directLink {
@@ -1158,19 +1161,22 @@ public final class DownloadEngine {
                     if currentSubFiles.isEmpty {
                         if let enumerator = FileManager.default.enumerator(at: tempDir, includingPropertiesForKeys: nil, options: [.skipsSubdirectoryDescendants]) {
                             let fileURLs = enumerator.allObjects.compactMap { $0 as? URL }
+                            // Once the metadata finishes downloading, parse it to extract subfiles
                             if let torrent = fileURLs.first(where: { $0.pathExtension == "torrent" }) {
                                 let newSubFiles = await self.fetchLocalTorrentInfo(path: torrent.path, executable: executable)
                                 if !newSubFiles.isEmpty {
                                     await MainActor.run {
-                                        item.subFiles = newSubFiles; item.totalBytes = newSubFiles.map { $0.totalBytes }.reduce(0, +)
+                                        item.subFiles = newSubFiles
+                                        item.totalBytes = newSubFiles.map { $0.totalBytes }.reduce(0, +)
                                     }
                                 }
                             }
                         }
                     } else {
+                        // FIX: Mathematically lock the parent's size to the subfiles
                         var updatedSubFiles = currentSubFiles
-                        var totalDownloaded: Int64 = 0
                         var totalActiveBytes: Int64 = 0
+                        var totalDownloaded: Int64 = 0
                         
                         for i in updatedSubFiles.indices {
                             let sub = updatedSubFiles[i]
@@ -1182,16 +1188,16 @@ public final class DownloadEngine {
                             let downloaded = Int64(min(physical, logical))
                             
                             if !sub.isStopped {
-                                updatedSubFiles[i].downloadedBytes = downloaded
+                                updatedSubFiles[i].downloadedBytes = min(downloaded, sub.totalBytes)
                             }
-                            
-                            totalDownloaded += updatedSubFiles[i].downloadedBytes
                             totalActiveBytes += updatedSubFiles[i].totalBytes
+                            totalDownloaded += updatedSubFiles[i].downloadedBytes
                         }
+                        
                         await MainActor.run {
                             item.subFiles = updatedSubFiles
                             item.downloadedBytes = totalDownloaded
-                            if totalActiveBytes > 0 { item.totalBytes = totalActiveBytes }
+                            item.totalBytes = totalActiveBytes
                         }
                     }
                 } else if item.type == .batch {
@@ -1210,14 +1216,16 @@ public final class DownloadEngine {
                             index += 1
                         }
                     }
+                    
                     await MainActor.run {
+                        // FIX: Mathematically lock the parent's size to the subfiles
                         var merged = item.subFiles
                         var totalDownloaded: Int64 = 0
                         var totalActiveBytes: Int64 = 0
                         
                         for newSub in updatedSubFiles {
                             if let idx = merged.firstIndex(where: { $0.filename == newSub.filename }) {
-                                if !merged[idx].isStopped { merged[idx].downloadedBytes = newSub.downloadedBytes }
+                                if !merged[idx].isStopped { merged[idx].downloadedBytes = min(newSub.downloadedBytes, newSub.totalBytes) }
                                 merged[idx].totalBytes = newSub.totalBytes
                             } else {
                                 merged.append(newSub)
@@ -1227,9 +1235,10 @@ public final class DownloadEngine {
                             totalDownloaded += sub.downloadedBytes
                             totalActiveBytes += sub.totalBytes
                         }
+                        
                         item.subFiles = merged
                         item.downloadedBytes = totalDownloaded
-                        if totalActiveBytes > 0 { item.totalBytes = totalActiveBytes }
+                        item.totalBytes = totalActiveBytes
                     }
                 }
             }
@@ -1525,9 +1534,68 @@ public final class DownloadEngine {
     private func aria2HumanError(exitCode: Int32) -> String { return "Download failed (aria2 error \(exitCode))." }
     private func curlHumanError(exitCode: Int32, stderr: String, stdout: String) -> String { return "Download failed (curl error \(exitCode))." }
 
-    private func fetchLocalTorrentInfo(path: String, executable: String) async -> [SubFile] { return [] }
-    private func fetchTorrentInfo(item: DownloadItem, executable: String) async -> [SubFile] { return [] }
-    private func parseShowFiles(_ output: String) -> [SubFile] { return [] }
+    // MARK: - FIX: Parsing Torrent Metadata natively with Aria2
+    private func fetchLocalTorrentInfo(path: String, executable: String) async -> [SubFile] {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: executable)
+        proc.arguments = ["-S", path]
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        
+        do {
+            try proc.run()
+            proc.waitUntilExit()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            if let output = String(data: data, encoding: .utf8) {
+                return parseShowFiles(output)
+            }
+        } catch { }
+        return []
+    }
+
+    private func fetchTorrentInfo(item: DownloadItem, executable: String) async -> [SubFile] {
+        if item.url.isFileURL {
+            return await fetchLocalTorrentInfo(path: item.url.path, executable: executable)
+        }
+        return []
+    }
+
+    private func parseShowFiles(_ output: String) -> [SubFile] {
+        var files: [SubFile] = []
+        let lines = output.components(separatedBy: .newlines)
+        var currentIndex: Int? = nil
+        var currentPath: String = ""
+
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty || trimmed.hasPrefix("===") || trimmed.hasPrefix("---") || trimmed.hasPrefix("idx|") {
+                continue
+            }
+            
+            if line.contains("|") {
+                let parts = line.split(separator: "|", maxSplits: 1).map(String.init)
+                if parts.count == 2 {
+                    let left = parts[0].trimmingCharacters(in: .whitespaces)
+                    let right = parts[1].trimmingCharacters(in: .whitespaces)
+
+                    if let idx = Int(left) {
+                        currentIndex = idx
+                        currentPath = right
+                    } else if left.isEmpty, let idx = currentIndex {
+                        // Example right line: "968.0MiB (1,015,021,568)"
+                        if let startBracket = right.lastIndex(of: "("), let endBracket = right.lastIndex(of: ")") {
+                            let byteString = right[right.index(after: startBracket)..<endBracket].replacingOccurrences(of: ",", with: "")
+                            if let totalBytes = Int64(byteString) {
+                                files.append(SubFile(index: idx, path: currentPath, filename: (currentPath as NSString).lastPathComponent, totalBytes: totalBytes, downloadedBytes: 0, isStopped: false))
+                            }
+                        }
+                        currentIndex = nil
+                    }
+                }
+            }
+        }
+        return files
+    }
 
     private func startSpeedTimer() {
         DispatchQueue.main.async { [weak self] in

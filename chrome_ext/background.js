@@ -1,4 +1,59 @@
-// background.js - Daisy Extension Full Source
+// background.js - Daisy Chrome Extension
+
+let dispatchEnabled = true;
+let bypassNextDownloadUrl = null;
+
+chrome.storage.local.get(["dispatchEnabled"]).then(res => {
+    if (typeof res.dispatchEnabled === "boolean") dispatchEnabled = res.dispatchEnabled;
+});
+
+chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === "local" && changes.dispatchEnabled) {
+        dispatchEnabled = changes.dispatchEnabled.newValue;
+    }
+});
+
+chrome.runtime.onInstalled.addListener(() => {
+    chrome.contextMenus.create({ id: "dispatch-download", title: "Download with Daisy", contexts: ["link"] });
+});
+
+chrome.contextMenus.onClicked.addListener((info, tab) => {
+    if (info.menuItemId === "dispatch-download" && info.linkUrl) {
+        triggerDownload(info.linkUrl, extractFilename(info.linkUrl), tab?.url || "");
+    }
+});
+
+function needsCredentialedFetch(url) {
+    try { return /claude\.ai$/.test(new URL(url).hostname); } catch { return false; }
+}
+
+chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
+    if (!dispatchEnabled) return;
+    const url = item.finalUrl || item.url;
+    
+    if (!url || url.startsWith("blob:") || url.startsWith("data:") || bypassNextDownloadUrl === url) {
+        bypassNextDownloadUrl = null;
+        return; 
+    }
+
+    chrome.downloads.cancel(item.id);
+
+    const referer = item.referrer || "";
+    const filename = item.filename ? item.filename.split(/[\/\\]/).pop() : extractFilename(url);
+
+    if (needsCredentialedFetch(url)) {
+        chrome.tabs.query({ active: true, currentWindow: true }).then(tabs => {
+            const tabId = tabs?.[0]?.id;
+            if (tabId) {
+                chrome.tabs.sendMessage(tabId, { type: "CREDENTIALED_FETCH", url, filename })
+                    .catch(() => triggerDownload(url, filename, referer));
+            }
+        });
+    } else {
+        triggerDownload(url, filename, referer);
+    }
+    return true;
+});
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === "PREPARE_DISPATCH_DOWNLOAD") {
@@ -22,9 +77,9 @@ function triggerDownload(url, filename, referer, youtubeQuality, forceHLS) {
 async function sendViaLocalHost(url, filename, cookies, referer, youtubeQuality, forceHLS) {
     const payload = JSON.stringify({ 
         url, 
-        filename: filename || "video", 
-        cookies, 
-        referer, 
+        filename: filename || "download", 
+        cookies: cookies || "", 
+        referer: referer || "", 
         ua: navigator.userAgent,
         youtubeQuality,
         forceHLS 
@@ -43,7 +98,9 @@ async function sendViaLocalHost(url, filename, cookies, referer, youtubeQuality,
     }
 
     if (!success && !url.startsWith('data:')) {
-        chrome.downloads.download({ url: url, filename: filename + ".mp4" || undefined });
+        bypassNextDownloadUrl = url;
+        // Removed the hardcoded + ".mp4" string from the browser fallback
+        chrome.downloads.download({ url: url, filename: filename || undefined });
     }
 }
 
