@@ -85,12 +85,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let ua       = info["ua"]       as? String
             else { return }
 
+            let forceHLS = info["forceHLS"] as? Bool ?? false
+
             let request = ConfirmDownloadRequest(
                 url:      url,
                 filename: filename,
                 cookies:  cookies,
                 referer:  referer,
-                ua:       ua
+                ua:       ua,
+                forceHLS: forceHLS
             )
             self?.presentConfirmPanel(request: request)
         }
@@ -148,7 +151,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         cookies:     confirmedRequest.cookies.isEmpty  ? nil : confirmedRequest.cookies,
                         userAgent:   confirmedRequest.ua.isEmpty       ? nil : confirmedRequest.ua,
                         referer:     confirmedRequest.referer.isEmpty  ? nil : confirmedRequest.referer,
-                        filename:    confirmedRequest.filename.isEmpty ? nil : confirmedRequest.filename
+                        filename:    confirmedRequest.filename.isEmpty ? nil : confirmedRequest.filename,
+                        isHLS:       confirmedRequest.forceHLS
                     )
                     NSApp.activate(ignoringOtherApps: true)
                 }

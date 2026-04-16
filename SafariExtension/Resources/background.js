@@ -31,10 +31,6 @@ api.contextMenus.onClicked.addListener((info, tab) => {
     }
 });
 
-// ── NOTE: safari.downloads API does not exist in Safari Web Extensions ────
-// Download interception is fully handled by content.js.
-// The chrome.downloads.onCreated listener below is intentionally omitted.
-
 // ── Messages from content script ─────────────────────────────────────────
 api.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === "PREPARE_DISPATCH_DOWNLOAD") {
@@ -42,7 +38,7 @@ api.runtime.onMessage.addListener((message, sender, sendResponse) => {
             sendResponse({ intercepted: false });
             return false;
         }
-        triggerDownload(message.url, message.filename, sender.tab?.url || "");
+        triggerDownload(message.url, message.filename, sender.tab?.url || "", message.youtubeQuality, message.forceHLS);
         sendResponse({ intercepted: true });
         return false;
     }
@@ -54,17 +50,17 @@ api.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 // ── Core Download Trigger ─────────────────────────────────────────────────
-function triggerDownload(url, filename, referer) {
+function triggerDownload(url, filename, referer, youtubeQuality, forceHLS) {
     // Safari cookies API requires host_permissions; use getAll with url.
     api.cookies.getAll({ url }).then(cookiesArr => {
         const cookies = cookiesArr.map(c => `${c.name}=${c.value}`).join("; ");
-        sendViaLocalHost(url, filename, cookies, referer);
+        sendViaLocalHost(url, filename, cookies, referer, youtubeQuality, forceHLS);
     }).catch(() => {
-        sendViaLocalHost(url, filename, "", referer);
+        sendViaLocalHost(url, filename, "", referer, youtubeQuality, forceHLS);
     });
 }
 
-async function sendViaLocalHost(url, filename, cookies, referer) {
+async function sendViaLocalHost(url, filename, cookies, referer, youtubeQuality, forceHLS) {
     // navigator.userAgent is NOT available in MV3 service workers on Safari.
     // We send an empty string; the Mac app should fall back to a default UA.
     const payload = JSON.stringify({
@@ -72,7 +68,9 @@ async function sendViaLocalHost(url, filename, cookies, referer) {
         filename: filename || "",
         cookies:  cookies  || "",
         referer:  referer  || "",
-        ua:       ""
+        ua:       "",
+        youtubeQuality: youtubeQuality,
+        forceHLS: forceHLS
     });
 
     for (let port = 6840; port <= 6850; port++) {

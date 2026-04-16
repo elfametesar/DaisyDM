@@ -43,11 +43,12 @@ function extractFilename(url, anchor) {
 }
 
 // ── Send to background ────────────────────────────────────────────────────
-function sendToDispatch(url, filename) {
+function sendToDispatch(url, filename, additionalData = {}) {
   _api.runtime.sendMessage({
     type:     "PREPARE_DISPATCH_DOWNLOAD",
     url:      url,
-    filename: filename || ""
+    filename: filename || "",
+    ...additionalData
   }).catch(() => {});
 }
 

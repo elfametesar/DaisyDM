@@ -142,7 +142,7 @@ struct AddDownloadSheet: View {
                 Spacer()
                 Button("Add Download") {
                     let urls = parsedURLs
-                    engine.addDownload(urls: urls, destination: destination, connections: connections)
+                    engine.addDownload(urls: urls, destination: destination, connections: connections, youtubeQuality: nil)
                     onClose()
                 }
                 .buttonStyle(ActionButtonStyle(prominent: true, hex: accentColorHex))

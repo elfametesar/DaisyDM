@@ -9,6 +9,7 @@ struct ConfirmDownloadRequest: Identifiable {
     let cookies:  String
     let referer:  String
     let ua:       String
+    var forceHLS: Bool = false
 }
 
 struct ConfirmDownloadView: View {
@@ -23,6 +24,7 @@ struct ConfirmDownloadView: View {
     
     @State private var isResolving  = false
     @State private var resolvedSize: Int64 = 0
+    @State private var isDetectedHLS: Bool = false
 
     private let engine = DownloadEngine.shared
 
@@ -36,6 +38,8 @@ struct ConfirmDownloadView: View {
         self.onConfirm = onConfirm
         self.onCancel  = onCancel
         _filename      = State(initialValue: request.filename.isEmpty ? suggestName(request.url) : request.filename)
+        // Pre-seed HLS detection from the extension's explicit flag
+        _isDetectedHLS = State(initialValue: request.forceHLS)
     }
 
     private var fileIcon: NSImage {
@@ -210,6 +214,7 @@ struct ConfirmDownloadView: View {
                     var r = request
                     r.filename = filename.trimmingCharacters(in: .whitespacesAndNewlines)
                     if r.filename.isEmpty { r.filename = suggestName(request.url) }
+                    r.forceHLS = isDetectedHLS
                     onConfirm(r, destination, connections)
                 }) {
                     Label("Download", systemImage: "arrow.down.circle")
@@ -240,7 +245,9 @@ struct ConfirmDownloadView: View {
         isResolving = true
         defer { isResolving = false }
         
-        let isHLSUrl = request.url.absoluteString.lowercased().contains(".m3u8") || request.filename.lowercased().contains(".m3u8")
+        let isHLSUrl = request.forceHLS
+            || request.url.absoluteString.lowercased().contains("m3u8")
+            || request.filename.lowercased().contains(".m3u8")
         
         var req = URLRequest(url: request.url)
         req.httpMethod = "GET"
@@ -294,6 +301,7 @@ struct ConfirmDownloadView: View {
                     }
                     
                     if isHLS {
+                        self.isDetectedHLS = true
                         if self.filename.lowercased().hasSuffix(".m3u8") {
                             self.filename = String(self.filename.dropLast(5)) + ".mp4"
                         } else if !self.filename.lowercased().hasSuffix(".mp4") {

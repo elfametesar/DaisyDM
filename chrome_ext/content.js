@@ -1,6 +1,7 @@
-// content.js - Dispatch Extension
+// content.js - Daisy Chrome Extension
 
 const _api = typeof browser !== "undefined" ? browser : chrome;
+const IS_TOP_FRAME = window === window.top;
 
 let bypassKey = "Alt"; 
 let isExtensionDisabled = false;
@@ -44,39 +45,122 @@ function triggerBypassMemory() {
 
 function shouldBypass() { return isExtensionDisabled || isBypassActive; }
 
-// Store network media caught by background.js
 let sniffedMediaUrls = [];
 
+function normalizeUrl(url) {
+    if (!url) return "";
+    try {
+        const u = new URL(url);
+        ["_", "t", "token", "sig", "signature", "key", "auth", "cb"].forEach(p => u.searchParams.delete(p));
+        return u.toString().toLowerCase().replace(/\/+$/, "");
+    } catch { return url.toLowerCase().trim(); }
+}
+
+function bubbleMediaToTop(url) {
+    if (IS_TOP_FRAME) {
+        if (!sniffedMediaUrls.some(m => normalizeUrl(m.url) === normalizeUrl(url))) {
+            sniffedMediaUrls.push({ url, frameOrigin: window.location.origin });
+        }
+    } else {
+        try {
+            window.top.postMessage({ __daisyMedia: { url, frameOrigin: window.location.origin } }, "*");
+        } catch (_) {}
+    }
+}
+
+if (IS_TOP_FRAME) {
+    window.addEventListener("message", (e) => {
+        if (e.data && e.data.__daisyMedia) {
+            const { url } = e.data.__daisyMedia;
+            bubbleMediaToTop(url);
+        }
+    });
+}
+
+function getActualYtFormats() {
+    let formats = new Set();
+    try {
+        const scripts = document.querySelectorAll('script');
+        for (let s of scripts) {
+            const text = s.textContent || "";
+            if (text.includes('ytInitialPlayerResponse') || text.includes('streamingData')) {
+                const regex = /"height"\s*:\s*(\d+)/g;
+                let match;
+                while ((match = regex.exec(text)) !== null) {
+                    let height = parseInt(match[1]);
+                    if (height >= 144 && height <= 4320) formats.add(height);
+                }
+            }
+        }
+    } catch(e) {}
+    return Array.from(formats).sort((a, b) => b - a);
+}
+
+function sniffScriptUrls(root) {
+    const found = [];
+    try {
+        const scripts = (root || document).querySelectorAll('script');
+        const mediaRe = /https?:\/\/[^\s'"\\]+?(?:\.m3u8|\.mp4|\.webm|\.mov|\.ts|\/m3u8|\/hls\/|\/stream\/|manifest\.m3u8|master\.m3u8)[^\s'"\\]*/gi;
+        for (let s of scripts) {
+            const text = s.textContent || "";
+            let match;
+            while ((match = mediaRe.exec(text)) !== null) {
+                found.push(match[0].replace(/[,;}\]]+$/, ""));
+            }
+        }
+    } catch(e) {}
+    return found;
+}
+
+function runScriptSniffer(root) {
+    sniffScriptUrls(root).forEach(url => bubbleMediaToTop(url));
+}
+
+const _hlsQualityCache = new Map();
+async function fetchHlsQualities(masterUrl) {
+    const key = normalizeUrl(masterUrl);
+    if (_hlsQualityCache.has(key)) return _hlsQualityCache.get(key);
+    try {
+        const resp = await fetch(masterUrl, { credentials: "include" });
+        if (!resp.ok) throw new Error();
+        const text = await resp.text();
+        if (!text.includes("#EXT-X-STREAM-INF")) return [{ label: "HLS Stream", url: masterUrl, bandwidth: 0 }];
+        const variants = [];
+        const lines = text.split("\n");
+        for (let i = 0; i < lines.length; i++) {
+            if (lines[i].trim().startsWith("#EXT-X-STREAM-INF")) {
+                const resMatch = lines[i].match(/RESOLUTION=\d+x(\d+)/);
+                const height = resMatch ? parseInt(resMatch[1]) : null;
+                let variantUri = "";
+                for (let j = i + 1; j < lines.length; j++) {
+                    const next = lines[j].trim();
+                    if (next && !next.startsWith("#")) { variantUri = next; break; }
+                }
+                if (!variantUri) continue;
+                let variantUrl = variantUri.startsWith("http") ? variantUri : new URL(variantUri, masterUrl).href;
+                variants.push({ label: height ? `${height}p` : "HLS Variant", url: variantUrl, bandwidth: lines[i].match(/BANDWIDTH=(\d+)/)?.[1] || 0 });
+            }
+        }
+        variants.sort((a, b) => b.bandwidth - a.bandwidth);
+        _hlsQualityCache.set(key, variants);
+        return variants;
+    } catch { return [{ label: "HLS Stream", url: masterUrl, bandwidth: 0 }]; }
+}
+
 _api.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.type === "FETCH_BLOB") {
-    handleBlob(message.url, message.filename);
-    sendResponse({ success: true });
-  }
-  if (message.type === "CREDENTIALED_FETCH") {
-    handleCredentialedFetch(message.url, message.filename);
-    sendResponse({ success: true });
-  }
-  if (message.type === 'NEW_MEDIA_FOUND' && message.mediaInfo) { 
-    sniffedMediaUrls.push(message.mediaInfo); 
-    sendResponse({ success: true });
-  }
+  if (message.type === "FETCH_BLOB") handleBlob(message.url, message.filename);
+  if (message.type === "CREDENTIALED_FETCH") handleCredentialedFetch(message.url, message.filename);
+  if (message.type === 'NEW_MEDIA_FOUND' && message.mediaInfo) bubbleMediaToTop(message.mediaInfo.url);
   if (message.action === "getPageInfo") {
     sendResponse({
         title: document.title ? document.title.replace(/[\\/:*?"<>|]/g, '').trim() : "Unknown Video",
         pageUrl: window.location.href,
-        cookies: document.cookie
-    });
+        cookies: document.cookie    });
   }
+  return true;
 });
 
-const DOWNLOAD_EXTENSIONS = [
-  "zip","gz","tar","rar","7z","bz2","xz","zst","cab","iso","tgz",
-  "mp4","mkv","avi","mov","wmv","flv","webm","m4v","mpg","mpeg","ts",
-  "mp3","m4a","flac","wav","aac","ogg","opus","wma",
-  "pdf","doc","docx","xls","xlsx","ppt","pptx","epub","mobi",
-  "dmg","pkg","exe","msi","deb","rpm","apk","ipa","bin","img","toast",
-  "torrent","nzb",
-];
+const DOWNLOAD_EXTENSIONS = ["mp4","mkv","avi","mov","wmv","flv","webm","m4v","mpg","mpeg","ts","m3u8"];
 
 function isDownloadURL(url) {
   try {
@@ -88,21 +172,11 @@ function isDownloadURL(url) {
 function extractFilename(url, anchor) {
   if (anchor?.getAttribute("download")) return anchor.getAttribute("download");
   try {
-    const u  = new URL(url);
+    const u = new URL(url);
     const fn = u.searchParams.get("filename") || u.searchParams.get("name");
     if (fn) return decodeURIComponent(fn);
-    const parts = u.pathname.split("/");
-    const last  = decodeURIComponent(parts[parts.length - 1]);
-    return last || "download";
+    return decodeURIComponent(u.pathname.split("/").pop()) || "download";
   } catch { return "download"; }
-}
-
-function extractMagnetName(magnetUrl) {
-    try {
-        const params = new URLSearchParams(magnetUrl.replace('magnet:', '?'));
-        const dn = params.get('dn');
-        return dn ? decodeURIComponent(dn).replace(/\+/g, ' ') : "Torrent";
-    } catch { return "Torrent"; }
 }
 
 function nativeFallback(url, filename) {
@@ -116,132 +190,64 @@ function nativeFallback(url, filename) {
 }
 
 function sendToDispatch(url, filename, additionalData = {}) {
-  if (url.startsWith("blob:") && !additionalData.forceHLS) {
-    handleBlob(url, filename);
-    return;
-  }
-  
+  if (url.startsWith("blob:") && !additionalData.forceHLS) { handleBlob(url, filename); return; }
   let finalFilename = filename || "Download";
+  if (!/\.[0-9a-z]+$/i.test(finalFilename)) finalFilename += ".mp4";
   
-  // Only force .mp4 if it is explicitly a video stream, blob, or youtube link missing an extension
-  const isMedia = url.startsWith("blob:") || additionalData.forceHLS || additionalData.youtubeQuality;
-  const hasExtension = /\.[0-9a-z]+$/i.test(finalFilename);
-  
-  if (!hasExtension && isMedia) {
-    finalFilename += ".mp4";
+  try {
+    _api.runtime.sendMessage({
+      type: "PREPARE_DISPATCH_DOWNLOAD",
+      url: url,
+      filename: finalFilename,
+      cookies: document.cookie,
+      ...additionalData
+    }).catch(() => nativeFallback(url, finalFilename));
+  } catch (error) {
+    if (error.message && error.message.includes("Extension context invalidated")) {
+      console.warn("DaisyDM: Eklenti güncellendiği için bağlantı koptu. Sayfayı yenileyin.");
+      alert("DaisyDM güncellendi. Lütfen indirme yapabilmek için sayfayı yenileyin (F5 / Cmd+R).");
+    } else {
+      nativeFallback(url, finalFilename);
+    }
   }
-
-  _api.runtime.sendMessage({
-    type: "PREPARE_DISPATCH_DOWNLOAD",
-    url: url,
-    filename: finalFilename,
-    ...additionalData
-  }).catch(() => {
-    nativeFallback(url, finalFilename);
-  });
-}
-
-document.addEventListener("click", (e) => {
-  let el = e.target;
-  while (el && el.tagName !== "A") el = el.parentElement;
-  
-  if (el && el.hasAttribute('data-daisy-bypass')) return;
-  if (shouldBypass() || checkKey(e) || isKeyCurrentlyHeld) { triggerBypassMemory(); return; }
-  if (!el || !el.href || el.href.startsWith("javascript:")) return;
-
-  const href        = el.href;
-  const hasDownload = el.hasAttribute("download");
-  const isFile      = isDownloadURL(href);
-
-  if (href.startsWith("magnet:")) {
-    e.preventDefault(); e.stopImmediatePropagation();
-    sendToDispatch(href, extractMagnetName(href));
-    return;
-  }
-
-  if (href.startsWith("blob:") || hasDownload || isFile) {
-    e.preventDefault(); e.stopImmediatePropagation();
-    sendToDispatch(href, extractFilename(href, el));
-    return;
-  }
-}, { capture: true });
-
-function fixMimeType(dataUri) {
-  if (!dataUri || !dataUri.startsWith("data:")) return dataUri;
-  return dataUri.replace(/^data:[^;]+;base64,/, "data:application/octet-stream;base64,");
 }
 
 async function handleCredentialedFetch(url, filename) {
   try {
     const r = await fetch(url);
-    if (!r.ok) throw new Error("Fetch failed");
-
-    const cd = r.headers.get("content-disposition");
-    if (cd) {
-      const rfc = cd.match(/filename\*=UTF-8''([^;\r\n]+)/i);
-      const plain = cd.match(/filename=["']?([^"';\r\n]+)/i);
-      const resolved = rfc ? decodeURIComponent(rfc[1].trim()) : (plain ? plain[1].trim().replace(/["']/g, "") : null);
-      if (resolved) filename = resolved;
-    }
-
     const blob = await r.blob();
     const reader = new FileReader();
     reader.onload = async () => {
-      const payload = JSON.stringify({ 
-        url: fixMimeType(reader.result), 
-        filename: filename || "download", 
-        referer: location.href, 
-        ua: navigator.userAgent 
-      });
-      
-      let success = false;
-      for (let port = 6840; port <= 6850; port++) {
-        try {
-          const resp = await fetch(`http://127.0.0.1:${port}/dispatch`, {
-            method: "POST", headers: { "Content-Type": "application/json" }, body: payload
-          });
-          if (resp.ok) { success = true; break; }
-        } catch (_) {}
-      }
-      if (!success) nativeFallback(url, filename);
+        const payload = JSON.stringify({ url: reader.result.replace(/^data:[^;]+;base64,/, "data:application/octet-stream;base64,"), filename: filename || "download", referer: location.href, ua: navigator.userAgent, cookies: document.cookie });
+        for (let port = 6840; port <= 6850; port++) {
+            try {
+                const resp = await fetch(`http://127.0.0.1:${port}/dispatch`, { method: "POST", headers: { "Content-Type": "application/json" }, body: payload });
+                if (resp.ok) return;
+            } catch (_) {}
+        }
+        nativeFallback(url, filename);
     };
     reader.readAsDataURL(blob);
-  } catch (_) {
-    nativeFallback(url, filename);
-  }
+  } catch (_) { nativeFallback(url, filename); }
 }
 
 async function handleBlob(blobUrl, filename) {
   try {
     const r = await fetch(blobUrl);
     const blob = await r.blob();
-    if (blob.size === 0) return;
-    
     const reader = new FileReader();
     reader.onload = async () => {
-      const payload = JSON.stringify({ 
-        url: fixMimeType(reader.result), 
-        // FIX: Removed the hardcoded .mp4 forcing. It now respects the exact filename (e.g., .torrent)
-        filename: filename || "download", 
-        referer: location.href, 
-        ua: navigator.userAgent 
-      });
-      let success = false;
-      for (let port = 6840; port <= 6850; port++) {
-        try {
-          const resp = await fetch(`http://127.0.0.1:${port}/dispatch`, {
-            method: "POST", headers: { "Content-Type": "application/json" }, body: payload
-          });
-          if (resp.ok) { success = true; break; }
-        } catch (_) {}
-      }
-      if (!success) nativeFallback(blobUrl, filename);
+        const payload = JSON.stringify({ url: reader.result.replace(/^data:[^;]+;base64,/, "data:application/octet-stream;base64,"), filename: filename || "download", referer: location.href, ua: navigator.userAgent, cookies: document.cookie });
+        for (let port = 6840; port <= 6850; port++) {
+            try {
+                const resp = await fetch(`http://127.0.0.1:${port}/dispatch`, { method: "POST", headers: { "Content-Type": "application/json" }, body: payload });
+                if (resp.ok) return;
+            } catch (_) {}
+        }
+        nativeFallback(blobUrl, filename);
     };
     reader.readAsDataURL(blob);
-  } catch (err) {
-    console.error("DaisyDM: Blob capture failed, falling back to direct URL", err);
-    nativeFallback(blobUrl, filename);
-  }
+  } catch (_) { nativeFallback(blobUrl, filename); }
 }
 
 const _createElement = document.createElement.bind(document);
@@ -250,261 +256,141 @@ document.createElement = function(tag, ...args) {
   if (tag.toLowerCase() === "a") {
     const _click = el.click.bind(el);
     el.click = function() {
-      if (el.hasAttribute('data-daisy-bypass')) { _click(); return; }
-      if (shouldBypass()) { _click(); return; }
-      if (!el.href) { _click(); return; }
-      if (el.href.startsWith("magnet:")) {
-        sendToDispatch(el.href, extractMagnetName(el.href));
-        return;
-      }
-      if (el.href.startsWith("blob:") || el.hasAttribute("download") || isDownloadURL(el.href)) {
-        sendToDispatch(el.href, el.getAttribute("download") || extractFilename(el.href));
-        return;
-      }
-      _click();
+      if (el.hasAttribute('data-daisy-bypass') || shouldBypass() || !el.href) { _click(); return; }
+      if (el.href.startsWith("blob:") || el.hasAttribute("download") || isDownloadURL(el.href)) sendToDispatch(el.href, el.getAttribute("download") || extractFilename(el.href));
+      else _click();
     };
   }
   return el;
 };
 
-// --- VIDEO PLAYER OVERLAY ---
 (function() {
-    if (window.__daisydm_video_injected) return;
-    window.__daisydm_video_injected = true;
-
-    const style = document.createElement('style');
-    style.textContent = `
-        .daisydm-overlay-container {
-            position: absolute; 
-            z-index: 2147483647; 
-            background: rgba(28, 28, 30, 0.85);
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
-            border: 1px solid rgba(255, 255, 255, 0.1); 
-            border-radius: 10px; 
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            box-shadow: 0 12px 24px rgba(0,0,0,0.4); 
-            display: none; 
-            flex-direction: column; 
-            min-width: 200px;
-            overflow: hidden;
-            transition: opacity 0.2s ease, transform 0.2s ease;
-            opacity: 0;
-            transform: translateY(5px);
+    runScriptSniffer(document);
+    if (!IS_TOP_FRAME) {
+        function watchSubframeVideos(root) {
+            if (!root) return;
+            const videos = root.querySelectorAll ? root.querySelectorAll('video') : [];
+            videos.forEach(v => {
+                if (v.dataset.daisySniffed) return;
+                v.dataset.daisySniffed = "true";
+                const report = () => {
+                    if (v.src) bubbleMediaToTop(v.src);
+                    v.querySelectorAll('source').forEach(s => bubbleMediaToTop(s.src));
+                    if (v.currentSrc) bubbleMediaToTop(v.currentSrc);
+                };
+                report();
+                v.addEventListener('loadedmetadata', report, { once: true });
+            });
+            if (root.querySelectorAll) root.querySelectorAll('*').forEach(el => { if (el.shadowRoot) watchSubframeVideos(el.shadowRoot); });
         }
-        .daisydm-overlay-container.visible { 
-            display: flex; 
-            opacity: 1;
-            transform: translateY(0);
-        }
-        .daisydm-overlay-header {
-            background: #334155; 
-            color: white; 
-            padding: 10px 14px; 
-            font-size: 13px; 
-            font-weight: 600; 
-            cursor: pointer;
-            text-align: left; 
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            transition: background 0.2s;
-        }
-        .daisydm-overlay-header:hover {
-            background: #475569;
-        }
-        .daisydm-overlay-header::after {
-            content: '▼';
-            font-size: 10px;
-            transition: transform 0.3s;
-        }
-        .daisydm-overlay-container.expanded .daisydm-overlay-header::after {
-            transform: rotate(180deg);
-        }
-        .daisydm-overlay-dropdown { 
-            display: none; 
-            flex-direction: column; 
-            background: transparent; 
-            max-height: 280px; 
-            overflow-y: auto; 
-        }
-        .daisydm-overlay-container.expanded .daisydm-overlay-dropdown { 
-            display: flex; 
-            border-top: 1px solid rgba(255, 255, 255, 0.1);
-        }
-        .daisydm-overlay-option { 
-            padding: 12px 14px; 
-            font-size: 13px; 
-            color: #efeff4; 
-            cursor: pointer; 
-            border-bottom: 1px solid rgba(255, 255, 255, 0.05); 
-            line-height: 1.4; 
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            transition: background 0.2s;
-        }
-        .daisydm-overlay-option:last-child {
-            border-bottom: none;
-        }
-        .daisydm-overlay-option:hover { 
-            background: rgba(255, 255, 255, 0.1); 
-            color: #fff; 
-        }
-        .daisydm-badge { 
-            font-size: 10px; 
-            background: rgba(255, 255, 255, 0.15); 
-            color: #aaa;
-            padding: 2px 6px; 
-            border-radius: 4px; 
-            text-transform: uppercase;
-            font-weight: 700;
-        }
-        .daisydm-overlay-dropdown::-webkit-scrollbar {
-            width: 6px;
-        }
-        .daisydm-overlay-dropdown::-webkit-scrollbar-thumb {
-            background: rgba(255, 255, 255, 0.2);
-            border-radius: 10px;
-        }
-    `;
-    document.head.appendChild(style);
-
-    function createOverlay(videoEl) {
-        const container = document.createElement('div');
-        container.className = 'daisydm-overlay-container';
-        const header = document.createElement('div');
-        header.className = 'daisydm-overlay-header';
-        header.textContent = 'Daisy Download';
-        const dropdown = document.createElement('div');
-        dropdown.className = 'daisydm-overlay-dropdown';
-        
-        container.appendChild(header);
-        container.appendChild(dropdown);
-        document.body.appendChild(container);
-
-        header.onclick = (e) => { 
-            e.stopPropagation(); 
-            container.classList.toggle('expanded'); 
-            populateDropdown(videoEl, dropdown); 
-        };
-        
-        const updatePos = () => {
-            const rect = videoEl.getBoundingClientRect();
-            container.style.top = (window.scrollY + rect.top + 15) + 'px';
-            container.style.left = (window.scrollX + rect.left + 15) + 'px';
-        };
-
-        videoEl.addEventListener('mouseenter', () => { 
-            updatePos(); 
-            container.classList.add('visible'); 
-        });
-        
-        document.addEventListener('mousemove', (e) => {
-            const rect = videoEl.getBoundingClientRect();
-            const padding = 30;
-            const isOverVideo = (e.clientX >= rect.left - padding && e.clientX <= rect.right + padding && 
-                                e.clientY >= rect.top - padding && e.clientY <= rect.bottom + padding);
-            
-            if (!isOverVideo && !container.classList.contains('expanded')) {
-                container.classList.remove('visible');
-            }
-        });
+        const subObs = new MutationObserver(() => { watchSubframeVideos(document); runScriptSniffer(document); });
+        if (document.body) { subObs.observe(document.body, { childList: true, subtree: true }); watchSubframeVideos(document); }
+        else document.addEventListener('DOMContentLoaded', () => { subObs.observe(document.body, { childList: true, subtree: true }); watchSubframeVideos(document); });
+        return;
     }
 
-    function populateDropdown(videoEl, dropdownEl) {
-        dropdownEl.innerHTML = ''; 
-        let options = [];
-        const currentUrl = window.location.href;
+    if (window.__daisydm_video_injected) return;
+    const init = () => {
+        if (!document.head || !document.body) { setTimeout(init, 50); return; }
+        window.__daisydm_video_injected = true;
+        startDetection();
+    };
 
-        const getQualityLabel = (url, fallback) => {
-            const qualityMatch = url.match(/(\d{3,4}p|720|1080|2160|4K)/i);
-            return qualityMatch ? qualityMatch[0].toUpperCase() : fallback;
-        };
+    function startDetection() {
+        const style = document.createElement('style');
+        style.textContent = `
+            .daisydm-overlay-container { position: fixed; z-index: 2147483647; background: rgba(28, 28, 30, 0.85); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 10px; font-family: -apple-system, sans-serif; box-shadow: 0 12px 24px rgba(0,0,0,0.4); display: none; flex-direction: column; min-width: 220px; transition: opacity 0.2s, transform 0.2s; opacity: 0; transform: translateY(5px); pointer-events: auto; }
+            .daisydm-overlay-container.visible { display: flex; opacity: 1; transform: translateY(0); }
+            .daisydm-overlay-header { background: #334155; color: white; padding: 10px 14px; font-size: 13px; font-weight: 600; cursor: pointer; display: flex; justify-content: space-between; align-items: center; border-radius: 10px 10px 0 0; }
+            .daisydm-overlay-dropdown { display: none; flex-direction: column; max-height: 280px; overflow-y: auto; background: transparent; }
+            .daisydm-overlay-container.expanded .daisydm-overlay-dropdown { display: flex; border-top: 1px solid rgba(255, 255, 255, 0.1); }
+            .daisydm-overlay-option { padding: 12px 14px; font-size: 13px; color: #efeff4; cursor: pointer; border-bottom: 1px solid rgba(255, 255, 255, 0.05); display: flex; justify-content: space-between; align-items: center; }
+            .daisydm-overlay-option:hover { background: rgba(255, 255, 255, 0.1); color: #fff; }
+            .daisydm-badge { font-size: 10px; background: rgba(255, 255, 255, 0.15); color: #aaa; padding: 2px 6px; border-radius: 4px; text-transform: uppercase; font-weight: 700; }
+        `;
+        document.head.appendChild(style);
 
-        const isLikelyVideo = (url) => {
-            const videoPatterns = ['.mp4', '.m3u8', '.webm', '.mov', 'video', 'm3u8', 'stream'];
-            return videoPatterns.some(pattern => url.toLowerCase().includes(pattern));
-        };
+        const overlayMap = new WeakMap();
 
-        if (currentUrl.includes('youtube.com') || currentUrl.includes('youtu.be')) {
-            const ytQualities = [
-                { id: "b", label: "Best Quality" },
-                { id: "bestvideo[height<=1080]+bestaudio/best", label: "1080p HD" },
-                { id: "bestaudio/best", label: "Audio Only" }
-            ];
-            ytQualities.forEach(q => options.push({ label: q.label, url: currentUrl, ytQuality: q.id }));
-        } else {
-            if (videoEl.src && isLikelyVideo(videoEl.src)) {
-                const isBlob = videoEl.src.startsWith('blob:');
-                const label = isBlob ? 'Detected Stream' : getQualityLabel(videoEl.src, 'Primary Video');
-                options.push({ label: label, url: videoEl.src, isHLS: videoEl.src.includes('m3u8') });
+        function createOverlay(targetEl) {
+            if (overlayMap.has(targetEl)) return;
+            const container = document.createElement('div');
+            container.className = 'daisydm-overlay-container';
+            container.innerHTML = `<div class="daisydm-overlay-header">Daisy Download</div><div class="daisydm-overlay-dropdown"></div>`;
+            document.body.appendChild(container);
+            overlayMap.set(targetEl, container);
+
+            const dropdown = container.querySelector('.daisydm-overlay-dropdown');
+            container.querySelector('.daisydm-overlay-header').onclick = (e) => {
+                e.stopPropagation();
+                container.classList.toggle('expanded');
+                if (container.classList.contains('expanded')) populateDropdown(targetEl, dropdown);
+            };
+
+            const updatePos = () => {
+                const rect = targetEl.getBoundingClientRect();
+                container.style.top = (rect.top + window.scrollY + 15) + 'px';
+                container.style.left = (rect.left + window.scrollX + 15) + 'px';
+            };
+
+            targetEl.addEventListener('mouseenter', () => { updatePos(); container.classList.add('visible'); });
+            document.addEventListener('mousemove', (e) => {
+                const rect = targetEl.getBoundingClientRect();
+                const over = e.clientX >= rect.left - 30 && e.clientX <= rect.right + 30 && e.clientY >= rect.top - 30 && e.clientY <= rect.bottom + 30;
+                if (!over && !container.classList.contains('expanded')) container.classList.remove('visible');
+            });
+        }
+
+        async function populateDropdown(targetEl, dropdownEl) {
+            dropdownEl.innerHTML = '<div class="daisydm-overlay-option" style="color:#888">Scanning streams...</div>';
+            const pageUrl = window.location.href;
+            if (pageUrl.includes('youtube.com')) {
+                const trueHeights = getActualYtFormats();
+                dropdownEl.innerHTML = '';
+                const ytQuals = [{ id: "bestvideo+bestaudio/best", label: "Best Available" }, ...trueHeights.map(h => ({ id: `bestvideo[height<=${h}]+bestaudio/best`, label: `${h}p` })), { id: "bestaudio/best", label: "Audio Only" }];
+                ytQuals.forEach(q => renderOption(dropdownEl, { label: q.label, url: pageUrl, ytQuality: q.id }));
+                return;
             }
-
-            const sources = videoEl.querySelectorAll('source');
-            sources.forEach((s) => {
-                if (s.src && isLikelyVideo(s.src)) {
-                    const label = getQualityLabel(s.src, s.type ? s.type.split('/')[1].toUpperCase() : 'Video Source');
-                    options.push({ label: label, url: s.src, isHLS: s.src.includes('m3u8') });
+            const urls = new Set(sniffedMediaUrls.map(m => m.url));
+            if (targetEl.tagName === 'VIDEO') {
+                if (targetEl.src && !targetEl.src.startsWith('blob:')) urls.add(targetEl.src);
+                targetEl.querySelectorAll('source').forEach(s => urls.add(s.src));
+            }
+            const options = [];
+            for (const url of urls) {
+                if (url.includes('m3u8')) {
+                    const variants = await fetchHlsQualities(url);
+                    variants.forEach(v => options.push({ label: v.label, url: v.url, isHLS: true }));
+                } else if (isDownloadURL(url)) { 
+                    options.push({ label: 'Video File', url, isHLS: false }); 
                 }
-            });
-
-            Array.from(new Set(sniffedMediaUrls.map(a => a.url))).forEach((url) => {
-                if (isLikelyVideo(url) && url !== videoEl.src) {
-                    const isHLS = url.includes('.m3u8') || url.includes('/m3u8/') || url.includes('type=m3u8');
-                    const label = getQualityLabel(url, isHLS ? 'HLS Stream' : 'Video File');
-                    options.push({ label: label, url: url, isHLS: isHLS });
-                }
-            });
+            }
+            dropdownEl.innerHTML = '';
+            options.forEach(opt => renderOption(dropdownEl, opt));
         }
 
-        if (options.length === 0) {
-            const empty = document.createElement('div');
-            empty.className = 'daisydm-overlay-option';
-            empty.style.color = '#888';
-            empty.textContent = 'Searching for links...';
-            dropdownEl.appendChild(empty);
-            return;
-        }
-
-        options.forEach(opt => {
+        function renderOption(dropdownEl, opt) {
             const item = document.createElement('div');
             item.className = 'daisydm-overlay-option';
-            item.innerHTML = `<span>${opt.label}</span> <span class="daisydm-badge">${opt.isHLS ? 'HLS' : 'MP4'}</span>`;
+            item.innerHTML = `<span>${opt.label}</span><span class="daisydm-badge">${opt.ytQuality ? 'YT' : (opt.isHLS ? 'HLS' : 'MP4')}</span>`;
             item.onclick = (e) => {
                 e.stopPropagation();
-                item.innerHTML = `<span>Sending...</span>`;
-                let cleanTitle = document.title ? document.title.replace(/[\\/:*?"<>|]/g, '').trim() : "Video";
-                
-                // Transformed to match our robust downloading parameters
-                sendToDispatch(opt.url, cleanTitle, { youtubeQuality: opt.ytQuality, forceHLS: opt.isHLS });
-                
-                setTimeout(() => { 
-                    dropdownEl.parentElement.classList.remove('expanded'); 
-                    populateDropdown(videoEl, dropdownEl); // Reset labels
-                }, 1500);
+                sendToDispatch(opt.url, document.title.replace(/[\\/:*?"<>|]/g, ''), { youtubeQuality: opt.ytQuality, forceHLS: opt.isHLS });
+                item.closest('.daisydm-overlay-container').classList.remove('expanded');
             };
             dropdownEl.appendChild(item);
-        });
+        }
+
+        function scanForMedia() {
+            document.querySelectorAll('video, iframe').forEach(el => {
+                const r = el.getBoundingClientRect();
+                if (r.width > 50 && r.height > 50) createOverlay(el);
+            });
+        }
+        const observer = new MutationObserver(scanForMedia);
+        observer.observe(document.body, { childList: true, subtree: true });
+        setInterval(() => { scanForMedia(); runScriptSniffer(document); }, 3000);
+        scanForMedia();
     }
-
-    function scanForVideos(root = document) {
-        root.querySelectorAll('video').forEach(v => {
-            if (!v.dataset.daisy) {
-                v.dataset.daisy = "true";
-                createOverlay(v);
-            }
-        });
-
-        root.querySelectorAll('*').forEach(el => {
-            if (el.shadowRoot) {
-                scanForVideos(el.shadowRoot);
-            }
-        });
-    }
-
-    const observer = new MutationObserver(() => scanForVideos());
-    observer.observe(document.body, { childList: true, subtree: true });
-
-    scanForVideos();
+    init();
 })();

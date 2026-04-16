@@ -55,6 +55,24 @@
 			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		71C1BC0E2F9164CF004C7F1A /* CopyFiles */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 7;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		71C1BC162F916BDF004C7F1A /* CopyFiles */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 12;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
@@ -75,6 +93,7 @@
 		7161C5EE2F8D769600FFB581 /* SharedUIComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedUIComponents.swift; sourceTree = "<group>"; };
 		7161C5F02F8D7A9600FFB581 /* RemoveDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoveDialog.swift; sourceTree = "<group>"; };
 		7161C5F22F8D7AAF00FFB581 /* PropertiesSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PropertiesSheet.swift; sourceTree = "<group>"; };
+		71C1BBEB2F90C347004C7F1A /* HLSBridge-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "HLSBridge-Bridging-Header.h"; sourceTree = "<group>"; };
 		7A117A8396344D68906886AE /* DaisyExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = DaisyExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		A0159ADC2E90F823FF4B7A57 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		AA11BB22CC33DD44EE55FF67 /* ConfirmDownloadView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfirmDownloadView.swift; sourceTree = "<group>"; };
@@ -84,6 +103,58 @@
 		E6A6721BDA522881F9B1938F /* DownloadListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadListView.swift; sourceTree = "<group>"; };
 		ECF7392741EE1B516970CA7B /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		71C1BC132F9164FF004C7F1A /* Exceptions for "external" folder in "DaisyApp" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				bin/aria2c,
+				bin/ffmpeg,
+				"bin/yt-dlp",
+			);
+			target = F8D4C25F8FF1C76660AEE763 /* DaisyApp */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
+/* Begin PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
+		71C1BC122F9164DB004C7F1A /* Exceptions for "external" folder in "Copy Files" phase from "DaisyApp" target */ = {
+			isa = PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet;
+			attributesByRelativePath = {
+				bin/aria2c = (CodeSignOnCopy, );
+				bin/ffmpeg = (CodeSignOnCopy, );
+				"bin/yt-dlp" = (CodeSignOnCopy, );
+			};
+			buildPhase = 71C1BC0E2F9164CF004C7F1A /* CopyFiles */;
+			membershipExceptions = (
+				bin/aria2c,
+				bin/ffmpeg,
+				"bin/yt-dlp",
+			);
+		};
+		71C1BC182F916BE9004C7F1A /* Exceptions for "external" folder in "Copy Files" phase from "DaisyApp" target */ = {
+			isa = PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet;
+			attributesByRelativePath = {
+				library/libhls_downloader.dylib = (CodeSignOnCopy, );
+			};
+			buildPhase = 71C1BC162F916BDF004C7F1A /* CopyFiles */;
+			membershipExceptions = (
+				library/libhls_downloader.dylib,
+			);
+		};
+/* End PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		71C1BBEC2F90C62D004C7F1A /* external */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				71C1BC132F9164FF004C7F1A /* Exceptions for "external" folder in "DaisyApp" target */,
+				71C1BC122F9164DB004C7F1A /* Exceptions for "external" folder in "Copy Files" phase from "DaisyApp" target */,
+				71C1BC182F916BE9004C7F1A /* Exceptions for "external" folder in "Copy Files" phase from "DaisyApp" target */,
+			);
+			path = external;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXGroup section */
 		0A1B2C3D4E5F60718293A305 /* Resources */ = {
@@ -111,6 +182,8 @@
 		746B01343AD58FE591E8AC47 /* Daisy */ = {
 			isa = PBXGroup;
 			children = (
+				71C1BBEC2F90C62D004C7F1A /* external */,
+				71C1BBEB2F90C347004C7F1A /* HLSBridge-Bridging-Header.h */,
 				E77115DB637571F77701CAF2 /* App */,
 				C75B2CAB48984D2934A96A32 /* Core */,
 				F8B3F4C4AA7F386726B0C2B8 /* UI */,
@@ -212,11 +285,16 @@
 				AA000002BB000002CC000002 /* Resources */,
 				1A0AE4D8A58230DA637E3F5F /* Sources */,
 				2F76A8494432869E33E41744 /* Embed Foundation Extensions */,
+				71C1BC0E2F9164CF004C7F1A /* CopyFiles */,
+				71C1BC162F916BDF004C7F1A /* CopyFiles */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 				419F39BB7FEB5AAF71E3D40A /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				71C1BBEC2F90C62D004C7F1A /* external */,
 			);
 			name = DaisyApp;
 			packageProductDependencies = (
@@ -336,8 +414,8 @@
 				INFOPLIST_FILE = Sources/Daisy/Resources/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Daisy;
 				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
 					"@executable_path/../Frameworks",
+					"@executable_path/../Resources",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.daisy.dm;
@@ -430,6 +508,11 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"@executable_path/../Frameworks",
+					"@executable_path/../Resources",
+				);
+				LIBRARY_SEARCH_PATHS = "\"$(SRCROOT)/Sources/Daisy/external/library\"";
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -437,6 +520,7 @@
 				SDKROOT = macosx;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OBJC_BRIDGING_HEADER = "Sources/Daisy/HLSBridge-Bridging-Header.h";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.0;
 			};
@@ -519,6 +603,11 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"@executable_path/../Frameworks",
+					"@executable_path/../Resources",
+				);
+				LIBRARY_SEARCH_PATHS = "\"$(SRCROOT)/Sources/Daisy/external/library\"";
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -526,6 +615,7 @@
 				SDKROOT = macosx;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OBJC_BRIDGING_HEADER = "Sources/Daisy/HLSBridge-Bridging-Header.h";
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
 				SWIFT_VERSION = 5.0;
 			};
@@ -547,8 +637,8 @@
 				INFOPLIST_FILE = Sources/Daisy/Resources/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Daisy;
 				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
 					"@executable_path/../Frameworks",
+					"@executable_path/../Resources",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.daisy.dm;

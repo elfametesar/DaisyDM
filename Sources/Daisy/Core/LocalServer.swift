@@ -9,6 +9,9 @@ struct DownloadPayload: Decodable {
     let cookies: String?
     let referer: String?
     let ua: String?
+    let youtubeQuality: String?
+    let forceHLS: Bool?
+    let browser: String?
 }
 
 class LocalServer {
@@ -98,7 +101,6 @@ class LocalServer {
                     return
                 }
 
-                // Handle binary torrent file upload explicitly
                 if headers.hasPrefix("POST /torrent") {
                     var filename = "download.torrent"
                     for line in headers.components(separatedBy: "\r\n") {
@@ -139,10 +141,9 @@ class LocalServer {
                     return
                 }
 
-                // Handle JSON POST requests (Standard dispatch)
+                // Handle JSON POST requests
                 if headers.hasPrefix("POST") {
                     if let payload = try? JSONDecoder().decode(DownloadPayload.self, from: bodyData) {
-                        // Safeguard: Check if the browser still managed to sniff it as a torrent
                         var sanitizedUrl = payload.url
                         if sanitizedUrl.contains("application/x-bittorrent") {
                             sanitizedUrl = sanitizedUrl.replacingOccurrences(of: "application/x-bittorrent", with: "application/octet-stream")
@@ -153,9 +154,13 @@ class LocalServer {
                             filename: payload.filename,
                             cookies: payload.cookies,
                             referer: payload.referer,
-                            ua: payload.ua
+                            ua: payload.ua,
+                            youtubeQuality: payload.youtubeQuality,
+                            forceHLS: payload.forceHLS,
+                            browser: payload.browser
                         )
                         
+                        // ALWAYS show confirmation for all downloads including YouTube
                         DispatchQueue.main.async { self.showConfirmation(for: sanitizedPayload) }
                     }
                     connection.send(content: resHeaders.data(using: .utf8)!, completion: .contentProcessed { _ in connection.cancel() })
@@ -178,11 +183,14 @@ class LocalServer {
             name: .confirmDownload,
             object: nil,
             userInfo: [
-                "url":      url,
-                "filename": payload.filename ?? "",
-                "cookies":  payload.cookies  ?? "",
-                "referer":  payload.referer  ?? "",
-                "ua":       payload.ua       ?? ""
+                "url":            url,
+                "filename":       payload.filename ?? "",
+                "cookies":        payload.cookies  ?? "",
+                "referer":        payload.referer  ?? "",
+                "ua":             payload.ua       ?? "",
+                "youtubeQuality": payload.youtubeQuality ?? "",
+                "forceHLS":       payload.forceHLS ?? false,
+                "browser":        payload.browser  ?? ""  // FIXED: Pass the browser to the UI!
             ]
         )
     }

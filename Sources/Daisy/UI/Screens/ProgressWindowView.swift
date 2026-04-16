@@ -24,7 +24,15 @@ struct ProgressWindowView: View {
     @AppStorage("progressBarColorHex") private var progressBarColorHex = "#34C759"
     @AppStorage("alwaysPinProgressWindows") private var alwaysPinProgressWindows = false
 
-    var elapsed: TimeInterval { now.timeIntervalSince(item.dateAdded) }
+    var elapsed: TimeInterval {
+        if item.status == .completed, let end = item.dateCompleted {
+            return end.timeIntervalSince(item.dateAdded)
+        }
+        if item.status == .stopped || item.status == .failed {
+            return item.totalActiveDuration
+        }
+        return now.timeIntervalSince(item.dateAdded)
+    }
 
     var formattedElapsed: String {
         let s = Int(elapsed)
@@ -158,7 +166,8 @@ struct ProgressWindowView: View {
                 HStack {
                     Text(item.transferLabel).font(.system(size: 11)).foregroundStyle(.secondary)
                     Spacer()
-                    if item.totalBytes > 0 {
+                    // Fixed condition to ensure percentage shows for HLS duration tracking
+                    if item.totalBytes > 0 || (item.isHLS && item.hlsTotalSeconds > 0) {
                         Text(String(format: "%.1f%%", item.progress * 100))
                             .font(.system(size: 11, weight: .semibold)).monospacedDigit()
                     }
@@ -175,6 +184,8 @@ struct ProgressWindowView: View {
                 ActiveStatCell(label: "Remaining", value: remainingSize)
             }
             .padding(.horizontal, 16)
+
+            // THE SEGMENTS BLOCK HAS BEEN ENTIRELY REMOVED FROM HERE
 
             Divider().padding(.vertical, 10)
 
@@ -276,6 +287,13 @@ struct ProgressWindowView: View {
     }
 
     var remainingSize: String {
+        // HLS Tracking: If it's an HLS download and we have duration info, show time remaining
+        if item.isHLS && item.hlsTotalSeconds > 0 {
+            let remSeconds = max(0, item.hlsTotalSeconds - item.hlsDownloadedSeconds)
+            return formatDuration(remSeconds)
+        }
+        
+        // Standard Tracking: fallback to byte-based remaining size
         guard item.totalBytes > 0 else { return "–" }
         let rem = item.totalBytes - item.downloadedBytes
         guard rem > 0 else { return "–" }
