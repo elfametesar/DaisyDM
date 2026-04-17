@@ -189,11 +189,20 @@ struct AddDownloadSheet: View {
             Divider()
 
             HStack {
-                Button("Cancel") { resolveTask?.cancel(); onClose() }
-                    .buttonStyle(ActionButtonStyle(prominent: false, hex: accentColorHex))
+                Button(action: {
+                    resolveTask?.cancel()
+                    onClose()
+                }) {
+                    Label("Cancel", systemImage: "xmark.circle")
+                }
+                .buttonStyle(ActionButtonStyle(prominent: false, hex: accentColorHex))
+                
                 Spacer()
-                Button("Add Download") {
+                
+                Button(action: {
                     submit()
+                }) {
+                    Label("Add Download", systemImage: "plus.circle.fill")
                 }
                 .buttonStyle(ActionButtonStyle(prominent: true, hex: accentColorHex))
                 .disabled(!isValid || urlText.isEmpty)
