@@ -2,9 +2,9 @@
   "manifest_version": 3,
   "name": "Daisy DM",
   "version": "1.1",
-  "description": "Intercepts downloads and sends them directly to the Daisy Mac app — no dialogs.",
+  "description": "Intercepts Safari downloads and sends them directly to the Daisy Mac app — no dialogs.",
   "background": {
-    "service_worker": "background.js"
+    "scripts": ["background.js"]
   },
   "action": {
     "default_popup": "popup.html",
@@ -27,5 +27,10 @@
     "cookies",
     "webRequest"
   ],
-  "host_permissions": ["<all_urls>"]
+  "host_permissions": ["<all_urls>"],
+  "browser_specific_settings": {
+    "safari": {
+      "strict_min_version": "15.4"
+    }
+  }
 }
