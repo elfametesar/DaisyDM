@@ -1,35 +1,24 @@
 // background.js - Daisy Safari Extension
 
+const _api = typeof browser !== "undefined" ? browser : chrome;
 let dispatchEnabled = true;
 let bypassNextDownloadUrl = null;
 
-// Safari uses browser namespace instead of chrome
-const api = typeof browser !== 'undefined' ? browser : chrome;
-
-api.storage.local.get(["dispatchEnabled"]).then(res => {
+_api.storage.local.get(["dispatchEnabled"]).then(res => {
     if (typeof res.dispatchEnabled === "boolean") dispatchEnabled = res.dispatchEnabled;
 });
 
-api.storage.onChanged.addListener((changes, area) => {
+_api.storage.onChanged.addListener((changes, area) => {
     if (area === "local" && changes.dispatchEnabled) {
         dispatchEnabled = changes.dispatchEnabled.newValue;
     }
 });
 
-// Safari compatibility: context menus need to be created differently
-api.runtime.onInstalled.addListener(() => {
-    try {
-        api.contextMenus.create({
-            id: "dispatch-download",
-            title: "Download with Daisy",
-            contexts: ["link"]
-        });
-    } catch (e) {
-        console.log("Context menu creation failed in Safari:", e);
-    }
+_api.runtime.onInstalled.addListener(() => {
+    _api.contextMenus.create({ id: "dispatch-download", title: "Download with Daisy", contexts: ["link"] });
 });
 
-api.contextMenus.onClicked.addListener((info, tab) => {
+_api.contextMenus.onClicked.addListener((info, tab) => {
     if (info.menuItemId === "dispatch-download" && info.linkUrl) {
         triggerDownload(info.linkUrl, extractFilename(info.linkUrl), tab?.url || "");
     }
@@ -46,35 +35,38 @@ function needsCredentialedFetch(url) {
     try { return /claude\.ai$/.test(new URL(url).hostname); } catch { return false; }
 }
 
-// Safari doesn't fully support onDeterminingFilename, use downloads.onCreated as fallback
-if (api.downloads && api.downloads.onDeterminingFilename) {
-    api.downloads.onDeterminingFilename.addListener((item, suggest) => {
-        if (!dispatchEnabled) return;
-        const url = item.finalUrl || item.url;
-        
-        if (!url || url.startsWith("blob:") || url.startsWith("data:") || bypassNextDownloadUrl === url) {
-            bypassNextDownloadUrl = null;
-            return;
-        }
+// Safari handles downloads slightly differently; we use the general download listener
+// or determiningFilename where supported.
+const downloadListener = (item, suggest) => {
+    if (!dispatchEnabled) return;
+    const url = item.finalUrl || item.url;
+    
+    if (!url || url.startsWith("blob:") || url.startsWith("data:") || bypassNextDownloadUrl === url) {
+        bypassNextDownloadUrl = null;
+        return;
+    }
 
-        api.downloads.cancel(item.id);
+    _api.downloads.cancel(item.id);
 
-        const referer = item.referrer || "";
-        const filename = item.filename ? item.filename.split(/[\/\\]/).pop() : extractFilename(url);
+    const referer = item.referrer || "";
+    const filename = item.filename ? item.filename.split(/[\/\\]/).pop() : extractFilename(url);
 
-        if (needsCredentialedFetch(url)) {
-            api.tabs.query({ active: true, currentWindow: true }).then(tabs => {
-                const tabId = tabs?.[0]?.id;
-                if (tabId) {
-                    api.tabs.sendMessage(tabId, { type: "CREDENTIALED_FETCH", url, filename })
-                        .catch(() => triggerDownload(url, filename, referer));
-                }
-            });
-        } else {
-            triggerDownload(url, filename, referer);
-        }
-        return true;
-    });
+    if (needsCredentialedFetch(url)) {
+        _api.tabs.query({ active: true, currentWindow: true }).then(tabs => {
+            const tabId = tabs?.[0]?.id;
+            if (tabId) {
+                _api.tabs.sendMessage(tabId, { type: "CREDENTIALED_FETCH", url, filename })
+                    .catch(() => triggerDownload(url, filename, referer));
+            }
+        });
+    } else {
+        triggerDownload(url, filename, referer);
+    }
+    return true;
+};
+
+if (_api.downloads.onDeterminingFilename) {
+    _api.downloads.onDeterminingFilename.addListener(downloadListener);
 }
 
 function formatNetscapeCookies(cookies) {
@@ -101,7 +93,7 @@ async function fetchBaseDomainCookies(targetUrl) {
             let hostParts = urlObj.hostname.split('.');
             let baseDomain = hostParts.length > 2 ? hostParts.slice(-2).join('.') : urlObj.hostname;
             
-            api.cookies.getAll({ domain: baseDomain }, cookies => {
+            _api.cookies.getAll({ domain: baseDomain }, cookies => {
                 if (cookies && cookies.length > 0) {
                     resolve(formatNetscapeCookies(cookies));
                 } else {
@@ -116,15 +108,15 @@ async function fetchBaseDomainCookies(targetUrl) {
 
 async function getYouTubeAuthCookies() {
     return new Promise(resolve => {
-        api.cookies.getAll({ domain: "youtube.com" }, yt => {
-            api.cookies.getAll({ domain: "google.com" }, gl => {
+        _api.cookies.getAll({ domain: "youtube.com" }, yt => {
+            _api.cookies.getAll({ domain: "google.com" }, gl => {
                 resolve([...(yt || []), ...(gl || [])]);
             });
         });
     });
 }
 
-api.runtime.onMessage.addListener((message, sender, sendResponse) => {
+_api.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === "PREPARE_DISPATCH_DOWNLOAD") {
         let pageUrl = sender.tab?.url || message.url || "";
 
@@ -151,35 +143,15 @@ api.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 });
 
-async function getHostBrowser() {
-    // Safari detection
-    const isSafari = navigator.userAgent.includes('Safari') && !navigator.userAgent.includes('Chrome');
-    if (isSafari) return "safari";
-    
-    if (navigator.brave && await navigator.brave.isBrave()) return "brave";
-    if (navigator.userAgentData && navigator.userAgentData.brands) {
-        const brands = navigator.userAgentData.brands.map(b => b.brand.toLowerCase());
-        if (brands.some(b => b.includes("edge"))) return "edge";
-        if (brands.some(b => b.includes("opera") || b.includes("opr"))) return "opera";
-        if (brands.some(b => b.includes("vivaldi"))) return "vivaldi";
-        if (brands.some(b => b.includes("chrome"))) return "chrome";
-        if (brands.some(b => b.includes("chromium"))) return "chromium";
-    }
-    if (typeof browser !== 'undefined' && browser.runtime?.getBrowserInfo) return "firefox";
-    if (isSafari) return "safari";
-    return "chrome";
-}
-
 async function triggerDownload(url, filename, referer, cookies, youtubeQuality, forceHLS) {
     let finalCookies = cookies;
     if (!finalCookies) {
         finalCookies = await fetchBaseDomainCookies(referer || url);
     }
 
-    const extBrowser = await getHostBrowser();
     const payload = JSON.stringify({
         url, filename: filename || "download", cookies: finalCookies || "",
-        referer: referer || "", ua: navigator.userAgent, browser: extBrowser,
+        referer: referer || "", ua: navigator.userAgent, browser: "safari",
         youtubeQuality, forceHLS
     });
     
@@ -195,44 +167,25 @@ async function triggerDownload(url, filename, referer, cookies, youtubeQuality, 
 
     if (!success && !url.startsWith('data:')) {
         bypassNextDownloadUrl = url;
-        if (api.downloads && api.downloads.download) {
-            api.downloads.download({ url: url, filename: filename || undefined });
-        } else {
-            // Safari fallback: open in new tab
-            api.tabs.create({ url: url, active: false });
-        }
+        _api.downloads.download({ url: url, filename: filename || undefined });
     }
 }
 
-// Safari webRequest support is limited, use alternative approach
-if (api.webRequest && api.webRequest.onHeadersReceived) {
-    api.webRequest.onHeadersReceived.addListener(
-        function(details) {
-            if (details.tabId === -1) return;
-            const targetMimeTypes = ["video/", "audio/", "mpegurl", "m3u8", "video/mp2t", "application/x-mpegurl", "application/vnd.apple.mpegurl"];
-            const isMedia = details.responseHeaders?.some(h =>
-                h.name.toLowerCase() === "content-type" && targetMimeTypes.some(m => h.value.toLowerCase().includes(m))
-            );
-            const urlLower = details.url.toLowerCase();
-            const isMediaByUrl = ['.m3u8', '.ts', '.mp4', '.webm', '.mov', '.mkv', '/hls/', '/m3u8', 'manifest.m3u8'].some(p => urlLower.includes(p));
+// Media Sniffer - Standard Safari WebExtension support
+_api.webRequest.onHeadersReceived.addListener(
+    function(details) {
+        if (details.tabId === -1) return;
+        const targetMimeTypes = ["video/", "audio/", "mpegurl", "m3u8", "video/mp2t", "application/x-mpegurl", "application/vnd.apple.mpegurl"];
+        const isMedia = details.responseHeaders?.some(h =>
+            h.name.toLowerCase() === "content-type" && targetMimeTypes.some(m => h.value.toLowerCase().includes(m))
+        );
+        const urlLower = details.url.toLowerCase();
+        const isMediaByUrl = ['.m3u8', '.ts', '.mp4', '.webm', '.mov', '.mkv', '/hls/', '/m3u8', 'manifest.m3u8'].some(p => urlLower.includes(p));
 
-            if (isMedia || isMediaByUrl) {
-                api.tabs.sendMessage(
-                    details.tabId,
-                    { type: 'NEW_MEDIA_FOUND', mediaInfo: { url: details.url, frameId: details.frameId } },
-                    { frameId: 0 }
-                ).catch(() => {});
-                
-                if (details.frameId !== 0) {
-                    api.tabs.sendMessage(
-                        details.tabId,
-                        { type: 'NEW_MEDIA_FOUND', mediaInfo: { url: details.url, frameId: details.frameId } },
-                        { frameId: details.frameId }
-                    ).catch(() => {});
-                }
-            }
-        },
-        { urls: ["<all_urls>"] },
-        ["responseHeaders"]
-    );
-}
+        if (isMedia || isMediaByUrl) {
+            _api.tabs.sendMessage(details.tabId, { type: 'NEW_MEDIA_FOUND', mediaInfo: { url: details.url, frameId: details.frameId } }).catch(() => {});
+        }
+    },
+    { urls: ["<all_urls>"] },
+    ["responseHeaders"]
+);
