@@ -108,9 +108,7 @@
 		71C1BC132F9164FF004C7F1A /* Exceptions for "external" folder in "DaisyApp" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
-				bin/aria2c,
 				bin/ffmpeg,
-				"bin/yt-dlp",
 			);
 			target = F8D4C25F8FF1C76660AEE763 /* DaisyApp */;
 		};
@@ -120,15 +118,11 @@
 		71C1BC122F9164DB004C7F1A /* Exceptions for "external" folder in "Copy Files" phase from "DaisyApp" target */ = {
 			isa = PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet;
 			attributesByRelativePath = {
-				bin/aria2c = (CodeSignOnCopy, );
 				bin/ffmpeg = (CodeSignOnCopy, );
-				"bin/yt-dlp" = (CodeSignOnCopy, );
 			};
 			buildPhase = 71C1BC0E2F9164CF004C7F1A /* CopyFiles */;
 			membershipExceptions = (
-				bin/aria2c,
 				bin/ffmpeg,
-				"bin/yt-dlp",
 			);
 		};
 		71C1BC182F916BE9004C7F1A /* Exceptions for "external" folder in "Copy Files" phase from "DaisyApp" target */ = {

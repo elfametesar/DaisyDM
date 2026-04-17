@@ -392,27 +392,30 @@ public final class DownloadEngine {
 
     private var activeCount: Int { items.filter { $0.status == .downloading }.count }
 
-    // MARK: - Engine Paths with Frameworks fallback
+    // MARK: - Engine Paths with Homebrew Check
+    
+    nonisolated private func resolveHomebrewPath(for binary: String, isLibrary: Bool = false) -> String? {
+        let basePath = isLibrary ? "lib" : "bin"
+        let paths = [
+            "/opt/homebrew/\(basePath)/\(binary)",
+            "/usr/local/\(basePath)/\(binary)"
+        ]
+        for path in paths {
+            if FileManager.default.fileExists(atPath: path) { return path }
+        }
+        return nil
+    }
     
     private var aria2Path: String? {
-        if let path = Bundle.main.path(forResource: "aria2c", ofType: nil) { return path }
-        if let path = Bundle.main.path(forResource: "aria2c", ofType: nil, inDirectory: "bin") { return path }
-        if let fwURL = Bundle.main.privateFrameworksURL?.appendingPathComponent("aria2c"), FileManager.default.fileExists(atPath: fwURL.path) { return fwURL.path }
-        return nil
+        return resolveHomebrewPath(for: "aria2c")
     }
     
     private var ytDlpPath: String? {
-        if let path = Bundle.main.path(forResource: "yt-dlp", ofType: nil) { return path }
-        if let path = Bundle.main.path(forResource: "yt-dlp", ofType: nil, inDirectory: "bin") { return path }
-        if let fwURL = Bundle.main.privateFrameworksURL?.appendingPathComponent("yt-dlp"), FileManager.default.fileExists(atPath: fwURL.path) { return fwURL.path }
-        return nil
+        return resolveHomebrewPath(for: "yt-dlp")
     }
 
     private var ffmpegPath: String? {
-        if let path = Bundle.main.path(forResource: "ffmpeg", ofType: nil) { return path }
-        if let path = Bundle.main.path(forResource: "ffmpeg", ofType: nil, inDirectory: "bin") { return path }
-        if let fwURL = Bundle.main.privateFrameworksURL?.appendingPathComponent("ffmpeg"), FileManager.default.fileExists(atPath: fwURL.path) { return fwURL.path }
-        return nil
+        return resolveHomebrewPath(for: "ffmpeg")
     }
 
     private init() {
@@ -732,9 +735,19 @@ public final class DownloadEngine {
                 liveItem._lastTickDate        = Date()
             }
         }
+        
+        let hlsLibPath = resolveHomebrewPath(for: "libhls_downloader.dylib", isLibrary: true)
 
         let result = await Task.detached(priority: .userInitiated) {
-            guard let handle = dlopen("@rpath/libhls_downloader.dylib", RTLD_NOW | RTLD_LOCAL) else {
+            var handle: UnsafeMutableRawPointer? = nil
+            if let path = hlsLibPath {
+                handle = dlopen(path, RTLD_NOW | RTLD_LOCAL)
+            }
+            if handle == nil {
+                handle = dlopen("libhls_downloader.dylib", RTLD_NOW | RTLD_LOCAL)
+            }
+            
+            guard let handle = handle else {
                 return Int32(-99)
             }
             defer { dlclose(handle) }
@@ -783,7 +796,7 @@ public final class DownloadEngine {
                 item.speed = 0
             } else {
                 item.status = .failed
-                item.error  = result == -99 ? "Could not load libhls_downloader.dylib — make sure it is embedded in the app bundle."
+                item.error  = result == -99 ? "Could not load libhls_downloader.dylib — make sure it is installed via Homebrew."
                             : result == -98 ? "Symbol 'download_hls' not found in libhls_downloader.dylib."
                             :                 "Native HLS Engine error code: \(result)"
                 item.speed  = 0
@@ -839,7 +852,7 @@ public final class DownloadEngine {
         guard let exe = ytDlpPath else {
             await MainActor.run {
                 item.status = .failed
-                item.error = "Missing Engine. Ensure yt-dlp is bundled correctly."
+                item.error = "Missing Engine. Ensure yt-dlp is installed via Homebrew."
                 persist(); scheduleNext()
             }
             return
