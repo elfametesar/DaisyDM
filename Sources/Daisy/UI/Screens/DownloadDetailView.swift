@@ -62,149 +62,108 @@ struct DetailView: View {
             }
 
             LazyVGrid(columns: metricColumns, spacing: 12) {
-                metricTile(
-                    title: "Downloaded",
-                    value: item.transferLabel,
-                    systemImage: "arrow.down.circle"
-                )
-
-                metricTile(
-                    title: "Download Speed",
-                    value: item.status == .downloading ? item.formattedSpeed : "–",
-                    systemImage: "speedometer"
-                )
-
-                metricTile(
-                    title: "Connections",
-                    value: "\(item.connectionCount) slots",
-                    systemImage: "antenna.radiowaves.left.and.right"
-                )
-
+                metricTile(title: "Downloaded", value: item.transferLabel, systemImage: "arrow.down.circle")
+                metricTile(title: "Download Speed", value: item.status == .downloading ? item.formattedSpeed : "–", systemImage: "speedometer")
+                metricTile(title: "Connections", value: "\(item.connectionCount) slots", systemImage: "antenna.radiowaves.left.and.right")
                 if let eta = item.formattedETA {
-                    metricTile(
-                        title: "ETA",
-                        value: eta,
-                        systemImage: "clock"
-                    )
+                    metricTile(title: "ETA", value: eta, systemImage: "clock")
                 }
             }
 
             actionBar(for: item)
-
             activityFootnote(for: item)
         }
     }
 
     private func overviewHeader(for item: DownloadItem) -> some View {
-        HStack(alignment: .top, spacing: 16) {
-            sourceIcon(for: item)
-            
-            VStack(alignment: .leading, spacing: 6) {
-                Text(item.filename)
-                    .font(.title2.weight(.semibold))
-                    .lineLimit(3)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 16) {
+                sourceIcon(for: item)
+                
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(item.filename)
+                        .font(.title2.weight(.semibold))
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
 
-                HStack(spacing: 8) {
-                    Label(item.type.rawValue, systemImage: item.type == .torrent ? "arrow.2.circlepath" : "link")
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                    
-                    if !item.sourceHost.isEmpty {
-                        Text("•")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                        Text(item.sourceHost)
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                            .lineLimit(1)
+                    // Direct Link + Host URL Tek Satır
+                    HStack(spacing: 6) {
+                        Label(item.type.rawValue, systemImage: item.type == .torrent ? "arrow.2.circlepath" : "link")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: true, vertical: false)
+                        
+                        if !item.sourceHost.isEmpty {
+                            Text("•")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                            
+                            // ORTADAN TRUNCATE EDİLEN HOST KISMI
+                            Text(item.sourceHost)
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                                .lineLimit(1)
+                                .truncationMode(.middle) // Sığmazsa ortadan üç nokta koyar
+                        }
                     }
                 }
                 
-                HStack(alignment: .center, spacing: 6) {
-                    Text(item.url.absoluteString)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .onTapGesture { NSWorkspace.shared.open(item.url) }
-                    
-                    CopyLinkButton(url: item.url.absoluteString)
-                        .layoutPriority(1)
-                }
+                Spacer(minLength: 12)
+                
+                // ASLA EZİLMEYEN STATUS BADGE
+                StatusPill(status: item.status, accentColorHex: accentColorHex)
+                    .fixedSize(horizontal: true, vertical: true)
+                    .layoutPriority(10) // Layout motoruna "önce bunu çiz, kalanı daralt" der
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .clipped()
             
-            Spacer(minLength: 16)
-            
-            StatusPill(status: item.status, accentColorHex: accentColorHex)
-                .layoutPriority(1)
+            // Alt bar: Full URL
+            HStack(alignment: .center, spacing: 8) {
+                Text(item.url.absoluteString)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .onTapGesture { NSWorkspace.shared.open(item.url) }
+                
+                CopyLinkButton(url: item.url.absoluteString)
+                    .layoutPriority(2)
+            }
         }
     }
 
     private func sourceIcon(for item: DownloadItem) -> some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color.primary.opacity(0.06))
-
+            RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.primary.opacity(0.06))
             let ext = (item.filename as NSString).pathExtension
             if !ext.isEmpty, let utType = UTType(filenameExtension: ext) {
-                Image(nsImage: NSWorkspace.shared.icon(for: utType))
-                    .resizable().scaledToFit().frame(width: 28, height: 28)
+                Image(nsImage: NSWorkspace.shared.icon(for: utType)).resizable().scaledToFit().frame(width: 28, height: 28)
             } else if item.type == .torrent {
-                Image(nsImage: NSWorkspace.shared.icon(for: UTType(filenameExtension: "torrent") ?? .data))
-                    .resizable().scaledToFit().frame(width: 28, height: 28)
+                Image(nsImage: NSWorkspace.shared.icon(for: UTType(filenameExtension: "torrent") ?? .data)).resizable().scaledToFit().frame(width: 28, height: 28)
             } else {
-                Image(nsImage: NSWorkspace.shared.icon(for: .data))
-                    .resizable().scaledToFit().frame(width: 28, height: 28)
+                Image(nsImage: NSWorkspace.shared.icon(for: .data)).resizable().scaledToFit().frame(width: 28, height: 28)
             }
-        }
-        .frame(width: 52, height: 52)
+        }.frame(width: 52, height: 52)
     }
 
     private func storageCard(for item: DownloadItem) -> some View {
         inspectorCard {
-            Text("Storage")
-                .font(.headline)
-
-            pathRow(
-                title: "Destination",
-                systemImage: "folder",
-                path: item.destinationURL.deletingLastPathComponent().path(percentEncoded: false),
-                url: item.destinationURL.deletingLastPathComponent(),
-                isReveal: false
-            )
-
-            pathRow(
-                title: "Saved File",
-                systemImage: "doc",
-                path: item.destinationURL.path(percentEncoded: false),
-                url: item.destinationURL,
-                isReveal: true
-            )
+            Text("Storage").font(.headline)
+            pathRow(title: "Destination", systemImage: "folder", path: item.destinationURL.deletingLastPathComponent().path(percentEncoded: false), url: item.destinationURL.deletingLastPathComponent(), isReveal: false)
+            pathRow(title: "Saved File", systemImage: "doc", path: item.destinationURL.path(percentEncoded: false), url: item.destinationURL, isReveal: true)
         }
     }
 
     private func errorCard(message: String) -> some View {
         inspectorCard {
             HStack(alignment: .top, spacing: 12) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.red)
-
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.red)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Last Error")
-                        .font(.headline)
+                    Text("Last Error").font(.headline)
                     ScrollView {
-                        Text(message)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(nil)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .frame(maxHeight: 100)
-                    .clipped() // Fixes bleed over for large error logs
+                        Text(message).foregroundStyle(.secondary).lineLimit(nil).fixedSize(horizontal: false, vertical: true).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                    }.frame(maxHeight: 100).clipped()
                 }
             }
         }
@@ -214,65 +173,23 @@ struct DetailView: View {
     private func actionBar(for item: DownloadItem) -> some View {
         HStack(spacing: 10) {
             if item.status == .downloading || item.status == .queued {
-                Button(action: {
-                    engine.stop(item)
-                }) {
-                    Label("Pause", systemImage: "pause.fill")
-                }
-                .buttonStyle(ActionButtonStyle(prominent: true, hex: accentColorHex))
+                Button(action: { engine.stop(item) }) { Label("Pause", systemImage: "pause.fill") }.buttonStyle(ActionButtonStyle(prominent: true, hex: accentColorHex))
             } else {
-                Button(action: {
-                    engine.resume(item)
-                }) {
-                    Label("Resume", systemImage: "play.fill")
-                }
-                .buttonStyle(ActionButtonStyle(prominent: true, hex: accentColorHex))
+                Button(action: { engine.resume(item) }) { Label("Resume", systemImage: "play.fill") }.buttonStyle(ActionButtonStyle(prominent: true, hex: accentColorHex))
             }
-
             if item.status == .failed || item.status == .stopped {
-                Button(action: { engine.retry(item) }) {
-                    Label("Retry", systemImage: "arrow.clockwise")
-                }
-                .buttonStyle(ActionButtonStyle(prominent: false, hex: accentColorHex))
+                Button(action: { engine.retry(item) }) { Label("Retry", systemImage: "arrow.clockwise") }.buttonStyle(ActionButtonStyle(prominent: false, hex: accentColorHex))
             } else if item.status == .completed {
-                Button(action: { NSWorkspace.shared.open(item.destinationURL) }) {
-                    Label("Open File", systemImage: "doc.text.magnifyingglass")
-                }
-                .buttonStyle(ActionButtonStyle(prominent: false, hex: accentColorHex))
+                Button(action: { NSWorkspace.shared.open(item.destinationURL) }) { Label("Open File", systemImage: "doc.text.magnifyingglass") }.buttonStyle(ActionButtonStyle(prominent: false, hex: accentColorHex))
             }
-
             Menu {
-                Button {
-                    NSWorkspace.shared.activateFileViewerSelecting([item.destinationURL])
-                } label: {
-                    Label("Reveal in Finder", systemImage: "folder")
-                }
-                
-                Button {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(item.url.absoluteString, forType: .string)
-                } label: {
-                    Label("Copy Source URL", systemImage: "link")
-                }
-                
+                Button { NSWorkspace.shared.activateFileViewerSelecting([item.destinationURL]) } label: { Label("Reveal in Finder", systemImage: "folder") }
+                Button { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(item.url.absoluteString, forType: .string) } label: { Label("Copy Source URL", systemImage: "link") }
                 Divider()
-                
-                Button(role: .destructive) {
-                    onRequestRemove(item)
-                } label: {
-                    Label("Remove", systemImage: "trash")
-                }
+                Button(role: .destructive) { onRequestRemove(item) } label: { Label("Remove", systemImage: "trash") }
             } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: "ellipsis.circle")
-                    Text("More")
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 8, weight: .bold))
-                }
-            }
-            .buttonStyle(ActionButtonStyle(prominent: false, hex: accentColorHex))
-            .fixedSize()
-            
+                HStack(spacing: 5) { Image(systemName: "ellipsis.circle"); Text("More"); Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold)) }
+            }.buttonStyle(ActionButtonStyle(prominent: false, hex: accentColorHex)).fixedSize()
             Spacer(minLength: 0)
         }
     }
@@ -284,198 +201,104 @@ struct DetailView: View {
                 Text("•")
                 Label("Finished \(formatDate(completed))", systemImage: "checkmark.circle")
             }
-        }
-        .font(.caption)
-        .foregroundStyle(.secondary)
+        }.font(.caption).foregroundStyle(.secondary)
     }
 
     private func pathRow(title: String, systemImage: String, path: String, url: URL?, isReveal: Bool) -> some View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 6) {
-                Label(title, systemImage: systemImage)
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
-
-                Text(path)
-                    .font(.callout)
-                    .foregroundStyle(.primary)
-                    .textSelection(.enabled)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                Label(title, systemImage: systemImage).font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                Text(path).font(.callout).foregroundStyle(.primary).textSelection(.enabled).lineLimit(1).truncationMode(.middle).frame(maxWidth: .infinity, alignment: .leading)
             }
-            
             if let targetURL = url {
                 Button {
                     if isReveal { NSWorkspace.shared.activateFileViewerSelecting([targetURL]) }
                     else { NSWorkspace.shared.open(targetURL) }
                 } label: {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .padding(6)
-                        .background(Color.primary.opacity(0.06), in: Circle())
-                }
-                .buttonStyle(.plain)
-                .help(isReveal ? "Reveal in Finder" : "Open Folder")
+                    Image(systemName: "magnifyingglass").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary).padding(6).background(Color.primary.opacity(0.06), in: Circle())
+                }.buttonStyle(.plain).help(isReveal ? "Reveal in Finder" : "Open Folder")
             }
-        }
-        .padding(14)
-        .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }.padding(14).background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     private func metricTile(title: String, value: String, systemImage: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Label(title, systemImage: systemImage)
-                .font(.caption.weight(.medium))
-                .foregroundStyle(.secondary)
-
-            Text(value)
-                .font(.headline.weight(.semibold))
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14)
-        .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            Label(title, systemImage: systemImage).font(.caption.weight(.medium)).foregroundStyle(.secondary)
+            Text(value).font(.headline.weight(.semibold)).fixedSize(horizontal: false, vertical: true)
+        }.frame(maxWidth: .infinity, alignment: .leading).padding(14).background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     @ViewBuilder
     private func inspectorCard<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 18) {
-            content()
-        }
-        .padding(20)
-        .background(Color(NSColor.controlBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
-        }
-        .shadow(color: Color.black.opacity(0.12), radius: 5, x: 0, y: 2)
+        VStack(alignment: .leading, spacing: 18) { content() }.padding(20).background(Color(NSColor.controlBackgroundColor)).clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous)).overlay { RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Color.primary.opacity(0.08), lineWidth: 1) }.shadow(color: Color.black.opacity(0.12), radius: 5, x: 0, y: 2)
     }
 
     private func progressLabel(for item: DownloadItem) -> String {
-        if item.totalBytes > 0 || item.status == .completed {
-            return String(format: "%.1f%%", item.progress * 100)
-        }
+        if item.totalBytes > 0 || item.status == .completed { return String(format: "%.1f%%", item.progress * 100) }
         return item.status == .queued ? "Starting…" : item.status.rawValue
     }
     
     var progressColor: Color {
         switch item.status {
-        case .downloading, .completed, .failed, .stopped:
-            return matchProgressBarToAccent ? Color(hex: accentColorHex) : Color(hex: progressBarColorHex)
+        case .downloading, .completed, .failed, .stopped: return matchProgressBarToAccent ? Color(hex: accentColorHex) : Color(hex: progressBarColorHex)
         default: return .secondary
         }
     }
 
     private func formatDate(_ date: Date) -> String {
-        let f = DateFormatter()
-        f.dateStyle = .medium
-        f.timeStyle = .short
+        let f = DateFormatter(); f.dateStyle = .medium; f.timeStyle = .short
         return f.string(from: date)
     }
 }
 
 struct TorrentInfoCard: View {
     let item: DownloadItem
-    
     @State private var isExpanded = false
-    
     @AppStorage("accentColorHex") private var accentColorHex = "#0A84FF"
     @AppStorage("matchBadgesToAccent") private var matchBadgesToAccent = false
     @AppStorage("completedColorHex")   private var completedColorHex   = "#34C759"
-    
     @Environment(\.colorScheme) private var colorScheme
-    
     var completedColor: Color {
         let baseColor = Color(hex: completedColorHex)
         let matchedColor = matchBadgesToAccent ? baseColor.matchingThemeVisualWeight(of: Color(hex: accentColorHex)) : baseColor
         return matchedColor.adaptedForScheme(colorScheme)
     }
-    
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Torrent Metadata")
-                .font(.headline)
-            
+            Text("Torrent Metadata").font(.headline)
             if !item.subFiles.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
-                        Text("Files (\(item.subFiles.count))")
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(.secondary)
+                        Text("Files (\(item.subFiles.count))").font(.caption.weight(.medium)).foregroundStyle(.secondary)
                         Spacer()
                         if item.subFiles.count > 8 {
-                            Button(action: {
-                                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                                    isExpanded.toggle()
-                                }
-                            }) {
-                                Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                                    .font(.system(size: 10, weight: .bold))
-                                    .foregroundStyle(.secondary)
-                            }
-                            .buttonStyle(.plain)
+                            Button(action: { withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) { isExpanded.toggle() } }) { Image(systemName: isExpanded ? "chevron.up" : "chevron.down").font(.system(size: 10, weight: .bold)).foregroundStyle(.secondary) }.buttonStyle(.plain)
                         }
                     }
-                    
                     VStack(spacing: 0) {
                         if isExpanded {
-                            ScrollView {
-                                LazyVStack(spacing: 0) {
-                                    fileRows(item.subFiles)
-                                }
-                                .padding(.trailing, 8)
-                            }
-                            .frame(maxHeight: 250)
-                            .clipped() // Fixes bleed over for expanded scroll area
+                            ScrollView { LazyVStack(spacing: 0) { fileRows(item.subFiles) }.padding(.trailing, 8) }.frame(maxHeight: 250).clipped()
                         } else {
                             fileRows(Array(item.subFiles.prefix(8)))
-                            
-                            if item.subFiles.count > 8 {
-                                Text("+ \(item.subFiles.count - 8) more files")
-                                    .font(.caption).foregroundStyle(.tertiary).padding(.top, 8)
-                            }
+                            if item.subFiles.count > 8 { Text("+ \(item.subFiles.count - 8) more files").font(.caption).foregroundStyle(.tertiary).padding(.top, 8) }
                         }
-                    }
-                    .padding(14)
-                    .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }.padding(14).background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
             }
-        }
-        .padding(20)
-        .background(Color(NSColor.controlBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay { RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Color.primary.opacity(0.08), lineWidth: 1) }
-        .shadow(color: Color.black.opacity(0.12), radius: 5, x: 0, y: 2)
+        }.padding(20).background(Color(NSColor.controlBackgroundColor)).clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous)).overlay { RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Color.primary.opacity(0.08), lineWidth: 1) }.shadow(color: Color.black.opacity(0.12), radius: 5, x: 0, y: 2)
     }
-    
     @ViewBuilder
     private func fileRows(_ files: [SubFile]) -> some View {
         ForEach(files) { f in
             HStack {
                 Text(f.filename).font(.system(size: 12)).lineLimit(1).truncationMode(.middle)
                 Spacer()
-                
                 let isFinished = f.totalBytes > 0 && f.downloadedBytes >= f.totalBytes
                 let isEffectivelyPaused = f.isStopped || item.status == .stopped || item.status == .failed
-                
-                Text("\(formatBytes(f.downloadedBytes)) / \(formatBytes(f.totalBytes))")
-                    .font(.system(size: 11))
-                    .foregroundStyle(isEffectivelyPaused && !isFinished ? Color.secondary.opacity(0.5) : Color.secondary)
-                
-                if isFinished {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 11))
-                        .foregroundStyle(completedColor)
-                        .padding(.leading, 4)
-                }
-            }
-            .padding(.vertical, 8)
-            if f.id != files.last?.id {
-                Divider().opacity(0.5)
-            }
+                Text("\(formatBytes(f.downloadedBytes)) / \(formatBytes(f.totalBytes))").font(.system(size: 11)).foregroundStyle(isEffectivelyPaused && !isFinished ? Color.secondary.opacity(0.5) : Color.secondary)
+                if isFinished { Image(systemName: "checkmark.circle.fill").font(.system(size: 11)).foregroundStyle(completedColor).padding(.leading, 4) }
+            }.padding(.vertical, 8)
+            if f.id != files.last?.id { Divider().opacity(0.5) }
         }
     }
 }
