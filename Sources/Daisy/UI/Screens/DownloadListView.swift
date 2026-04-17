@@ -202,8 +202,8 @@ struct DownloadListView: View {
                                 }
                                 .frame(width: exactRowWidth, alignment: .leading)
                                 .background(index % 2 == 0 ? color1 : color2)
-                                .clipShape(RoundedRectangle(cornerRadius: 6))
-                                .contentShape(RoundedRectangle(cornerRadius: 6))
+                                .clipShape(RoundedRectangle(cornerRadius: 12))
+                                .contentShape(RoundedRectangle(cornerRadius: 12))
                                 .clipped()
                                 .onRightClick {
                                     cursorID = rowItem.id
