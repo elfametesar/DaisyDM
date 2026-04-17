@@ -160,12 +160,25 @@ struct DownloadListView: View {
     }
     
     private var scrollableList: some View {
-        GeometryReader { geo in
+        let emptyRowHeight: CGFloat = 28
+        
+        let color1 = Color(NSColor.controlBackgroundColor)
+        let color2 = enableBackgroundTint
+            ? Color(hex: accentColorHex).opacity(0.06)
+            : Color.primary.opacity(0.04)
+        
+        return GeometryReader { geo in
+            // Calculate exact available width (Geometry width minus the 8px padding on each side)
+            let exactRowWidth = max(0, geo.size.width - 16)
+            
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(spacing: 0) {
-                        LazyVStack(spacing: 0) {
-                            ForEach(flattenedRows) { rowItem in
+                        LazyVStack(spacing: 4) {
+                            ForEach(Array(flattenedRows.enumerated()), id: \.element.id) { indexedItem in
+                                let index = indexedItem.offset
+                                let rowItem = indexedItem.element
+                                
                                 Group {
                                     switch rowItem {
                                     case .main(let item):
@@ -180,6 +193,7 @@ struct DownloadListView: View {
                                                 }
                                             )
                                         )
+                                        
                                     case .sub(let parent, let file, let subIndex):
                                         SubFileRow(
                                             parent: parent,
@@ -189,8 +203,12 @@ struct DownloadListView: View {
                                         )
                                     }
                                 }
-                                .contentShape(Rectangle())
-                                // Row focus stripped intentionally to avoid macOS SwiftUI bugs
+                                // 👇 Locks the row to the exact list width, forcing it to narrow down
+                                .frame(width: exactRowWidth, alignment: .leading)
+                                .background(index % 2 == 0 ? color1 : color2)
+                                .clipShape(RoundedRectangle(cornerRadius: 6))
+                                .contentShape(RoundedRectangle(cornerRadius: 6))
+                                .clipped() // 👈 cleanly cuts off any overflowing columns
                                 .onRightClick {
                                     cursorID = rowItem.id
                                     if !selected.contains(rowItem.id) {
@@ -203,14 +221,19 @@ struct DownloadListView: View {
                                 }
                                 .contextMenu { rowContextMenu(rowItem) }
                                 .id(rowItem.id)
-
-                                if case .main = rowItem {
-                                    Divider().padding(.leading, 12)
-                                } else {
-                                    Divider().padding(.leading, 42)
-                                }
+                            }
+                            
+                            // ── Filler Empty Rows ──
+                            ForEach(0..<15, id: \.self) { emptyIndex in
+                                let combinedIndex = flattenedRows.count + emptyIndex
+                                HStack { Spacer() }
+                                    // 👇 Exact same fixed width as the filled rows
+                                    .frame(width: exactRowWidth, height: emptyRowHeight)
+                                    .background(combinedIndex % 2 == 0 ? color1 : color2)
+                                    .clipShape(RoundedRectangle(cornerRadius: 6))
                             }
                         }
+                        .padding(8)
                         Spacer(minLength: 90)
                     }
                     .frame(maxWidth: .infinity, minHeight: geo.size.height, alignment: .top)
@@ -224,14 +247,12 @@ struct DownloadListView: View {
                 }
                 .onChange(of: cursorID) { _, newID in
                     if let id = newID {
-                        // Dynamically scroll to keep selection in view
                         proxy.scrollTo(id, anchor: nil)
                     }
                 }
             }
         }
-        .background(enableBackgroundTint ? Color(hex: accentColorHex).opacity(0.04) : Color(NSColor.controlBackgroundColor))
-        // Parent Container catches all keyboard focus
+        .background(enableBackgroundTint ? Color(hex: accentColorHex).opacity(0.06) : Color(NSColor.windowBackgroundColor))
         .focusable()
         .focused($isListFocused)
         .focusEffectDisabled()
@@ -587,9 +608,7 @@ struct DownloadListView: View {
                 }
             }
             
-            if targetItems.contains(where: { $0.status == .completed || $0.status == .failed }) {
-                Button("Restart Download") { targetItems.forEach { engine.retry($0) } }
-            }
+            Button("Restart Download") { targetItems.forEach { engine.retry($0) } }
 
             Divider()
 
@@ -1007,7 +1026,8 @@ struct SubFileRow: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 6)
         .padding(.leading, 30) // Indented
-        .background(isSelected ? Color(hex: accentColorHex) : Color.black.opacity(0.03))
+        // Changed to .clear so the alternating colors show through unless selected
+        .background(isSelected ? Color(hex: accentColorHex) : Color.clear)
     }
 }
 
