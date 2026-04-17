@@ -2,8 +2,6 @@ import Foundation
 import AppKit
 import UserNotifications
 
-// MARK: - Extensions & UI Components
-
 extension NSColor {
     convenience init?(hex: String) {
         var s = hex.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -107,8 +105,6 @@ class DockProgressView: NSView {
     }
 }
 
-// MARK: - Models
-
 public enum DownloadStatus: String, Codable, Equatable {
     case queued      = "Queued"
     case downloading = "Downloading"
@@ -190,7 +186,6 @@ public final class DownloadItem: Identifiable, Codable, Hashable {
     public var userAgent: String?
     public var referer: String?
 
-    // HLS Tracking
     public var isHLS: Bool = false
     public var hlsSegmentsDone: Int32 = 0
     public var hlsSegmentsTotal: Int32 = 0
@@ -344,8 +339,6 @@ public final class DownloadItem: Identifiable, Codable, Hashable {
     }
 }
 
-// MARK: - HLS Static Bridge
-
 enum HLSBridge {
     typealias Closure = (Int32, Int32, Int64, Double, Double, Double) -> Void
 
@@ -373,8 +366,6 @@ enum HLSBridge {
     }
 }
 
-// MARK: - Engine
-
 @Observable
 @MainActor
 public final class DownloadEngine {
@@ -392,8 +383,6 @@ public final class DownloadEngine {
 
     private var activeCount: Int { items.filter { $0.status == .downloading }.count }
 
-    // MARK: - Engine Paths with Homebrew Check
-    
     nonisolated private func resolveHomebrewPath(for binary: String, isLibrary: Bool = false) -> String? {
         let basePath = isLibrary ? "lib" : "bin"
         let paths = [
@@ -547,10 +536,7 @@ public final class DownloadEngine {
     public func stop(_ item: DownloadItem, stopSubFiles: Bool = true) {
         guard item.status == .downloading || item.status == .queued else { return }
         
-        // Immediate signal to HLS engine
         item.hlsCancelPointer.pointee = 1
-        
-        // Force stop all underlying CLI processes
         killProcesses(item)
         
         item.status = .stopped
@@ -587,7 +573,6 @@ public final class DownloadEngine {
             return
         }
 
-        // Wipe old process references and start fresh
         item.processes = []
         startDownload(item)
     }
@@ -596,7 +581,6 @@ public final class DownloadEngine {
         killProcesses(item)
         item.retryCount = 0
         
-        // Reset timing and metadata
         item.totalActiveDuration = 0
         item.dateAdded = Date()
         
@@ -731,7 +715,7 @@ public final class DownloadEngine {
                 liveItem.hlsSegmentsTotal     = total
                 liveItem.hlsDownloadedSeconds = dlSecs
                 liveItem.hlsTotalSeconds      = totSecs
-                liveItem.speed                = speed // Triggers item.eta
+                liveItem.speed                = speed
                 liveItem._lastTickDate        = Date()
             }
         }
@@ -879,19 +863,15 @@ public final class DownloadEngine {
         let formatID = await MainActor.run { item.youtubeQuality ?? "bestvideo+bestaudio/best" }
         let browser = await MainActor.run { item.browser ?? "chrome" }
 
-        // EXTRACER: Ana thread'i dondurmamak için Task.detached kullanıyoruz
         await Task.detached(priority: .userInitiated) {
             let proc = Process()
             proc.executableURL = URL(fileURLWithPath: exe)
             
-            // --- KRİTİK: JS CHALLENGE İÇİN PATH ENJEKSİYONU ---
             var env = ProcessInfo.processInfo.environment
             let customPaths = "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
             env["PATH"] = customPaths
             proc.environment = env
-            // ------------------------------------------------
 
-            // Sadece video ve audio URL'lerini extract ediyoruz
             proc.arguments = ["--get-url", "-f", formatID, "--cookies-from-browser", browser, url]
 
             let pipe = Pipe()
@@ -911,10 +891,8 @@ public final class DownloadEngine {
                 let parts = output.components(separatedBy: .newlines).filter { !$0.isEmpty }
 
                 if parts.count >= 2 {
-                    // Video ve Audio linkleri ayrı geldi
                     await self.handleMultiPartYoutube(item, videoURL: parts[0], audioURL: parts[1])
                 } else if parts.count == 1 {
-                    // Tek bir birleşik link geldi
                     await MainActor.run {
                         item.url = URL(string: parts[0])!
                         self.continueStartDownload(item)
@@ -991,7 +969,6 @@ public final class DownloadEngine {
             var vSpeed: Double = 0
             var aSpeed: Double = 0
 
-            // Helper to parse Aria2 progress AND speed
             func sniff(_ line: String) -> (cur: Int64, tot: Int64, spd: Double)? {
                 let sizePattern = #"(?<cur>[\d\.]+[A-Z]iB)/(?<tot>[\d\.]+[A-Z]iB)"#
                 let speedPattern = #"DL:(?<spd>[\d\.]+[A-Z]iB)"#
@@ -1014,14 +991,13 @@ public final class DownloadEngine {
                 return (c > 0 || s > 0) ? (c, t, s) : nil
             }
 
-            // Video monitoring
             let vTask = Task {
                 for try await line in vPipe.fileHandleForReading.bytes.lines {
                     if let res = sniff(line) {
                         vBytes = res.cur; vTotal = res.tot; vSpeed = res.spd
                         await MainActor.run {
                             item.downloadedBytes = vBytes + aBytes
-                            item.speed = vSpeed + aSpeed // <--- SETTING SPEED TRIGGERS ETA
+                            item.speed = vSpeed + aSpeed
                             if vTotal > 0 && aTotal > 0 { item.totalBytes = vTotal + aTotal }
                             item._lastTickDate = Date()
                         }
@@ -1029,14 +1005,13 @@ public final class DownloadEngine {
                 }
             }
 
-            // Audio monitoring
             let aTask = Task {
                 for try await line in aPipe.fileHandleForReading.bytes.lines {
                     if let res = sniff(line) {
                         aBytes = res.cur; aTotal = res.tot; aSpeed = res.spd
                         await MainActor.run {
                             item.downloadedBytes = vBytes + aBytes
-                            item.speed = vSpeed + aSpeed // <--- SUM SPEEDS FOR ACCURACY
+                            item.speed = vSpeed + aSpeed
                             if vTotal > 0 && aTotal > 0 { item.totalBytes = vTotal + aTotal }
                             item._lastTickDate = Date()
                         }
@@ -1075,7 +1050,6 @@ public final class DownloadEngine {
         await Task.detached(priority: .userInitiated) {
             let proc = Process()
             proc.executableURL = URL(fileURLWithPath: ffmpeg)
-            // Kaliteyi bozmadan doğrudan birleştirme (Stream Copy)
             proc.arguments = ["-i", videoPath, "-i", audioPath, "-c", "copy", "-map", "0:v:0", "-map", "1:a:0", "-y", finalPath]
             
             await MainActor.run { item.processes.append(proc) }
@@ -1123,7 +1097,6 @@ public final class DownloadEngine {
         } else if item.type == .directLink {
             Task { await runCurl(item) }
         } else {
-            // ...
         }
     }
 
@@ -1878,8 +1851,6 @@ public final class DownloadEngine {
         for item in items where item.status == .downloading {
             let curBytes = item.downloadedBytes
             
-            // Increment the active duration by the tick interval (0.1s)
-            // This pauses the timer automatically if the status is not .downloading
             item.totalActiveDuration += 0.1
 
             if let lastDate = item._lastTickDate {
@@ -1924,10 +1895,8 @@ public final class DownloadEngine {
     private func killProcesses(_ item: DownloadItem) {
         for proc in item.processes {
             if proc.isRunning {
-                // First attempt a graceful interrupt
                 proc.interrupt()
                 
-                // If it doesn't die immediately, force terminate
                 DispatchQueue.global().asyncAfter(deadline: .now() + 0.2) {
                     if proc.isRunning {
                         proc.terminate()
@@ -2005,9 +1974,6 @@ func formatBytes(_ bytes: Int64) -> String {
     return String(format: v >= 100 ? "%.0f %@" : "%.1f %@", v, units[u])
 }
 
-// ---------------------------------------------------------
-// Helper for Formatting Time (HH:mm:ss or mm:ss)
-// ---------------------------------------------------------
 func formatDuration(_ seconds: Double) -> String {
     guard seconds > 0 else { return "00:00" }
     let totalSeconds = Int(seconds.rounded())

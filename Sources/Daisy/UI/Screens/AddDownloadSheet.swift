@@ -17,14 +17,9 @@ struct AddDownloadSheet: View {
     @State private var engine = DownloadEngine.shared
 
     @AppStorage("accentColorHex") private var accentColorHex = "#0A84FF"
-    @AppStorage("enableBackgroundTint") private var enableBackgroundTint = false
-
+    
     enum Field: Hashable {
         case urlInput
-        case chooseFolder
-        case connectionsSlider
-        case cancelBtn
-        case addBtn
     }
     @FocusState private var focusedField: Field?
 
@@ -48,6 +43,25 @@ struct AddDownloadSheet: View {
                 $0.scheme == "magnet" ||
                 ($0.isFileURL && $0.pathExtension.lowercased() == "torrent")
             }
+    }
+    
+    private func submit() {
+        guard isValid && !urlText.isEmpty else { return }
+        let urls = parsedURLs
+        if urls.count == 1 {
+            let info: [String: Any] = [
+                "url": urls[0],
+                "filename": "",
+                "cookies": "",
+                "referer": "",
+                "ua": "",
+                "forceHLS": false
+            ]
+            NotificationCenter.default.post(name: .confirmDownload, object: nil, userInfo: info)
+        } else {
+            engine.addDownload(urls: urls, destination: destination, connections: connections, youtubeQuality: nil)
+        }
+        onClose()
     }
 
     var body: some View {
@@ -77,38 +91,73 @@ struct AddDownloadSheet: View {
             Divider()
 
             VStack(alignment: .leading, spacing: 16) {
+                // MARK: - URL Input Section
                 VStack(alignment: .leading, spacing: 6) {
                     Text("URL / File").font(.callout.weight(.medium))
-                    HStack(alignment: .top) {
-                        Image(systemName: "link").foregroundStyle(.primary).font(.system(size: 13)).padding(.top, 4)
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: "link")
+                            .foregroundStyle(.secondary)
+                            .font(.system(size: 13))
+                            .padding(.top, 4)
+                        
                         ZStack(alignment: .topLeading) {
                             if urlText.isEmpty {
                                 Text("https://example.com/file1.zip\nPaste links, magnets, or drag .torrent files here")
-                                    .foregroundStyle(.primary).font(.system(size: 13)).padding(.top, 4).allowsHitTesting(false)
+                                    .foregroundStyle(.secondary.opacity(0.5))
+                                    .font(.system(size: 13))
+                                    .padding(.top, 4)
+                                    .allowsHitTesting(false)
                             }
-                            TextEditor(text: $urlText)
-                                .font(.system(size: 13))
-                                .scrollContentBackground(.hidden)
-                                .background(Color.clear)
-                                .frame(minHeight: 60, maxHeight: 120)
-                                .focused($focusedField, equals: .urlInput)
-                                .onChange(of: urlText) { _, newText in
-                                    isValid = !parsedURLs.isEmpty
-                                    triggerAutoResolveIfNeed(newText: urlText)
-                                }
-                                .disabled(isResolving)
+                            
+                            SubmitTextEditor(text: $urlText, onSubmit: {
+                                submit()
+                            })
+                            .frame(minHeight: 60, maxHeight: 120)
+                            .focused($focusedField, equals: .urlInput)
+                            .onChange(of: urlText) { _, newText in
+                                isValid = !parsedURLs.isEmpty
+                                triggerAutoResolveIfNeed(newText: urlText)
+                            }
+                            .disabled(isResolving)
                         }
+                        
+                        if !urlText.isEmpty {
+                            Button { urlText = "" } label: {
+                                Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary.opacity(0.6))
+                            }
+                            .buttonStyle(.plain)
+                            .padding(.top, 4)
+                        }
+                        
+                        // Fixed Divider
+                        Rectangle()
+                            .fill(Color.primary.opacity(0.15))
+                            .frame(width: 1)
+                            .frame(maxHeight: .infinity)
+                            .padding(.vertical, 4)
+                            .padding(.horizontal, 2)
+                        
+                        Button {
+                            if let s = NSPasteboard.general.string(forType: .string), !s.isEmpty {
+                                urlText = s
+                            }
+                        } label: {
+                            Image(systemName: "doc.on.clipboard").foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Paste from clipboard")
+                        .padding(.top, 4)
                     }
                     .padding(9)
-                    .background(Color.white.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
+                    .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
                     .overlay(RoundedRectangle(cornerRadius: 8).stroke(
-                        isValid ? Color(hex: accentColorHex).opacity(0.5) : Color.primary.opacity(0.08), lineWidth: 1))
+                        isValid ? Color(hex: accentColorHex).opacity(0.4) : Color.primary.opacity(0.1), lineWidth: 1))
                 }
 
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Save to").font(.callout.weight(.medium))
                     HStack {
-                        Image(systemName: "folder").foregroundStyle(.primary).font(.system(size: 13))
+                        Image(systemName: "folder").foregroundStyle(.secondary).font(.system(size: 13))
                         Text(destination.path(percentEncoded: false))
                             .font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.head)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -120,7 +169,8 @@ struct AddDownloadSheet: View {
                         .buttonStyle(ActionButtonStyle(prominent: false, hex: accentColorHex))
                     }
                     .padding(9)
-                    .background(Color.white.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
+                    .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.primary.opacity(0.1), lineWidth: 1))
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
@@ -128,8 +178,10 @@ struct AddDownloadSheet: View {
                         Text("Connections").font(.callout.weight(.medium))
                         Spacer()
                         Text("\(connections)").font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(Color(hex: accentColorHex))
                     }
                     Slider(value: Binding(get: { Double(connections) }, set: { connections = Int($0) }), in: 1...32, step: 1)
+                        .tint(Color(hex: accentColorHex))
                 }
             }
             .padding(20)
@@ -141,9 +193,7 @@ struct AddDownloadSheet: View {
                     .buttonStyle(ActionButtonStyle(prominent: false, hex: accentColorHex))
                 Spacer()
                 Button("Add Download") {
-                    let urls = parsedURLs
-                    engine.addDownload(urls: urls, destination: destination, connections: connections, youtubeQuality: nil)
-                    onClose()
+                    submit()
                 }
                 .buttonStyle(ActionButtonStyle(prominent: true, hex: accentColorHex))
                 .disabled(!isValid || urlText.isEmpty)
@@ -154,39 +204,26 @@ struct AddDownloadSheet: View {
         .background(VisualEffectView(material: .popover, blendingMode: .behindWindow).ignoresSafeArea())
         .onAppear {
             focusedField = .urlInput
-            
-            var startingText = ""
-            
-            // Prioritize Drag & Drop context
-            if !initialURLText.isEmpty {
-                startingText = initialURLText
-            }
-            // Fallback to Clipboard
-            else if let clip = NSPasteboard.general.string(forType: .string), !clip.trimmingCharacters(in: .whitespaces).isEmpty {
-                let lines = clip.components(separatedBy: .newlines)
-                    .map { $0.trimmingCharacters(in: .whitespaces) }
-                    .filter { !$0.isEmpty }
-                    .compactMap { str -> URL? in
-                        if str.hasPrefix("/") { return URL(fileURLWithPath: str) }
-                        if str.hasPrefix("file://") {
-                            let clean = str.replacingOccurrences(of: "file://", with: "")
-                            return URL(fileURLWithPath: clean.removingPercentEncoding ?? clean)
-                        }
-                        if let url = URL(string: str), url.scheme != nil { return url }
-                        if let enc = str.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-                           let url = URL(string: enc), url.scheme != nil { return url }
-                        return nil
-                    }
-                    .filter {
-                        $0.scheme?.hasPrefix("http") == true ||
-                        $0.scheme == "magnet" ||
-                        ($0.isFileURL && $0.pathExtension.lowercased() == "torrent")
-                    }
-                if !lines.isEmpty { startingText = clip.trimmingCharacters(in: .whitespaces) }
-            }
-            
-            if !startingText.isEmpty {
-                urlText = startingText
+            handleClipboardOnAppear()
+        }
+    }
+
+    private func handleClipboardOnAppear() {
+        if !initialURLText.isEmpty {
+            urlText = initialURLText
+            isValid = true
+            triggerAutoResolveIfNeed(newText: urlText)
+        } else if let clip = NSPasteboard.general.string(forType: .string), !clip.trimmingCharacters(in: .whitespaces).isEmpty {
+            let lines = clip.components(separatedBy: .newlines)
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+                .compactMap { str -> URL? in
+                    if str.hasPrefix("/") { return URL(fileURLWithPath: str) }
+                    if let url = URL(string: str), url.scheme != nil { return url }
+                    return nil
+                }
+            if !lines.isEmpty {
+                urlText = clip.trimmingCharacters(in: .whitespaces)
                 isValid = true
                 triggerAutoResolveIfNeed(newText: urlText)
             }
@@ -228,5 +265,58 @@ struct AddDownloadSheet: View {
                 return nil
             }
         } catch { return nil }
+    }
+}
+
+struct SubmitTextEditor: NSViewRepresentable {
+    @Binding var text: String
+    var onSubmit: () -> Void
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSTextView.scrollableTextView()
+        guard let textView = scrollView.documentView as? NSTextView else { return scrollView }
+        textView.delegate = context.coordinator
+        textView.font = .systemFont(ofSize: 13)
+        textView.drawsBackground = false
+        textView.isRichText = false
+        textView.allowsUndo = true
+        textView.backgroundColor = .clear
+        textView.textColor = .labelColor
+        textView.insertionPointColor = .labelColor
+        return scrollView
+    }
+
+    func updateNSView(_ nsView: NSScrollView, context: Context) {
+        guard let textView = nsView.documentView as? NSTextView else { return }
+        if textView.string != text {
+            textView.string = text
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    class Coordinator: NSObject, NSTextViewDelegate {
+        var parent: SubmitTextEditor
+        init(_ parent: SubmitTextEditor) { self.parent = parent }
+
+        func textDidChange(_ notification: Notification) {
+            guard let textView = notification.object as? NSTextView else { return }
+            parent.text = textView.string
+        }
+
+        func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+            if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+                if let event = NSApp.currentEvent, event.modifierFlags.contains(.shift) {
+                    textView.insertText("\n", replacementRange: textView.selectedRange())
+                    return true
+                } else {
+                    parent.onSubmit()
+                    return true
+                }
+            }
+            return false
+        }
     }
 }

@@ -65,7 +65,6 @@ struct DownloadListView: View {
 
     let onRequestRemove: ([DownloadItem]) -> Void
 
-    // REWRITTEN: Bulletproof UUID tracking instead of fragile numerical indices
     @State private var cursorID: UUID? = nil
     @State private var anchorID: UUID? = nil
     
@@ -161,14 +160,12 @@ struct DownloadListView: View {
     
     private var scrollableList: some View {
         let emptyRowHeight: CGFloat = 28
-        
         let color1 = Color(NSColor.controlBackgroundColor)
         let color2 = enableBackgroundTint
             ? Color(hex: accentColorHex).opacity(0.06)
             : Color.primary.opacity(0.04)
         
         return GeometryReader { geo in
-            // Calculate exact available width (Geometry width minus the 8px padding on each side)
             let exactRowWidth = max(0, geo.size.width - 16)
             
             ScrollViewReader { proxy in
@@ -203,12 +200,11 @@ struct DownloadListView: View {
                                         )
                                     }
                                 }
-                                // 👇 Locks the row to the exact list width, forcing it to narrow down
                                 .frame(width: exactRowWidth, alignment: .leading)
                                 .background(index % 2 == 0 ? color1 : color2)
                                 .clipShape(RoundedRectangle(cornerRadius: 6))
                                 .contentShape(RoundedRectangle(cornerRadius: 6))
-                                .clipped() // 👈 cleanly cuts off any overflowing columns
+                                .clipped()
                                 .onRightClick {
                                     cursorID = rowItem.id
                                     if !selected.contains(rowItem.id) {
@@ -223,17 +219,16 @@ struct DownloadListView: View {
                                 .id(rowItem.id)
                             }
                             
-                            // ── Filler Empty Rows ──
                             ForEach(0..<15, id: \.self) { emptyIndex in
                                 let combinedIndex = flattenedRows.count + emptyIndex
                                 HStack { Spacer() }
-                                    // 👇 Exact same fixed width as the filled rows
                                     .frame(width: exactRowWidth, height: emptyRowHeight)
                                     .background(combinedIndex % 2 == 0 ? color1 : color2)
                                     .clipShape(RoundedRectangle(cornerRadius: 6))
                             }
                         }
                         .padding(8)
+                        
                         Spacer(minLength: 90)
                     }
                     .frame(maxWidth: .infinity, minHeight: geo.size.height, alignment: .top)
@@ -244,6 +239,36 @@ struct DownloadListView: View {
                         cursorID = nil
                         anchorID = nil
                     }
+                }
+                .background {
+                    // Hidden buttons to catch Cmd + Up/Down for Selection + Jump
+                    Group {
+                        Button("") {
+                            if let first = flattenedRows.first {
+                                selected = [first.id]
+                                anchorID = first.id
+                                cursorID = first.id
+                                withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                                    proxy.scrollTo(first.id, anchor: .top)
+                                }
+                            }
+                        }
+                        .keyboardShortcut(.upArrow, modifiers: .command)
+
+                        Button("") {
+                            if let last = flattenedRows.last {
+                                selected = [last.id]
+                                anchorID = last.id
+                                cursorID = last.id
+                                withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                                    proxy.scrollTo(last.id, anchor: .bottom)
+                                }
+                            }
+                        }
+                        .keyboardShortcut(.downArrow, modifiers: .command)
+                    }
+                    .opacity(0)
+                    .allowsHitTesting(false)
                 }
                 .onChange(of: cursorID) { _, newID in
                     if let id = newID {
@@ -435,7 +460,6 @@ struct DownloadListView: View {
         }
     }
     
-    // MARK: - REWRITTEN: Bulletproof Arrow Navigation Logic
     private func handleArrow(_ dir: ArrowDirection) {
         let rows = flattenedRows
         guard !rows.isEmpty else { return }
@@ -445,7 +469,6 @@ struct DownloadListView: View {
 
         var currentIndex: Int? = nil
         
-        // Find current position securely using UUID
         if let cid = cursorID, let idx = rows.firstIndex(where: { $0.id == cid }) {
             currentIndex = idx
         } else if let sel = selected.first, selected.count == 1, let idx = rows.firstIndex(where: { $0.id == sel }) {
@@ -484,7 +507,6 @@ struct DownloadListView: View {
             }
         }
 
-        // Apply robust state updates
         let targetID = rows[nextIndex].id
         cursorID = targetID
 
@@ -1026,7 +1048,6 @@ struct SubFileRow: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 6)
         .padding(.leading, 30) // Indented
-        // Changed to .clear so the alternating colors show through unless selected
         .background(isSelected ? Color(hex: accentColorHex) : Color.clear)
     }
 }

@@ -78,14 +78,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ) { [weak self] note in
             guard
                 let info     = note.userInfo,
-                let url      = info["url"]      as? URL,
-                let filename = info["filename"] as? String,
-                let cookies  = info["cookies"]  as? String,
-                let referer  = info["referer"]  as? String,
-                let ua       = info["ua"]       as? String
+                let url      = info["url"]      as? URL
             else { return }
 
+            let filename = info["filename"] as? String ?? ""
+            let cookies  = info["cookies"]  as? String ?? ""
+            let referer  = info["referer"]  as? String ?? ""
+            let ua       = info["ua"]       as? String ?? ""
             let forceHLS = info["forceHLS"] as? Bool ?? false
+            let youtubeQuality = info["youtubeQuality"] as? String
 
             let request = ConfirmDownloadRequest(
                 url:      url,
@@ -93,7 +94,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 cookies:  cookies,
                 referer:  referer,
                 ua:       ua,
-                forceHLS: forceHLS
+                forceHLS: forceHLS,
+                youtubeQuality: youtubeQuality
             )
             self?.presentConfirmPanel(request: request)
         }
@@ -129,7 +131,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         panel.title                       = "Download"
         panel.titlebarAppearsTransparent  = true
-        panel.isMovableByWindowBackground = true
+        panel.isMovableByWindowBackground = false
         panel.level                       = .floating
         panel.isReleasedWhenClosed        = false
         panel.backgroundColor             = .clear
@@ -152,6 +154,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         userAgent:   confirmedRequest.ua.isEmpty       ? nil : confirmedRequest.ua,
                         referer:     confirmedRequest.referer.isEmpty  ? nil : confirmedRequest.referer,
                         filename:    confirmedRequest.filename.isEmpty ? nil : confirmedRequest.filename,
+                        youtubeQuality: confirmedRequest.youtubeQuality?.isEmpty == false ? confirmedRequest.youtubeQuality : nil,
                         isHLS:       confirmedRequest.forceHLS
                     )
                     NSApp.activate(ignoringOtherApps: true)

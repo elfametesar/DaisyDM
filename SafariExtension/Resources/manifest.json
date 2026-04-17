@@ -1,25 +1,31 @@
 {
   "manifest_version": 3,
-  "name": "Dispatch Downloader",
+  "name": "Daisy DM",
   "version": "1.1",
-  "description": "Intercepts downloads and sends them directly to the Dispatch Mac app — no dialogs.",
+  "description": "Intercepts downloads and sends them directly to the Daisy Mac app — no dialogs.",
   "background": {
-    "service_worker": "background.js",
-    "type": "module"
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Dispatch Settings"
   },
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
       "js": ["content.js"],
-      "run_at": "document_idle"
+      "run_at": "document_start",
+      "all_frames": true,
+      "match_about_blank": true
     }
   ],
   "permissions": [
+    "downloads",
     "contextMenus",
     "storage",
     "tabs",
     "cookies",
-    "nativeMessaging"
+    "webRequest"
   ],
   "host_permissions": ["<all_urls>"]
 }

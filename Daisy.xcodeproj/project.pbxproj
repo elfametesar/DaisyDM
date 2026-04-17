@@ -19,6 +19,11 @@
 		7161C5EF2F8D769B00FFB581 /* SharedUIComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7161C5EE2F8D769600FFB581 /* SharedUIComponents.swift */; };
 		7161C5F12F8D7A9800FFB581 /* RemoveDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7161C5F02F8D7A9600FFB581 /* RemoveDialog.swift */; };
 		7161C5F32F8D7AB300FFB581 /* PropertiesSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7161C5F22F8D7AAF00FFB581 /* PropertiesSheet.swift */; };
+		71C1BC452F921442004C7F1A /* popup.js in Resources */ = {isa = PBXBuildFile; fileRef = 71C1BC432F921442004C7F1A /* popup.js */; };
+		71C1BC462F921442004C7F1A /* background.js in Resources */ = {isa = PBXBuildFile; fileRef = 71C1BC3F2F921442004C7F1A /* background.js */; };
+		71C1BC472F921442004C7F1A /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = 71C1BC412F921442004C7F1A /* manifest.json */; };
+		71C1BC482F921442004C7F1A /* popup.html in Resources */ = {isa = PBXBuildFile; fileRef = 71C1BC422F921442004C7F1A /* popup.html */; };
+		71C1BC492F921442004C7F1A /* content.js in Resources */ = {isa = PBXBuildFile; fileRef = 71C1BC402F921442004C7F1A /* content.js */; };
 		8DE4E266805149234A8741FE /* DaisyExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 7A117A8396344D68906886AE /* DaisyExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		94239571324F1E220C2EDA5A /* AddDownloadSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB44EE0F7D6EA3AA72232245 /* AddDownloadSheet.swift */; };
 		A632EED8E7FCE3E2E9321090 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECF7392741EE1B516970CA7B /* SettingsView.swift */; };
@@ -94,6 +99,11 @@
 		7161C5F02F8D7A9600FFB581 /* RemoveDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoveDialog.swift; sourceTree = "<group>"; };
 		7161C5F22F8D7AAF00FFB581 /* PropertiesSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PropertiesSheet.swift; sourceTree = "<group>"; };
 		71C1BBEB2F90C347004C7F1A /* HLSBridge-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "HLSBridge-Bridging-Header.h"; sourceTree = "<group>"; };
+		71C1BC3F2F921442004C7F1A /* background.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = background.js; sourceTree = "<group>"; };
+		71C1BC402F921442004C7F1A /* content.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = content.js; sourceTree = "<group>"; };
+		71C1BC412F921442004C7F1A /* manifest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = manifest.json; sourceTree = "<group>"; };
+		71C1BC422F921442004C7F1A /* popup.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = popup.html; sourceTree = "<group>"; };
+		71C1BC432F921442004C7F1A /* popup.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = popup.js; sourceTree = "<group>"; };
 		7A117A8396344D68906886AE /* DaisyExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = DaisyExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		A0159ADC2E90F823FF4B7A57 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		AA11BB22CC33DD44EE55FF67 /* ConfirmDownloadView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfirmDownloadView.swift; sourceTree = "<group>"; };
@@ -173,6 +183,18 @@
 			name = Products;
 			sourceTree = "<group>";
 		};
+		71C1BC442F921442004C7F1A /* chrome_ext */ = {
+			isa = PBXGroup;
+			children = (
+				71C1BC3F2F921442004C7F1A /* background.js */,
+				71C1BC402F921442004C7F1A /* content.js */,
+				71C1BC412F921442004C7F1A /* manifest.json */,
+				71C1BC422F921442004C7F1A /* popup.html */,
+				71C1BC432F921442004C7F1A /* popup.js */,
+			);
+			path = chrome_ext;
+			sourceTree = "<group>";
+		};
 		746B01343AD58FE591E8AC47 /* Daisy */ = {
 			isa = PBXGroup;
 			children = (
@@ -199,6 +221,7 @@
 			isa = PBXGroup;
 			children = (
 				7108AF5B2F8974030059958D /* Assets.xcassets */,
+				71C1BC442F921442004C7F1A /* chrome_ext */,
 				746B01343AD58FE591E8AC47 /* Daisy */,
 				7E590CAD0CB9803F64394251 /* Handler */,
 				0A1B2C3D4E5F60718293A305 /* Resources */,
@@ -343,6 +366,11 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				71C1BC452F921442004C7F1A /* popup.js in Resources */,
+				71C1BC462F921442004C7F1A /* background.js in Resources */,
+				71C1BC472F921442004C7F1A /* manifest.json in Resources */,
+				71C1BC482F921442004C7F1A /* popup.html in Resources */,
+				71C1BC492F921442004C7F1A /* content.js in Resources */,
 				AA000001BB000001CC000001 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
