@@ -53,6 +53,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         LocalServer.shared.start()
+        
+        SafariInterceptor.shared.start()
 
         NSAppleEventManager.shared().setEventHandler(
             self,
@@ -60,16 +62,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             forEventClass: AEEventClass(kInternetEventClass),
             andEventID: AEEventID(kAEGetURL)
         )
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            SFSafariApplication.showPreferencesForExtension(
-                withIdentifier: self.safariExtensionBundleIdentifier
-            ) { error in
-                if let error {
-                    NSLog("Failed to open Safari extension prefs: %@", error.localizedDescription)
-                }
-            }
-        }
 
         confirmObserver = NotificationCenter.default.addObserver(
             forName: .confirmDownload,
@@ -100,6 +92,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.presentConfirmPanel(request: request)
         }
     }
+    
+    func applicationWillTerminate(_ aNotification: Notification) {
+        SafariInterceptor.shared.stop()
+    }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ app: NSApplication) -> Bool { false }
 
@@ -116,8 +112,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             URLSchemeHandler.handle(url)
         }
     }
-
-    // MARK: - Confirm Download Panel
 
     private func presentConfirmPanel(request: ConfirmDownloadRequest) {
         confirmPanel?.close()

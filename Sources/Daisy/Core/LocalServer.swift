@@ -1,4 +1,3 @@
-// MARK: - LocalServer.swift
 import Foundation
 import Network
 import AppKit
@@ -12,6 +11,44 @@ struct DownloadPayload: Decodable {
     let youtubeQuality: String?
     let forceHLS: Bool?
     let browser: String?
+    
+    // Explicit memberwise initializer for manual creation
+    init(url: String, filename: String?, cookies: String?, referer: String?, ua: String?, youtubeQuality: String?, forceHLS: Bool?, browser: String?) {
+        self.url = url
+        self.filename = filename
+        self.cookies = cookies
+        self.referer = referer
+        self.ua = ua
+        self.youtubeQuality = youtubeQuality
+        self.forceHLS = forceHLS
+        self.browser = browser
+    }
+    
+    enum CodingKeys: String, CodingKey {
+        case url, filename, cookies, referer, ua, youtubeQuality, forceHLS, browser
+    }
+    
+    // Flexible decoder to handle String or Int from Extension JS
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        url = try container.decode(String.self, forKey: .url)
+        filename = try container.decodeIfPresent(String.self, forKey: .filename)
+        cookies = try container.decodeIfPresent(String.self, forKey: .cookies)
+        referer = try container.decodeIfPresent(String.self, forKey: .referer)
+        ua = try container.decodeIfPresent(String.self, forKey: .ua)
+        
+        // Handle youtubeQuality as String, Int, or Null
+        if let qInt = try? container.decodeIfPresent(Int.self, forKey: .youtubeQuality) {
+            youtubeQuality = String(qInt)
+        } else if let qStr = try? container.decodeIfPresent(String.self, forKey: .youtubeQuality) {
+            youtubeQuality = qStr
+        } else {
+            youtubeQuality = nil
+        }
+        
+        forceHLS = try container.decodeIfPresent(Bool.self, forKey: .forceHLS)
+        browser = try container.decodeIfPresent(String.self, forKey: .browser)
+    }
 }
 
 class LocalServer {
@@ -20,24 +57,18 @@ class LocalServer {
     private let portRange = 6840...6850
 
     func start(port: Int = 6840) {
-        guard port <= portRange.upperBound else {
-            print("❌ Failed to find open port for Daisy Local Server.")
-            return
-        }
+        guard port <= portRange.upperBound else { return }
 
         do {
             let nwPort = NWEndpoint.Port(integerLiteral: NWEndpoint.Port.IntegerLiteralType(port))
             listener = try NWListener(using: .tcp, on: nwPort)
 
             listener?.stateUpdateHandler = { [weak self] state in
-                switch state {
-                case .ready:
+                if case .ready = state {
                     print("🚀 Daisy Local Server listening on port \(port)")
-                case .failed:
+                } else if case .failed = state {
                     self?.listener?.cancel()
                     self?.start(port: port + 1)
-                default:
-                    break
                 }
             }
 
@@ -93,57 +124,30 @@ class LocalServer {
                 }
 
                 let bodyData = newData.subdata(in: bodyStartIndex..<(bodyStartIndex + expectedLength))
-                
                 let resHeaders = "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: POST, OPTIONS, GET\r\nAccess-Control-Allow-Headers: Content-Type, X-Filename\r\nConnection: close\r\n\r\n"
 
                 if headers.hasPrefix("OPTIONS") {
                     connection.send(content: resHeaders.data(using: .utf8)!, completion: .contentProcessed { _ in connection.cancel() })
                     return
                 }
-
-                if headers.hasPrefix("POST /torrent") {
-                    var filename = "download.torrent"
-                    for line in headers.components(separatedBy: "\r\n") {
-                        let lower = line.lowercased()
-                        if lower.hasPrefix("x-filename:") {
-                            let v = line.dropFirst("x-filename:".count).trimmingCharacters(in: .whitespaces)
-                            if !v.isEmpty { filename = v }
-                        }
-                    }
-                    
-                    let dest = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first!
-                    var finalURL = dest.appendingPathComponent(filename)
-                    
-                    var i = 1
-                    let base = finalURL.deletingPathExtension().lastPathComponent
-                    let ext = finalURL.pathExtension
-                    while FileManager.default.fileExists(atPath: finalURL.path) {
-                        let name = ext.isEmpty ? "\(base) (\(i))" : "\(base) (\(i)).\(ext)"
-                        finalURL = dest.appendingPathComponent(name)
-                        i += 1
-                    }
-
-                    if (try? bodyData.write(to: finalURL)) != nil {
+                
+                if headers.hasPrefix("POST /setenabled") {
+                    if let body = String(data: bodyData, encoding: .utf8),
+                       let json = try? JSONSerialization.jsonObject(with: bodyData) as? [String: Any],
+                       let enabled = json["enabled"] as? Bool {
                         DispatchQueue.main.async {
-                            let item = DownloadItem(url: URL(string: "data:blank")!, filename: finalURL.lastPathComponent, destination: dest)
-                            item.status = .completed
-                            item.totalBytes = Int64(bodyData.count)
-                            item.downloadedBytes = Int64(bodyData.count)
-                            item.dateCompleted = Date()
-                            item.destinationURL = finalURL
-                            
-                            DownloadEngine.shared.items.insert(item, at: 0)
-                            DownloadEngine.shared.persist()
-                            NSApp.activate(ignoringOtherApps: true)
+                            SafariInterceptor.shared.isEnabled = enabled
+                            print("🔧 SafariInterceptor.isEnabled = \(enabled)")
                         }
                     }
                     connection.send(content: resHeaders.data(using: .utf8)!, completion: .contentProcessed { _ in connection.cancel() })
                     return
                 }
 
-                // Handle JSON POST requests
                 if headers.hasPrefix("POST") {
-                    if let payload = try? JSONDecoder().decode(DownloadPayload.self, from: bodyData) {
+                    do {
+                        let payload = try JSONDecoder().decode(DownloadPayload.self, from: bodyData)
+                        
                         var sanitizedUrl = payload.url
                         if sanitizedUrl.contains("application/x-bittorrent") {
                             sanitizedUrl = sanitizedUrl.replacingOccurrences(of: "application/x-bittorrent", with: "application/octet-stream")
@@ -160,8 +164,11 @@ class LocalServer {
                             browser: payload.browser
                         )
                         
-                        // ALWAYS show confirmation for all downloads including YouTube
-                        DispatchQueue.main.async { self.showConfirmation(for: sanitizedPayload) }
+                        DispatchQueue.main.async {
+                            self.showConfirmation(for: sanitizedPayload)
+                        }
+                    } catch {
+                        print("❌ Failed to decode payload: \(error)")
                     }
                     connection.send(content: resHeaders.data(using: .utf8)!, completion: .contentProcessed { _ in connection.cancel() })
                     return
@@ -177,7 +184,10 @@ class LocalServer {
     }
 
     private func showConfirmation(for payload: DownloadPayload) {
-        guard let url = URL(string: payload.url) else { return }
+        guard let url = URL(string: payload.url) ?? URL(string: payload.url.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "") else {
+            return
+        }
+        
         NSApp.activate(ignoringOtherApps: true)
         NotificationCenter.default.post(
             name: .confirmDownload,
@@ -190,7 +200,7 @@ class LocalServer {
                 "ua":             payload.ua       ?? "",
                 "youtubeQuality": payload.youtubeQuality ?? "",
                 "forceHLS":       payload.forceHLS ?? false,
-                "browser":        payload.browser  ?? ""  // FIXED: Pass the browser to the UI!
+                "browser":        payload.browser  ?? ""
             ]
         )
     }

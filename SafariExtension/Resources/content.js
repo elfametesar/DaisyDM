@@ -301,27 +301,65 @@ document.createElement = function(tag, ...args) {
         style.textContent = `
             .daisydm-overlay-container { position: fixed; z-index: 2147483647; background: rgba(28, 28, 30, 0.85); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 10px; font-family: -apple-system, sans-serif; box-shadow: 0 12px 24px rgba(0,0,0,0.4); display: none; flex-direction: column; min-width: 220px; transition: opacity 0.2s, transform 0.2s; opacity: 0; transform: translateY(5px); pointer-events: auto; }
             .daisydm-overlay-container.visible { display: flex; opacity: 1; transform: translateY(0); }
-            .daisydm-overlay-header { background: #334155; color: white; padding: 10px 14px; font-size: 13px; font-weight: 600; cursor: pointer; display: flex; justify-content: space-between; align-items: center; border-radius: 10px 10px 0 0; }
+            .daisydm-overlay-container.scroll-hidden { opacity: 0; pointer-events: none; }
+            .daisydm-overlay-header { background: #334155; color: white; padding: 10px 14px; font-size: 13px; font-weight: 600; cursor: pointer; display: flex; justify-content: space-between; align-items: center; border-radius: 10px 10px 0 0; gap: 8px; }
             .daisydm-overlay-dropdown { display: none; flex-direction: column; max-height: 280px; overflow-y: auto; background: transparent; }
             .daisydm-overlay-container.expanded .daisydm-overlay-dropdown { display: flex; border-top: 1px solid rgba(255, 255, 255, 0.1); }
             .daisydm-overlay-option { padding: 12px 14px; font-size: 13px; color: #efeff4; cursor: pointer; border-bottom: 1px solid rgba(255, 255, 255, 0.05); display: flex; justify-content: space-between; align-items: center; }
             .daisydm-overlay-option:hover { background: rgba(255, 255, 255, 0.1); color: #fff; }
             .daisydm-badge { font-size: 10px; background: rgba(255, 255, 255, 0.15); color: #aaa; padding: 2px 6px; border-radius: 4px; text-transform: uppercase; font-weight: 700; }
+            .daisydm-close-btn { background: none; border: none; color: rgba(255,255,255,0.5); font-size: 16px; line-height: 1; cursor: pointer; padding: 0 0 0 4px; flex-shrink: 0; }
+            .daisydm-close-btn:hover { color: #fff; }
         `;
         document.head.appendChild(style);
 
         const overlayMap = new WeakMap();
+        // Track dismissed overlays by element so they stay gone until page refresh
+        const dismissedEls = new WeakSet();
+
+        // Hide all visible overlays while scrolling, restore after scroll stops
+        let scrollTimer = null;
+        let allContainers = [];
+        window.addEventListener('scroll', () => {
+            allContainers.forEach(c => c.classList.add('scroll-hidden'));
+            clearTimeout(scrollTimer);
+            scrollTimer = setTimeout(() => {
+                allContainers.forEach(c => c.classList.remove('scroll-hidden'));
+            }, 300);
+        }, { passive: true });
 
         function createOverlay(targetEl) {
             if (overlayMap.has(targetEl)) return;
+            if (dismissedEls.has(targetEl)) return;
+
             const container = document.createElement('div');
             container.className = 'daisydm-overlay-container';
-            container.innerHTML = `<div class="daisydm-overlay-header">Daisy Download</div><div class="daisydm-overlay-dropdown"></div>`;
+            container.innerHTML = `
+                <div class="daisydm-overlay-header">
+                    <span style="flex:1">Daisy Download</span>
+                    <button class="daisydm-close-btn" title="Dismiss">✕</button>
+                </div>
+                <div class="daisydm-overlay-dropdown"></div>
+            `;
             document.body.appendChild(container);
             overlayMap.set(targetEl, container);
+            allContainers.push(container);
 
             const dropdown = container.querySelector('.daisydm-overlay-dropdown');
+
+            // Close button — dismisses for the rest of the page session
+            container.querySelector('.daisydm-close-btn').onclick = (e) => {
+                e.stopPropagation();
+                container.classList.remove('visible', 'expanded');
+                container.style.display = 'none';
+                dismissedEls.add(targetEl);
+                // Remove from allContainers so scroll logic ignores it
+                allContainers = allContainers.filter(c => c !== container);
+            };
+
             container.querySelector('.daisydm-overlay-header').onclick = (e) => {
+                // Don't toggle if the close button was clicked
+                if (e.target.classList.contains('daisydm-close-btn')) return;
                 e.stopPropagation();
                 container.classList.toggle('expanded');
                 if (container.classList.contains('expanded')) populateDropdown(targetEl, dropdown);
@@ -333,8 +371,14 @@ document.createElement = function(tag, ...args) {
                 container.style.left = (rect.left + window.scrollX + 15) + 'px';
             };
 
-            targetEl.addEventListener('mouseenter', () => { updatePos(); container.classList.add('visible'); });
+            targetEl.addEventListener('mouseenter', () => {
+                if (dismissedEls.has(targetEl)) return;
+                updatePos();
+                container.classList.add('visible');
+            });
+
             document.addEventListener('mousemove', (e) => {
+                if (dismissedEls.has(targetEl)) return;
                 const rect = targetEl.getBoundingClientRect();
                 const over = e.clientX >= rect.left - 30 && e.clientX <= rect.right + 30 && e.clientY >= rect.top - 30 && e.clientY <= rect.bottom + 30;
                 if (!over && !container.classList.contains('expanded')) container.classList.remove('visible');
