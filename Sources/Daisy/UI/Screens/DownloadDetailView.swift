@@ -87,7 +87,6 @@ struct DetailView: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
 
-                    // Direct Link + Host URL Tek Satır
                     HStack(spacing: 6) {
                         Label(item.type.rawValue, systemImage: item.type == .torrent ? "arrow.2.circlepath" : "link")
                             .font(.caption.weight(.medium))
@@ -99,25 +98,22 @@ struct DetailView: View {
                                 .font(.caption)
                                 .foregroundStyle(.tertiary)
                             
-                            // ORTADAN TRUNCATE EDİLEN HOST KISMI
                             Text(item.sourceHost)
                                 .font(.caption)
                                 .foregroundStyle(.tertiary)
                                 .lineLimit(1)
-                                .truncationMode(.middle) // Sığmazsa ortadan üç nokta koyar
+                                .truncationMode(.middle)
                         }
                     }
                 }
                 
                 Spacer(minLength: 12)
                 
-                // ASLA EZİLMEYEN STATUS BADGE
                 StatusPill(status: item.status, accentColorHex: accentColorHex)
                     .fixedSize(horizontal: true, vertical: true)
-                    .layoutPriority(10) // Layout motoruna "önce bunu çiz, kalanı daralt" der
+                    .layoutPriority(10)
             }
             
-            // Alt bar: Full URL
             HStack(alignment: .center, spacing: 8) {
                 Text(item.url.absoluteString)
                     .font(.caption)

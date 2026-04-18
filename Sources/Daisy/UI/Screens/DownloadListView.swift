@@ -6,7 +6,7 @@ import UniformTypeIdentifiers
 struct RightClickModifier: ViewModifier {
     let action: () -> Void
     func body(content: Content) -> some View {
-        content.background(RightClickCatcher(action: action))
+        content.overlay(RightClickCatcher(action: action))
     }
 }
 
@@ -27,12 +27,17 @@ class RightClickCatcherView: NSView {
     
     override func rightMouseDown(with event: NSEvent) {
         onRightClick?()
+        // Pass the event up the responder chain so SwiftUI's ContextMenu still fires
         super.rightMouseDown(with: event)
     }
     
     override func hitTest(_ point: NSPoint) -> NSView? {
+        // Only intercept right clicks; let left clicks pass through to standard onTapGestures
         guard let event = NSApp.currentEvent, event.type == .rightMouseDown else { return nil }
-        return bounds.contains(point) ? self : nil
+        
+        // 'point' is in the superview's coordinate space. We must convert it to local coordinates.
+        let localPoint = convert(point, from: superview)
+        return bounds.contains(localPoint) ? self : nil
     }
 }
 
@@ -67,6 +72,7 @@ struct DownloadListView: View {
 
     @State private var cursorID: UUID? = nil
     @State private var anchorID: UUID? = nil
+    @State private var rightClickedID: UUID? = nil
     
     @State private var propertiesItem: DownloadItem? = nil
     @State private var expandedItems: Set<UUID> = []
@@ -135,6 +141,10 @@ struct DownloadListView: View {
         .sheet(item: $propertiesItem) { item in
             PropertiesSheet(item: item)
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSMenu.didEndTrackingNotification)) { _ in
+            // Clears the right-click border when the context menu is dismissed
+            rightClickedID = nil
+        }
     }
     
     @ViewBuilder
@@ -173,58 +183,23 @@ struct DownloadListView: View {
                     VStack(spacing: 0) {
                         LazyVStack(spacing: 4) {
                             ForEach(Array(flattenedRows.enumerated()), id: \.element.id) { indexedItem in
-                                let index = indexedItem.offset
-                                let rowItem = indexedItem.element
-                                
-                                Group {
-                                    switch rowItem {
-                                    case .main(let item):
-                                        DownloadRow(
-                                            item: item,
-                                            isSelected: selected.contains(item.id),
-                                            isExpanded: Binding(
-                                                get: { expandedItems.contains(item.id) },
-                                                set: { val in
-                                                    if val { expandedItems.insert(item.id) }
-                                                    else { expandedItems.remove(item.id) }
-                                                }
-                                            )
-                                        )
-                                        
-                                    case .sub(let parent, let file, let subIndex):
-                                        SubFileRow(
-                                            parent: parent,
-                                            file: file,
-                                            index: subIndex,
-                                            isSelected: selected.contains(file.id)
-                                        )
-                                    }
-                                }
-                                .frame(width: exactRowWidth, alignment: .leading)
-                                .background(index % 2 == 0 ? color1 : color2)
-                                .clipShape(RoundedRectangle(cornerRadius: 12))
-                                .contentShape(RoundedRectangle(cornerRadius: 12))
-                                .clipped()
-                                .onRightClick {
-                                    cursorID = rowItem.id
-                                    if !selected.contains(rowItem.id) {
-                                        selected = [rowItem.id]
-                                        anchorID = rowItem.id
-                                    }
-                                }
-                                .onTapGesture {
-                                    handleRowTap(rowItem: rowItem)
-                                }
-                                .contextMenu { rowContextMenu(rowItem) }
-                                .id(rowItem.id)
+                                listRow(
+                                    rowItem: indexedItem.element,
+                                    index: indexedItem.offset,
+                                    exactRowWidth: exactRowWidth,
+                                    color1: color1,
+                                    color2: color2
+                                )
                             }
                             
                             ForEach(0..<15, id: \.self) { emptyIndex in
-                                let combinedIndex = flattenedRows.count + emptyIndex
-                                HStack { Spacer() }
-                                    .frame(width: exactRowWidth, height: emptyRowHeight)
-                                    .background(combinedIndex % 2 == 0 ? color1 : color2)
-                                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                                emptyListRow(
+                                    index: flattenedRows.count + emptyIndex,
+                                    exactRowWidth: exactRowWidth,
+                                    emptyRowHeight: emptyRowHeight,
+                                    color1: color1,
+                                    color2: color2
+                                )
                             }
                         }
                         .padding(8)
@@ -232,43 +207,18 @@ struct DownloadListView: View {
                         Spacer(minLength: 90)
                     }
                     .frame(maxWidth: .infinity, minHeight: geo.size.height, alignment: .top)
-                    .contentShape(Rectangle())
+                    .contentShape(Rectangle()) // Explicit shape capturing hits
                     .onTapGesture {
+                        // Tapping outside list elements triggers this, removing highlights
                         isListFocused = true
                         selected.removeAll()
                         cursorID = nil
                         anchorID = nil
+                        rightClickedID = nil
                     }
                 }
                 .background {
-                    // Hidden buttons to catch Cmd + Up/Down for Selection + Jump
-                    Group {
-                        Button("") {
-                            if let first = flattenedRows.first {
-                                selected = [first.id]
-                                anchorID = first.id
-                                cursorID = first.id
-                                withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
-                                    proxy.scrollTo(first.id, anchor: .top)
-                                }
-                            }
-                        }
-                        .keyboardShortcut(.upArrow, modifiers: .command)
-
-                        Button("") {
-                            if let last = flattenedRows.last {
-                                selected = [last.id]
-                                anchorID = last.id
-                                cursorID = last.id
-                                withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
-                                    proxy.scrollTo(last.id, anchor: .bottom)
-                                }
-                            }
-                        }
-                        .keyboardShortcut(.downArrow, modifiers: .command)
-                    }
-                    .opacity(0)
-                    .allowsHitTesting(false)
+                    hiddenNavigationButtons(proxy: proxy)
                 }
                 .onChange(of: cursorID) { _, newID in
                     if let id = newID {
@@ -350,6 +300,107 @@ struct DownloadListView: View {
                 isListFocused = true
             }
         }
+    }
+    
+    // MARK: - Extracted View Builders to appease the Compiler
+
+    @ViewBuilder
+    private func listRow(
+        rowItem: ListRowItem,
+        index: Int,
+        exactRowWidth: CGFloat,
+        color1: Color,
+        color2: Color
+    ) -> some View {
+        Group {
+            switch rowItem {
+            case .main(let item):
+                DownloadRow(
+                    item: item,
+                    isSelected: selected.contains(item.id),
+                    isExpanded: Binding(
+                        get: { expandedItems.contains(item.id) },
+                        set: { val in
+                            if val { expandedItems.insert(item.id) }
+                            else { expandedItems.remove(item.id) }
+                        }
+                    )
+                )
+                
+            case .sub(let parent, let file, let subIndex):
+                SubFileRow(
+                    parent: parent,
+                    file: file,
+                    index: subIndex,
+                    isSelected: selected.contains(file.id)
+                )
+            }
+        }
+        .frame(width: exactRowWidth, alignment: .leading)
+        .background(index % 2 == 0 ? color1 : color2)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(rightClickedID == rowItem.id ? Color(hex: accentColorHex) : Color.clear, lineWidth: 2)
+        )
+        .contentShape(RoundedRectangle(cornerRadius: 12))
+        .clipped()
+        .onRightClick {
+            isListFocused = true
+            cursorID = rowItem.id
+            rightClickedID = rowItem.id
+        }
+        .onTapGesture {
+            handleRowTap(rowItem: rowItem)
+        }
+        .contextMenu { rowContextMenu(rowItem) }
+        .id(rowItem.id)
+    }
+    
+    @ViewBuilder
+    private func emptyListRow(
+        index: Int,
+        exactRowWidth: CGFloat,
+        emptyRowHeight: CGFloat,
+        color1: Color,
+        color2: Color
+    ) -> some View {
+        HStack { Spacer() }
+            .frame(width: exactRowWidth, height: emptyRowHeight)
+            .background(index % 2 == 0 ? color1 : color2)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .contentShape(Rectangle()) // Ensures empty rows capture clicks for deselection bubbling
+    }
+    
+    @ViewBuilder
+    private func hiddenNavigationButtons(proxy: ScrollViewProxy) -> some View {
+        Group {
+            Button("") {
+                if let first = flattenedRows.first {
+                    selected = [first.id]
+                    anchorID = first.id
+                    cursorID = first.id
+                    withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                        proxy.scrollTo(first.id, anchor: .top)
+                    }
+                }
+            }
+            .keyboardShortcut(.upArrow, modifiers: .command)
+
+            Button("") {
+                if let last = flattenedRows.last {
+                    selected = [last.id]
+                    anchorID = last.id
+                    cursorID = last.id
+                    withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                        proxy.scrollTo(last.id, anchor: .bottom)
+                    }
+                }
+            }
+            .keyboardShortcut(.downArrow, modifiers: .command)
+        }
+        .opacity(0)
+        .allowsHitTesting(false)
     }
     
     // MARK: - Shortcut Implementations
@@ -580,6 +631,7 @@ struct DownloadListView: View {
     private func handleRowTap(rowItem: ListRowItem) {
         isListFocused = true
         cursorID = rowItem.id
+        rightClickedID = nil
         
         let event = NSApp.currentEvent
         let flags = event?.modifierFlags ?? []
