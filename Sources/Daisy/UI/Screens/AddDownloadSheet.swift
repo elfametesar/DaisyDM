@@ -249,8 +249,16 @@ struct AddDownloadSheet: View {
             for url in urls {
                 if Task.isCancelled { return }
                 if targetURLs.contains(url) {
-                    if let direct = await fetchDirectLinks(for: url) { finalLinks.append(contentsOf: direct) }
-                } else { finalLinks.append(url.isFileURL ? url.path(percentEncoded: false) : url.absoluteString) }
+                    // Check if extraction succeeded and is not empty
+                    if let direct = await fetchDirectLinks(for: url), !direct.isEmpty {
+                        finalLinks.append(contentsOf: direct)
+                    } else {
+                        // Fallback to original URL if extraction fails
+                        finalLinks.append(url.isFileURL ? url.path(percentEncoded: false) : url.absoluteString)
+                    }
+                } else {
+                    finalLinks.append(url.isFileURL ? url.path(percentEncoded: false) : url.absoluteString)
+                }
             }
             if Task.isCancelled { return }
             await MainActor.run {

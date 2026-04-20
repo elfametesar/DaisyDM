@@ -10,6 +10,8 @@ struct ConfirmDownloadRequest: Identifiable {
     let referer:  String
     let ua:       String
     var forceHLS: Bool = false
+    var forceDASH: Bool = false
+    var forceDirectDownload: Bool = false
     var youtubeQuality: String? = nil
 }
 
@@ -32,6 +34,8 @@ struct ConfirmDownloadView: View {
     @State private var isResolving  = false
     @State private var resolvedSize: Int64 = 0
     @State private var isDetectedHLS: Bool = false
+    @State private var isDetectedDASH: Bool = false
+    @State private var forceDirectDownload: Bool
     @State private var youtubeQuality: String
     
     @State private var availableYouTubeQualities: [YouTubeFormatOption] = []
@@ -58,6 +62,8 @@ struct ConfirmDownloadView: View {
         self.onCancel  = onCancel
         _filename      = State(initialValue: request.filename.isEmpty ? suggestName(request.url) : request.filename)
         _isDetectedHLS = State(initialValue: request.forceHLS)
+        _isDetectedDASH = State(initialValue: request.forceDASH)
+        _forceDirectDownload = State(initialValue: request.forceDirectDownload)
         _youtubeQuality = State(initialValue: request.youtubeQuality ?? "")
     }
 
@@ -153,6 +159,28 @@ struct ConfirmDownloadView: View {
                     .padding(6)
                     .background(Color(NSColor.controlBackgroundColor).opacity(0.4), in: RoundedRectangle(cornerRadius: 6))
                     .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color(NSColor.separatorColor).opacity(0.5), lineWidth: 1))
+                    
+                    if isDetectedHLS || isDetectedDASH || request.url.absoluteString.lowercased().contains(".m3u8") || request.url.absoluteString.lowercased().contains(".mpd") {
+                        Toggle("Download as raw file instead of media stream", isOn: $forceDirectDownload)
+                            .toggleStyle(.checkbox)
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                            .padding(.top, 2)
+                            .onChange(of: forceDirectDownload) { _, isRaw in
+                                if isRaw {
+                                    if filename.hasSuffix(".mp4") {
+                                        let ext = isDetectedDASH || request.url.absoluteString.lowercased().contains(".mpd") ? ".mpd" : ".m3u8"
+                                        filename = String(filename.dropLast(4)) + ext
+                                    }
+                                } else {
+                                    if filename.hasSuffix(".m3u8") {
+                                        filename = String(filename.dropLast(5)) + ".mp4"
+                                    } else if filename.hasSuffix(".mpd") {
+                                        filename = String(filename.dropLast(4)) + ".mp4"
+                                    }
+                                }
+                            }
+                    }
                 }
 
                 // 3. YouTube Quality (Dynamic + Fallback)
@@ -335,6 +363,8 @@ struct ConfirmDownloadView: View {
                     r.filename = filename.trimmingCharacters(in: .whitespacesAndNewlines)
                     if r.filename.isEmpty { r.filename = suggestName(request.url) }
                     r.forceHLS = isDetectedHLS
+                    r.forceDASH = isDetectedDASH
+                    r.forceDirectDownload = forceDirectDownload
                     
                     if showQualityPicker && !youtubeQuality.isEmpty {
                         r.youtubeQuality = youtubeQuality
@@ -559,8 +589,12 @@ struct ConfirmDownloadView: View {
         }
         
         let isHLSUrl = request.forceHLS
-            || request.url.absoluteString.lowercased().contains("m3u8")
+            || request.url.absoluteString.lowercased().contains(".m3u8")
             || request.filename.lowercased().contains(".m3u8")
+        
+        let isDASHUrl = request.forceDASH
+            || request.url.absoluteString.lowercased().contains(".mpd")
+            || request.filename.lowercased().contains(".mpd")
         
         var req = URLRequest(url: request.url)
         req.httpMethod = "GET"
@@ -579,7 +613,9 @@ struct ConfirmDownloadView: View {
             
             if let httpResp = response as? HTTPURLResponse {
                 let ct = (httpResp.value(forHTTPHeaderField: "Content-Type") ?? httpResp.value(forHTTPHeaderField: "content-type"))?.lowercased() ?? ""
+                
                 let isHLS = isHLSUrl || ct.contains("mpegurl") || ct.contains("m3u8") || ct.contains("apple.mpegurl")
+                let isDASH = isDASHUrl || ct.contains("dash+xml")
                 
                 await MainActor.run {
                     var foundName: String? = nil
@@ -611,10 +647,22 @@ struct ConfirmDownloadView: View {
                     
                     if isHLS {
                         self.isDetectedHLS = true
-                        if self.filename.lowercased().hasSuffix(".m3u8") {
-                            self.filename = String(self.filename.dropLast(5)) + ".mp4"
-                        } else if !self.filename.lowercased().hasSuffix(".mp4") {
-                            self.filename += ".mp4"
+                        if !self.forceDirectDownload {
+                            if self.filename.lowercased().hasSuffix(".m3u8") {
+                                self.filename = String(self.filename.dropLast(5)) + ".mp4"
+                            } else if !self.filename.lowercased().hasSuffix(".mp4") {
+                                self.filename += ".mp4"
+                            }
+                        }
+                        self.resolvedSize = 0
+                    } else if isDASH {
+                        self.isDetectedDASH = true
+                        if !self.forceDirectDownload {
+                            if self.filename.lowercased().hasSuffix(".mpd") {
+                                self.filename = String(self.filename.dropLast(4)) + ".mp4"
+                            } else if !self.filename.lowercased().hasSuffix(".mp4") {
+                                self.filename += ".mp4"
+                            }
                         }
                         self.resolvedSize = 0
                     } else {

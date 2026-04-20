@@ -80,14 +80,8 @@ struct FailedDownloadDialog: View {
             // Actions
             HStack {
                 Spacer()
-                Button("Retry") { engine.retry(item) }
-                    .controlSize(.large)
-                    .buttonStyle(ActionButtonStyle(prominent: false, hex: accentColorHex))
-                Button("Done") { dismiss() }
-                    .keyboardShortcut(.escape)
-                    .buttonStyle(ActionButtonStyle(prominent: true, hex: accentColorHex))
-                    .controlSize(.large)
-                    .keyboardShortcut(.defaultAction)
+                    Button(action: { engine.retry(item) }) { Label("Retry", systemImage: "arrow.clockwise") }.buttonStyle(ActionButtonStyle(prominent: false, hex: accentColorHex))
+                    Button(action: { dismiss() }) { Label("Done", systemImage: "checkmark") }.buttonStyle(ActionButtonStyle(prominent: true, hex: accentColorHex))
             }
             .padding(20)
             .background(Color(NSColor.controlBackgroundColor).opacity(0.5))

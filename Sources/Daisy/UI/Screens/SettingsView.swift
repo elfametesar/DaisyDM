@@ -110,10 +110,9 @@ struct SettingsView: View {
                 
                 HStack {
                     Spacer()
-                    Button("Done") { dismiss() }
-                        .buttonStyle(ActionButtonStyle(prominent: true, hex: accentColorHex))
+                        Button(action: { dismiss() }) { Label("Done", systemImage: "checkmark") }.buttonStyle(ActionButtonStyle(prominent: true, hex: accentColorHex))
                         .padding(.horizontal, 24)
-                        .padding(.vertical, 16)
+                        .padding(.vertical, 10)
                         .keyboardShortcut(.cancelAction)
                 }
             }

@@ -54,8 +54,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         LocalServer.shared.start()
         
-        SafariInterceptor.shared.start()
-
         NSAppleEventManager.shared().setEventHandler(
             self,
             andSelector: #selector(handleURLEvent(_:replyEvent:)),
@@ -78,6 +76,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let referer  = info["referer"]  as? String ?? ""
             let ua       = info["ua"]       as? String ?? ""
             let forceHLS = info["forceHLS"] as? Bool ?? false
+            let forceDASH = info["forceDASH"] as? Bool ?? false
+            let forceDirectDownload = info["forceDirectDownload"] as? Bool ?? false
             let youtubeQuality = info["youtubeQuality"] as? String
 
             let request = ConfirmDownloadRequest(
@@ -87,14 +87,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 referer:  referer,
                 ua:       ua,
                 forceHLS: forceHLS,
+                forceDASH: forceDASH,
+                forceDirectDownload: forceDirectDownload,
                 youtubeQuality: youtubeQuality
             )
             self?.presentConfirmPanel(request: request)
         }
-    }
-    
-    func applicationWillTerminate(_ aNotification: Notification) {
-        SafariInterceptor.shared.stop()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ app: NSApplication) -> Bool { false }
@@ -149,7 +147,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         referer:     confirmedRequest.referer.isEmpty  ? nil : confirmedRequest.referer,
                         filename:    confirmedRequest.filename.isEmpty ? nil : confirmedRequest.filename,
                         youtubeQuality: confirmedRequest.youtubeQuality?.isEmpty == false ? confirmedRequest.youtubeQuality : nil,
-                        isHLS:       confirmedRequest.forceHLS
+                        isHLS:       confirmedRequest.forceHLS,
+                        isDASH:      confirmedRequest.forceDASH,
+                        browser:     nil,
+                        forceDirectDownload: confirmedRequest.forceDirectDownload
                     )
                     NSApp.activate(ignoringOtherApps: true)
                 }

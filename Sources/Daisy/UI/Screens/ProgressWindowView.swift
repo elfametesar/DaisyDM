@@ -53,7 +53,7 @@ struct ProgressWindowView: View {
             statusTab.tabItem     { Text("Status") }.tag(0)
             speedLimitTab.tabItem { Text("Speed Limit") }.tag(1)
         }
-        .frame(width: 460, height: 380)
+        .frame(width: 460, height: item.subFiles.isEmpty ? 380 : 500)
         .background(VisualEffectView(material: .popover, blendingMode: .behindWindow).ignoresSafeArea())
         .background(WindowAccessor(window: $window))
         .onAppear {
@@ -185,7 +185,58 @@ struct ProgressWindowView: View {
             }
             .padding(.horizontal, 16)
 
-            // THE SEGMENTS BLOCK HAS BEEN ENTIRELY REMOVED FROM HERE
+            if !item.subFiles.isEmpty {
+                Divider().padding(.vertical, 10)
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(item.type == .batch ? "Batch Items" : "Files")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                        .padding(.horizontal, 16)
+                    
+                    ScrollView(.vertical, showsIndicators: true) {
+                        VStack(spacing: 10) {
+                            ForEach(item.subFiles) { file in
+                                HStack(spacing: 8) {
+                                    VStack(alignment: .leading, spacing: 5) {
+                                        Text(file.filename)
+                                            .font(.system(size: 11))
+                                            .lineLimit(1)
+                                            .truncationMode(.middle)
+                                        
+                                        GeometryReader { geo in
+                                            ZStack(alignment: .leading) {
+                                                RoundedRectangle(cornerRadius: 2)
+                                                    .fill(Color.primary.opacity(0.08))
+                                                
+                                                let fileProgress = file.totalBytes > 0 ? min(1.0, max(0.0, Double(file.downloadedBytes) / Double(file.totalBytes))) : 0.0
+                                                RoundedRectangle(cornerRadius: 2)
+                                                    .fill(currentBarColor)
+                                                    .frame(width: max(0, CGFloat(fileProgress) * geo.size.width))
+                                            }
+                                        }
+                                        .frame(height: 4)
+                                    }
+                                    
+                                    VStack(alignment: .trailing, spacing: 2) {
+                                        let fileProgress = file.totalBytes > 0 ? (Double(file.downloadedBytes) / Double(file.totalBytes)) * 100 : 0
+                                        Text(String(format: "%.1f%%", fileProgress))
+                                            .font(.system(size: 10, weight: .semibold))
+                                            .monospacedDigit()
+                                        
+                                        Text(file.totalBytes > 0 ? "\(formatBytes(file.downloadedBytes)) / \(formatBytes(file.totalBytes))" : formatBytes(file.downloadedBytes))
+                                            .font(.system(size: 9))
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .frame(width: 80, alignment: .trailing)
+                                }
+                            }
+                        }
+                        .padding(.horizontal, 16)
+                    }
+                    .frame(maxHeight: 120)
+                }
+            }
 
             Divider().padding(.vertical, 10)
 

@@ -25,7 +25,8 @@
     "storage",
     "tabs",
     "cookies",
-    "webRequest"
+    "webRequest",
+    "<all_urls>"
   ],
   "host_permissions": ["<all_urls>"],
   "browser_specific_settings": {

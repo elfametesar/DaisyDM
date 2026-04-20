@@ -170,11 +170,13 @@ struct DetailView: View {
         HStack(spacing: 10) {
             if item.status == .downloading || item.status == .queued {
                 Button(action: { engine.stop(item) }) { Label("Pause", systemImage: "pause.fill") }.buttonStyle(ActionButtonStyle(prominent: true, hex: accentColorHex))
-            } else {
+            } else if item.status == .stopped {
                 Button(action: { engine.resume(item) }) { Label("Resume", systemImage: "play.fill") }.buttonStyle(ActionButtonStyle(prominent: true, hex: accentColorHex))
+            } else if item.status == .completed {
+                Button(action: { engine.retry(item) }) { Label("Restart", systemImage: "arrow.clockwise") }.buttonStyle(ActionButtonStyle(prominent: true, hex: accentColorHex))
             }
             if item.status == .failed || item.status == .stopped {
-                Button(action: { engine.retry(item) }) { Label("Retry", systemImage: "arrow.clockwise") }.buttonStyle(ActionButtonStyle(prominent: false, hex: accentColorHex))
+                Button(action: { engine.retry(item) }) { Label("Retry", systemImage: "arrow.clockwise") }.buttonStyle(ActionButtonStyle(prominent: item.status == .failed ? true : false, hex: accentColorHex))
             } else if item.status == .completed {
                 Button(action: { NSWorkspace.shared.open(item.destinationURL) }) { Label("Open File", systemImage: "doc.text.magnifyingglass") }.buttonStyle(ActionButtonStyle(prominent: false, hex: accentColorHex))
             }

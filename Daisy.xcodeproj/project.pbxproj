@@ -13,7 +13,6 @@
 		0A1B2C3D4E5F60718293A404 /* popup.html in Resources */ = {isa = PBXBuildFile; fileRef = 0A1B2C3D4E5F60718293A304 /* popup.html */; };
 		53F624789BAF9FB2DB63EDBB /* SafariExtensionHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02FA831F84964C6E30740ED4 /* SafariExtensionHandler.swift */; };
 		712C631C2F8A952D00504612 /* LocalServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 712C631B2F8A952800504612 /* LocalServer.swift */; };
-		7137D98E2F93297800B5B79A /* SafariInterceptor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7137D98D2F93297400B5B79A /* SafariInterceptor.swift */; };
 		714070032F88B43700875649 /* popup.js in Resources */ = {isa = PBXBuildFile; fileRef = 714070022F88B43400875649 /* popup.js */; };
 		7161C5EB2F8D4DC800FFB581 /* ProgressWindowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7161C5EA2F8D4DBC00FFB581 /* ProgressWindowView.swift */; };
 		7161C5ED2F8D4FB900FFB581 /* FailedDownloadDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7161C5EC2F8D4FB800FFB581 /* FailedDownloadDialog.swift */; };
@@ -65,15 +64,6 @@
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
 			dstPath = "";
-			dstSubfolderSpec = 7;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		71C1BC162F916BDF004C7F1A /* CopyFiles */ = {
-			isa = PBXCopyFilesBuildPhase;
-			buildActionMask = 12;
-			dstPath = "";
 			dstSubfolderSpec = 10;
 			files = (
 			);
@@ -93,7 +83,6 @@
 		253F5E76243124E291EBAB75 /* Daisy.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Daisy.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		7108AF5B2F8974030059958D /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		712C631B2F8A952800504612 /* LocalServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalServer.swift; sourceTree = "<group>"; };
-		7137D98D2F93297400B5B79A /* SafariInterceptor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafariInterceptor.swift; sourceTree = "<group>"; };
 		714070022F88B43400875649 /* popup.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = popup.js; sourceTree = "<group>"; };
 		7161C5EA2F8D4DBC00FFB581 /* ProgressWindowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProgressWindowView.swift; sourceTree = "<group>"; };
 		7161C5EC2F8D4FB800FFB581 /* FailedDownloadDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FailedDownloadDialog.swift; sourceTree = "<group>"; };
@@ -116,33 +105,13 @@
 		ECF7392741EE1B516970CA7B /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
-/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		71C1BC132F9164FF004C7F1A /* Exceptions for "external" folder in "DaisyApp" target */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-				bin/ffmpeg,
-			);
-			target = F8D4C25F8FF1C76660AEE763 /* DaisyApp */;
-		};
-/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
-
 /* Begin PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
-		71C1BC122F9164DB004C7F1A /* Exceptions for "external" folder in "Copy Files" phase from "DaisyApp" target */ = {
-			isa = PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet;
-			attributesByRelativePath = {
-				bin/ffmpeg = (CodeSignOnCopy, );
-			};
-			buildPhase = 71C1BC0E2F9164CF004C7F1A /* CopyFiles */;
-			membershipExceptions = (
-				bin/ffmpeg,
-			);
-		};
-		71C1BC182F916BE9004C7F1A /* Exceptions for "external" folder in "Copy Files" phase from "DaisyApp" target */ = {
+		714913802F95762900167751 /* Exceptions for "external" folder in "Copy Files" phase from "DaisyApp" target */ = {
 			isa = PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet;
 			attributesByRelativePath = {
 				library/libhls_downloader.dylib = (CodeSignOnCopy, );
 			};
-			buildPhase = 71C1BC162F916BDF004C7F1A /* CopyFiles */;
+			buildPhase = 71C1BC0E2F9164CF004C7F1A /* CopyFiles */;
 			membershipExceptions = (
 				library/libhls_downloader.dylib,
 			);
@@ -153,9 +122,7 @@
 		71C1BBEC2F90C62D004C7F1A /* external */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				71C1BC132F9164FF004C7F1A /* Exceptions for "external" folder in "DaisyApp" target */,
-				71C1BC122F9164DB004C7F1A /* Exceptions for "external" folder in "Copy Files" phase from "DaisyApp" target */,
-				71C1BC182F916BE9004C7F1A /* Exceptions for "external" folder in "Copy Files" phase from "DaisyApp" target */,
+				714913802F95762900167751 /* Exceptions for "external" folder in "Copy Files" phase from "DaisyApp" target */,
 			);
 			path = external;
 			sourceTree = "<group>";
@@ -234,7 +201,6 @@
 		C75B2CAB48984D2934A96A32 /* Core */ = {
 			isa = PBXGroup;
 			children = (
-				7137D98D2F93297400B5B79A /* SafariInterceptor.swift */,
 				17671D7F8AB5C98F683D0703 /* URLSchemeHandler.swift */,
 				D333474D0B94942D2F1B8D61 /* DownloadEngine.swift */,
 				712C631B2F8A952800504612 /* LocalServer.swift */,
@@ -306,7 +272,6 @@
 				1A0AE4D8A58230DA637E3F5F /* Sources */,
 				2F76A8494432869E33E41744 /* Embed Foundation Extensions */,
 				71C1BC0E2F9164CF004C7F1A /* CopyFiles */,
-				71C1BC162F916BDF004C7F1A /* CopyFiles */,
 			);
 			buildRules = (
 			);
@@ -389,7 +354,6 @@
 				94239571324F1E220C2EDA5A /* AddDownloadSheet.swift in Sources */,
 				AA11BB22CC33DD44EE55FF66 /* ConfirmDownloadView.swift in Sources */,
 				E6466915463132C126752D64 /* AppDelegate.swift in Sources */,
-				7137D98E2F93297800B5B79A /* SafariInterceptor.swift in Sources */,
 				7161C5F12F8D7A9800FFB581 /* RemoveDialog.swift in Sources */,
 				7161C5EF2F8D769B00FFB581 /* SharedUIComponents.swift in Sources */,
 				7161C5F32F8D7AB300FFB581 /* PropertiesSheet.swift in Sources */,

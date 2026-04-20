@@ -101,9 +101,9 @@ struct SidebarRow: View {
         .font(.system(size: 13))
         .foregroundStyle(dynamicTextColor)
         .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        .padding(.vertical, 10)
         .background(
-            RoundedRectangle(cornerRadius: 6)
+            RoundedRectangle(cornerRadius: 12)
                 .fill(isSelected ? Color(hex: accentColorHex) : Color.clear)
         )
         .contentShape(Rectangle())

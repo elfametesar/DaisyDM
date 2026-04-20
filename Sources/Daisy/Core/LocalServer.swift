@@ -10,44 +10,70 @@ struct DownloadPayload: Decodable {
     let ua: String?
     let youtubeQuality: String?
     let forceHLS: Bool?
+    let forceDASH: Bool?
+    let forceDirectDownload: Bool? // <--- Added this flag
     let browser: String?
-    
-    // Explicit memberwise initializer for manual creation
-    init(url: String, filename: String?, cookies: String?, referer: String?, ua: String?, youtubeQuality: String?, forceHLS: Bool?, browser: String?) {
-        self.url = url
-        self.filename = filename
-        self.cookies = cookies
-        self.referer = referer
-        self.ua = ua
-        self.youtubeQuality = youtubeQuality
-        self.forceHLS = forceHLS
-        self.browser = browser
+    let requestHeaders: [String: String]?
+    let responseHeaders: [String: String]?
+    let extraHeadersFlat: String?
+
+    var mergedHeaders: [String: String] {
+        var merged = requestHeaders ?? [:]
+        if let ref = referer, !ref.isEmpty  { merged["referer"]    = merged["referer"]    ?? ref }
+        if let agent = ua, !agent.isEmpty   { merged["user-agent"] = merged["user-agent"] ?? agent }
+        return merged
     }
-    
+
+    var ytDlpHeaderArgs: [String] {
+        mergedHeaders.map { k, v in "--add-header=\(k):\(v)" }
+    }
+
+    init(url: String, filename: String?, cookies: String?, referer: String?,
+         ua: String?, youtubeQuality: String?, forceHLS: Bool?, forceDASH: Bool?, forceDirectDownload: Bool?, browser: String?,
+         requestHeaders: [String: String]? = nil,
+         responseHeaders: [String: String]? = nil,
+         extraHeadersFlat: String? = nil) {
+        self.url             = url
+        self.filename        = filename
+        self.cookies         = cookies
+        self.referer         = referer
+        self.ua              = ua
+        self.youtubeQuality  = youtubeQuality
+        self.forceHLS        = forceHLS
+        self.forceDASH       = forceDASH
+        self.forceDirectDownload = forceDirectDownload // <--- Added this flag
+        self.browser         = browser
+        self.requestHeaders  = requestHeaders
+        self.responseHeaders = responseHeaders
+        self.extraHeadersFlat = extraHeadersFlat
+    }
+
     enum CodingKeys: String, CodingKey {
-        case url, filename, cookies, referer, ua, youtubeQuality, forceHLS, browser
+        case url, filename, cookies, referer, ua
+        case youtubeQuality, forceHLS, forceDASH, forceDirectDownload, browser
+        case requestHeaders, responseHeaders, extraHeadersFlat
     }
-    
-    // Flexible decoder to handle String or Int from Extension JS
+
     init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        url = try container.decode(String.self, forKey: .url)
-        filename = try container.decodeIfPresent(String.self, forKey: .filename)
-        cookies = try container.decodeIfPresent(String.self, forKey: .cookies)
-        referer = try container.decodeIfPresent(String.self, forKey: .referer)
-        ua = try container.decodeIfPresent(String.self, forKey: .ua)
-        
-        // Handle youtubeQuality as String, Int, or Null
-        if let qInt = try? container.decodeIfPresent(Int.self, forKey: .youtubeQuality) {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        url      = try c.decode(String.self, forKey: .url)
+        filename = try c.decodeIfPresent(String.self, forKey: .filename)
+        cookies  = try c.decodeIfPresent(String.self, forKey: .cookies)
+        referer  = try c.decodeIfPresent(String.self, forKey: .referer)
+        ua       = try c.decodeIfPresent(String.self, forKey: .ua)
+        browser  = try c.decodeIfPresent(String.self, forKey: .browser)
+        forceHLS = try c.decodeIfPresent(Bool.self,   forKey: .forceHLS)
+        forceDASH = try c.decodeIfPresent(Bool.self, forKey: .forceDASH)
+        forceDirectDownload = try c.decodeIfPresent(Bool.self, forKey: .forceDirectDownload) // <--- Added this flag
+        extraHeadersFlat = try c.decodeIfPresent(String.self, forKey: .extraHeadersFlat)
+        requestHeaders   = try c.decodeIfPresent([String: String].self, forKey: .requestHeaders)
+        responseHeaders  = try c.decodeIfPresent([String: String].self, forKey: .responseHeaders)
+
+        if let qInt = try? c.decodeIfPresent(Int.self, forKey: .youtubeQuality) {
             youtubeQuality = String(qInt)
-        } else if let qStr = try? container.decodeIfPresent(String.self, forKey: .youtubeQuality) {
-            youtubeQuality = qStr
         } else {
-            youtubeQuality = nil
+            youtubeQuality = try c.decodeIfPresent(String.self, forKey: .youtubeQuality)
         }
-        
-        forceHLS = try container.decodeIfPresent(Bool.self, forKey: .forceHLS)
-        browser = try container.decodeIfPresent(String.self, forKey: .browser)
     }
 }
 
@@ -58,11 +84,9 @@ class LocalServer {
 
     func start(port: Int = 6840) {
         guard port <= portRange.upperBound else { return }
-
         do {
             let nwPort = NWEndpoint.Port(integerLiteral: NWEndpoint.Port.IntegerLiteralType(port))
             listener = try NWListener(using: .tcp, on: nwPort)
-
             listener?.stateUpdateHandler = { [weak self] state in
                 if case .ready = state {
                     print("🚀 Daisy Local Server listening on port \(port)")
@@ -71,11 +95,9 @@ class LocalServer {
                     self?.start(port: port + 1)
                 }
             }
-
             listener?.newConnectionHandler = { [weak self] connection in
                 self?.handleConnection(connection)
             }
-
             listener?.start(queue: .main)
         } catch {
             start(port: port + 1)
@@ -88,7 +110,7 @@ class LocalServer {
     }
 
     private func receiveData(on connection: NWConnection, accumulatedData: Data) {
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 1024 * 1024) { [weak self] data, _, isComplete, error in
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 4 * 1024 * 1024) { [weak self] data, _, isComplete, error in
             guard let self = self else { return }
 
             var newData = accumulatedData
@@ -96,83 +118,81 @@ class LocalServer {
 
             let separator = Data([13, 10, 13, 10])
 
-            if let range = newData.range(of: separator) {
-                let headerData = newData.subdata(in: 0..<range.lowerBound)
-                let headers = String(data: headerData, encoding: .utf8) ?? ""
-
-                if headers.hasPrefix("GET /ping") {
-                    let res = "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\nOK"
-                    connection.send(content: res.data(using: .utf8)!, completion: .contentProcessed { _ in connection.cancel() })
-                    return
-                }
-
-                var expectedLength = 0
-                for line in headers.components(separatedBy: "\r\n") {
-                    let lower = line.lowercased()
-                    if lower.hasPrefix("content-length:") {
-                        let valStr = lower.replacingOccurrences(of: "content-length:", with: "").trimmingCharacters(in: .whitespaces)
-                        expectedLength = Int(valStr) ?? 0
-                    }
-                }
-
-                let bodyStartIndex = range.upperBound
-                let currentBodyLength = newData.count - bodyStartIndex
-
-                if currentBodyLength < expectedLength {
+            guard let range = newData.range(of: separator) else {
+                if !isComplete && error == nil {
                     self.receiveData(on: connection, accumulatedData: newData)
-                    return
+                } else {
+                    connection.cancel()
                 }
+                return
+            }
 
-                let bodyData = newData.subdata(in: bodyStartIndex..<(bodyStartIndex + expectedLength))
-                let resHeaders = "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: POST, OPTIONS, GET\r\nAccess-Control-Allow-Headers: Content-Type, X-Filename\r\nConnection: close\r\n\r\n"
+            let headerData = newData.subdata(in: 0..<range.lowerBound)
+            let headers    = String(data: headerData, encoding: .utf8) ?? ""
 
-                if headers.hasPrefix("OPTIONS") {
-                    connection.send(content: resHeaders.data(using: .utf8)!, completion: .contentProcessed { _ in connection.cancel() })
-                    return
+            if headers.hasPrefix("GET /ping") {
+                let res = "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\nOK"
+                connection.send(content: res.data(using: .utf8)!, completion: .contentProcessed { _ in connection.cancel() })
+                return
+            }
+
+            var expectedLength = 0
+            for line in headers.components(separatedBy: "\r\n") {
+                let lower = line.lowercased()
+                if lower.hasPrefix("content-length:") {
+                    expectedLength = Int(lower.replacingOccurrences(of: "content-length:", with: "").trimmingCharacters(in: .whitespaces)) ?? 0
                 }
-                
-                if headers.hasPrefix("POST /setenabled") {
-                    if let body = String(data: bodyData, encoding: .utf8),
-                       let json = try? JSONSerialization.jsonObject(with: bodyData) as? [String: Any],
-                       let enabled = json["enabled"] as? Bool {
-                        DispatchQueue.main.async {
-                            SafariInterceptor.shared.isEnabled = enabled
-                            print("🔧 SafariInterceptor.isEnabled = \(enabled)")
-                        }
+            }
+
+            let bodyStartIndex    = range.upperBound
+            let currentBodyLength = newData.count - bodyStartIndex
+
+            if currentBodyLength < expectedLength {
+                self.receiveData(on: connection, accumulatedData: newData)
+                return
+            }
+
+            let bodyData  = newData.subdata(in: bodyStartIndex..<(bodyStartIndex + expectedLength))
+            let okHeaders = "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: POST, OPTIONS, GET\r\nAccess-Control-Allow-Headers: Content-Type, X-Filename\r\nConnection: close\r\n\r\n"
+
+            if headers.hasPrefix("OPTIONS") {
+                connection.send(content: okHeaders.data(using: .utf8)!, completion: .contentProcessed { _ in connection.cancel() })
+                return
+            }
+
+            if headers.hasPrefix("POST") {
+                do {
+                    let payload = try JSONDecoder().decode(DownloadPayload.self, from: bodyData)
+
+                    var sanitizedUrl = payload.url
+                    if sanitizedUrl.contains("application/x-bittorrent") {
+                        sanitizedUrl = sanitizedUrl.replacingOccurrences(of: "application/x-bittorrent", with: "application/octet-stream")
                     }
-                    connection.send(content: resHeaders.data(using: .utf8)!, completion: .contentProcessed { _ in connection.cancel() })
-                    return
-                }
 
-                if headers.hasPrefix("POST") {
-                    do {
-                        let payload = try JSONDecoder().decode(DownloadPayload.self, from: bodyData)
-                        
-                        var sanitizedUrl = payload.url
-                        if sanitizedUrl.contains("application/x-bittorrent") {
-                            sanitizedUrl = sanitizedUrl.replacingOccurrences(of: "application/x-bittorrent", with: "application/octet-stream")
-                        }
-                        
-                        let sanitizedPayload = DownloadPayload(
-                            url: sanitizedUrl,
-                            filename: payload.filename,
-                            cookies: payload.cookies,
-                            referer: payload.referer,
-                            ua: payload.ua,
-                            youtubeQuality: payload.youtubeQuality,
-                            forceHLS: payload.forceHLS,
-                            browser: payload.browser
-                        )
-                        
-                        DispatchQueue.main.async {
-                            self.showConfirmation(for: sanitizedPayload)
-                        }
-                    } catch {
-                        print("❌ Failed to decode payload: \(error)")
+                    let sanitizedPayload = DownloadPayload(
+                        url:             sanitizedUrl,
+                        filename:        payload.filename,
+                        cookies:         payload.cookies,
+                        referer:         payload.referer,
+                        ua:              payload.ua,
+                        youtubeQuality:  payload.youtubeQuality,
+                        forceHLS:        payload.forceHLS,
+                        forceDASH:       payload.forceDASH,
+                        forceDirectDownload: payload.forceDirectDownload, // <--- Forwarded
+                        browser:         payload.browser,
+                        requestHeaders:  payload.requestHeaders,
+                        responseHeaders: payload.responseHeaders,
+                        extraHeadersFlat: payload.extraHeadersFlat
+                    )
+
+                    DispatchQueue.main.async {
+                        self.showConfirmation(for: sanitizedPayload)
                     }
-                    connection.send(content: resHeaders.data(using: .utf8)!, completion: .contentProcessed { _ in connection.cancel() })
-                    return
+                } catch {
+                    print("❌ Failed to decode payload: \(error)")
                 }
+                connection.send(content: okHeaders.data(using: .utf8)!, completion: .contentProcessed { _ in connection.cancel() })
+                return
             }
 
             if !isComplete && error == nil {
@@ -184,23 +204,29 @@ class LocalServer {
     }
 
     private func showConfirmation(for payload: DownloadPayload) {
-        guard let url = URL(string: payload.url) ?? URL(string: payload.url.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "") else {
-            return
-        }
-        
+        guard let url = URL(string: payload.url)
+            ?? URL(string: payload.url.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")
+        else { return }
+
         NSApp.activate(ignoringOtherApps: true)
+
         NotificationCenter.default.post(
             name: .confirmDownload,
             object: nil,
             userInfo: [
-                "url":            url,
-                "filename":       payload.filename ?? "",
-                "cookies":        payload.cookies  ?? "",
-                "referer":        payload.referer  ?? "",
-                "ua":             payload.ua       ?? "",
-                "youtubeQuality": payload.youtubeQuality ?? "",
-                "forceHLS":       payload.forceHLS ?? false,
-                "browser":        payload.browser  ?? ""
+                "url":              url,
+                "filename":         payload.filename        ?? "",
+                "cookies":          payload.cookies         ?? "",
+                "referer":          payload.referer         ?? "",
+                "ua":               payload.ua              ?? "",
+                "youtubeQuality":   payload.youtubeQuality  ?? "",
+                "forceHLS":         payload.forceHLS        ?? false,
+                "forceDASH":        payload.forceDASH       ?? false,
+                "forceDirectDownload": payload.forceDirectDownload ?? false, // <--- Passed to notification
+                "browser":          payload.browser         ?? "",
+                "headers":          payload.mergedHeaders,
+                "extraHeadersFlat": payload.extraHeadersFlat
+                    ?? payload.mergedHeaders.map { "\($0): \($1)" }.joined(separator: "\n")
             ]
         )
     }

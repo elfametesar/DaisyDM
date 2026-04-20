@@ -682,8 +682,6 @@ struct DownloadListView: View {
                 }
             }
             
-            Button("Restart Download") { targetItems.forEach { engine.retry($0) } }
-
             Divider()
 
             if targetItems.count == 1, let single = targetItems.first {
@@ -693,9 +691,6 @@ struct DownloadListView: View {
                     }
                     .keyboardShortcut("p", modifiers: [.command])
                 }
-                
-                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([single.destinationURL]) }
-                    .keyboardShortcut("r", modifiers: [.command])
                 
                 if single.status == .completed {
                     Button("Open File") { NSWorkspace.shared.open(single.destinationURL) }
@@ -718,6 +713,11 @@ struct DownloadListView: View {
                     }
                 }
                 
+                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([single.destinationURL]) }
+                    .keyboardShortcut("r", modifiers: [.command])
+                
+                Button("Restart Download") { targetItems.forEach { engine.retry($0) } }
+
                 Button("Copy URL") {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(single.url.absoluteString, forType: .string)
