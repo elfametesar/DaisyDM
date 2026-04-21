@@ -19,6 +19,12 @@
       "match_about_blank": true
     }
   ],
+  "web_accessible_resources": [
+    {
+      "resources": ["main_sniffer.js"],
+      "matches": ["<all_urls>"]
+    }
+  ],
   "permissions": [
     "downloads",
     "contextMenus",
@@ -26,7 +32,7 @@
     "tabs",
     "cookies",
     "nativeMessaging",
-    "webRequest" 
+    "webRequest"
   ],
   "host_permissions": ["<all_urls>"]
 }

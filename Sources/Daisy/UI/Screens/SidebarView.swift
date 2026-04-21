@@ -73,6 +73,8 @@ struct SidebarRow: View {
     let count: Int
     let isSelected: Bool
     let accentColorHex: String
+    
+    @State private var isHovering = false
 
     var dynamicTextColor: Color {
         isSelected ? Color(hex: accentColorHex).accessibleText : .primary
@@ -104,8 +106,13 @@ struct SidebarRow: View {
         .padding(.vertical, 10)
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(isSelected ? Color(hex: accentColorHex) : Color.clear)
+                .fill(isSelected ? Color(hex: accentColorHex) : (isHovering ? Color.primary.opacity(0.06) : Color.clear))
         )
         .contentShape(Rectangle())
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.15)) {
+                isHovering = hovering
+            }
+        }
     }
 }

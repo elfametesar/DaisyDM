@@ -281,23 +281,40 @@ struct DownloadListView: View {
             isSearchFocused = true
             return .handled
         }
+        // Explicitly handle Arrow Keys with [.down, .repeat] to support holding the key
+        .onKeyPress(.upArrow, phases: [.down, .repeat]) { press in
+            handleArrow(.up, isShift: press.modifiers.contains(.shift))
+            return .handled
+        }
+        .onKeyPress(.downArrow, phases: [.down, .repeat]) { press in
+            handleArrow(.down, isShift: press.modifiers.contains(.shift))
+            return .handled
+        }
+        .onKeyPress(.leftArrow, phases: [.down, .repeat]) { press in
+            handleArrow(.left, isShift: press.modifiers.contains(.shift))
+            return .handled
+        }
+        .onKeyPress(.rightArrow, phases: [.down, .repeat]) { press in
+            handleArrow(.right, isShift: press.modifiers.contains(.shift))
+            return .handled
+        }
         .onDeleteCommand {
             let toDelete = engine.items.filter { selected.contains($0.id) }
             guard !toDelete.isEmpty else { return }
             onRequestRemove(toDelete)
         }
-        .onMoveCommand { direction in
-            switch direction {
-            case .up: handleArrow(.up)
-            case .down: handleArrow(.down)
-            case .left: handleArrow(.left)
-            case .right: handleArrow(.right)
-            @unknown default: break
-            }
-        }
         .onAppear {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                 isListFocused = true
+            }
+        }
+        .onChange(of: selected) { _, newSelected in
+            // When auto-selected by an external event, sync the cursor
+            if newSelected.count == 1, let newlySelectedID = newSelected.first {
+                if cursorID != newlySelectedID {
+                    cursorID = newlySelectedID
+                    anchorID = newlySelectedID
+                }
             }
         }
     }
@@ -511,12 +528,9 @@ struct DownloadListView: View {
         }
     }
     
-    private func handleArrow(_ dir: ArrowDirection) {
+    private func handleArrow(_ dir: ArrowDirection, isShift: Bool) {
         let rows = flattenedRows
         guard !rows.isEmpty else { return }
-
-        let flags = NSApp.currentEvent?.modifierFlags ?? []
-        let isShift = flags.contains(.shift)
 
         var currentIndex: Int? = nil
         

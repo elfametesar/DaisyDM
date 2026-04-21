@@ -1,41 +1,46 @@
 // background.js - Daisy Chrome Extension
 
 const _api = chrome;
-
 let dispatchEnabled = true;
 
-// The Accumulator Maps
+// Maps for capturing media headers
 const capturedRequestHeaders  = new Map();
 const capturedResponseHeaders = new Map();
 const capturedCookies         = new Map();
 const headerCacheTimestamps   = new Map();
-const HEADER_CACHE_TTL_MS     = 15 * 60 * 1000; // 15 minute retention
+const HEADER_CACHE_TTL_MS     = 15 * 60 * 1000;
 
-// CRITICAL: Merge headers instead of overwriting, so we never lose
-// X-Playback-Session-Id, Range, or Sec-Fetch headers across multiple sub-requests.
 function mergeIntoMap(map, key, incomingData) {
     if (!key || typeof incomingData !== 'object') return;
-    
     const existing = map.get(key) || {};
     const merged = { ...existing };
-    
     for (const [k, v] of Object.entries(incomingData)) {
         if (v !== undefined && v !== null && v.toString().trim() !== "") {
             merged[k.toLowerCase()] = v;
         }
     }
-    
     map.set(key, merged);
     headerCacheTimestamps.set(key, Date.now());
     
     for (const [k, ts] of headerCacheTimestamps) {
         if (Date.now() - ts > HEADER_CACHE_TTL_MS) {
-            capturedRequestHeaders.delete(k);
-            capturedResponseHeaders.delete(k);
-            capturedCookies.delete(k);
-            headerCacheTimestamps.delete(k);
+            capturedRequestHeaders.delete(k); capturedResponseHeaders.delete(k);
+            capturedCookies.delete(k); headerCacheTimestamps.delete(k);
         }
     }
+}
+
+// Better fuzzy lookup for headers (matches full URL, URL without query, or just origin)
+function getCapturedHeaders(map, targetUrl) {
+    if (!targetUrl) return {};
+    if (map.has(targetUrl)) return map.get(targetUrl);
+    try {
+        const u = new URL(targetUrl);
+        const withoutQuery = u.origin + u.pathname;
+        if (map.has(withoutQuery)) return map.get(withoutQuery);
+        if (map.has(u.origin)) return map.get(u.origin);
+    } catch(_) {}
+    return {};
 }
 
 _api.storage.local.get(["dispatchEnabled"]).then(res => {
@@ -46,8 +51,7 @@ _api.storage.onChanged.addListener((changes, area) => {
     if (area === "local" && changes.dispatchEnabled) {
         dispatchEnabled = changes.dispatchEnabled.newValue;
         fetch(`http://127.0.0.1:6840/setenabled`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
+            method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ enabled: changes.dispatchEnabled.newValue })
         }).catch(() => {});
     }
@@ -61,6 +65,41 @@ _api.contextMenus.onClicked.addListener((info, tab) => {
     if (info.menuItemId === "dispatch-download" && info.linkUrl) {
         triggerDownload(info.linkUrl, extractFilename(info.linkUrl), tab?.url || "");
     }
+});
+
+// ━━━ INTERCEPT REGULAR CHROME DOWNLOADS ━━━
+_api.downloads.onCreated.addListener(async (downloadItem) => {
+    if (!dispatchEnabled) return;
+    
+    const targetUrl = downloadItem.finalUrl || downloadItem.url;
+    if ((targetUrl || "").startsWith("blob:") || (targetUrl || "").startsWith("data:")) return;
+
+    _api.downloads.cancel(downloadItem.id, () => {
+        setTimeout(() => _api.downloads.erase({ id: downloadItem.id }, () => {}), 150);
+    });
+
+    let fname = "download";
+    if (downloadItem.filename) {
+        const parts = downloadItem.filename.split(/[/\\]/);
+        fname = parts[parts.length - 1];
+    } else {
+        fname = extractFilename(targetUrl);
+    }
+
+    // Explicitly grab cookies for this specific domain before firing off the payload
+    let cookies = lookupCookiesAggressively(targetUrl);
+    if (!cookies && targetUrl.startsWith("http")) {
+        cookies = await fetchBaseDomainCookies(targetUrl);
+    }
+
+    triggerDownload(
+        targetUrl,
+        fname,
+        downloadItem.referrer || "",
+        cookies,
+        null, false, false,
+        { "referer": downloadItem.referrer || "" }
+    );
 });
 
 function extractFilename(url) {
@@ -98,8 +137,8 @@ function netscapeToCookieHeader(netscapeStr) {
 async function fetchBaseDomainCookies(targetUrl) {
     return new Promise(resolve => {
         try {
-            const urlObj     = new URL(targetUrl);
-            const hostParts  = urlObj.hostname.split('.');
+            const urlObj = new URL(targetUrl);
+            const hostParts = urlObj.hostname.split('.');
             const baseDomain = hostParts.length > 2 ? hostParts.slice(-2).join('.') : urlObj.hostname;
             _api.cookies.getAll({ domain: baseDomain }, cookies => {
                 resolve(cookies && cookies.length > 0 ? formatNetscapeCookies(cookies) : "");
@@ -127,14 +166,17 @@ function lookupCookiesAggressively(url) {
 
 _api.webRequest.onBeforeSendHeaders.addListener(
     function(details) {
-        if (details.tabId === -1) return;
+        // Ignore our own internal dispatch requests so they don't pollute the cache
+        if (details.url.includes("127.0.0.1:684")) return;
+
         const reqHeaders = {};
         for (const h of (details.requestHeaders || [])) reqHeaders[h.name.toLowerCase()] = h.value;
         
         mergeIntoMap(capturedRequestHeaders, details.url, reqHeaders);
         try {
-            const urlObj = new URL(details.url);
-            mergeIntoMap(capturedRequestHeaders, urlObj.origin, reqHeaders);
+            const u = new URL(details.url);
+            mergeIntoMap(capturedRequestHeaders, u.origin + u.pathname, reqHeaders);
+            mergeIntoMap(capturedRequestHeaders, u.origin, reqHeaders);
         } catch(_) {}
 
         fetchBaseDomainCookies(details.url).then(cookieStr => {
@@ -147,14 +189,16 @@ _api.webRequest.onBeforeSendHeaders.addListener(
 
 _api.webRequest.onHeadersReceived.addListener(
     function(details) {
-        if (details.tabId === -1) return;
+        if (details.url.includes("127.0.0.1:684")) return;
+
         const respHeaders = {};
         for (const h of (details.responseHeaders || [])) respHeaders[h.name.toLowerCase()] = h.value;
         
         mergeIntoMap(capturedResponseHeaders, details.url, respHeaders);
         try {
-            const urlObj = new URL(details.url);
-            mergeIntoMap(capturedResponseHeaders, urlObj.origin, respHeaders);
+            const u = new URL(details.url);
+            mergeIntoMap(capturedResponseHeaders, u.origin + u.pathname, respHeaders);
+            mergeIntoMap(capturedResponseHeaders, u.origin, respHeaders);
         } catch(_) {}
 
         const ct = respHeaders["content-type"] || "";
@@ -162,7 +206,8 @@ _api.webRequest.onHeadersReceived.addListener(
         const urlLower = details.url.toLowerCase();
         const isMediaByUrl = ['.m3u8', '.ts', '.mp4', '.webm', '.mov', '.mkv', '/hls/', '/m3u8', 'manifest.m3u8', 'master.m3u8', '.mpd'].some(p => urlLower.includes(p));
 
-        if (isMedia || isMediaByUrl) {
+        // Background script can't access frameId safely if tabId is -1
+        if ((isMedia || isMediaByUrl) && details.tabId !== -1) {
             _api.tabs.sendMessage(details.tabId, { type: 'NEW_MEDIA_FOUND', mediaInfo: { url: details.url, frameId: details.frameId } }).catch(() => {});
         }
     },
@@ -185,35 +230,40 @@ _api.runtime.onMessage.addListener((message, sender, sendResponse) => {
             }
             await triggerDownload(message.url, message.filename, sender.tab?.url || "", cookiePayload, message.youtubeQuality, message.forceHLS, message.forceDASH, message.pageHeaders || {});
         };
-
-        finish().then(() => sendResponse({ success: true })).catch((e) => sendResponse({ success: false }));
+        finish().then(() => sendResponse({ success: true })).catch(() => sendResponse({ success: false }));
         return true;
     }
 });
 
 async function triggerDownload(url, filename, referer, cookies, youtubeQuality, forceHLS, forceDASH, pageHeaders) {
-    const capturedReqHeaders = capturedRequestHeaders.get(url) || (() => {
-        try { return capturedRequestHeaders.get(new URL(url).origin) || {}; } catch(_) { return {}; }
-    })();
-    
-    const capturedRespHeaders = capturedResponseHeaders.get(url) || (() => {
-        try { return capturedResponseHeaders.get(new URL(url).origin) || {}; } catch(_) { return {}; }
-    })();
+    const capturedReqHeaders = getCapturedHeaders(capturedRequestHeaders, url);
+    const capturedRespHeaders = getCapturedHeaders(capturedResponseHeaders, url);
 
     const mergedHeaders = Object.assign({}, pageHeaders || {}, capturedReqHeaders);
     if (referer && !mergedHeaders["referer"]) mergedHeaders["referer"] = referer;
+    
+    // Crucial: Fallback user-agent if missing
+    if (!mergedHeaders["user-agent"]) mergedHeaders["user-agent"] = navigator.userAgent;
 
     let finalCookies = cookies || lookupCookiesAggressively(url);
+    if (!finalCookies && url.startsWith("http")) {
+        finalCookies = await fetchBaseDomainCookies(url);
+    }
+
     if (finalCookies && !mergedHeaders["cookie"]) {
         mergedHeaders["cookie"] = netscapeToCookieHeader(finalCookies) || finalCookies;
     }
 
     const payload = JSON.stringify({
-        url, filename: filename || "download", cookies: finalCookies || "", referer: mergedHeaders["referer"] || referer || "",
-        ua: mergedHeaders["user-agent"] || navigator.userAgent,
+        url,
+        filename: filename || "download",
+        cookies: finalCookies || "",
+        referer: mergedHeaders["referer"] || referer || "",
+        ua: mergedHeaders["user-agent"],
         browser: "chrome",
         youtubeQuality, forceHLS, forceDASH,
-        headers: mergedHeaders, responseHeaders: capturedRespHeaders,
+        headers: mergedHeaders,
+        responseHeaders: capturedRespHeaders,
         extraHeadersFlat: Object.entries(mergedHeaders).map(([k, v]) => `${k}: ${v}`).join("\n")
     });
 

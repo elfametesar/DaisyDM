@@ -222,97 +222,6 @@ function runScriptSniffer(root) {
     if (IS_TOP_FRAME) sniffWindowState().forEach(url => bubbleMediaToTop(url));
 }
 
-function injectMainWorldSniffers() {
-    if (document.getElementById('daisy-main-sniffer')) return;
-    const script = document.createElement('script');
-    script.id = 'daisy-main-sniffer';
-    script.textContent = `
-        (function() {
-            const _post = (url) => {
-                if (url && typeof url === 'string' && !url.startsWith('blob:') && !url.startsWith('data:')) {
-                    try { window.postMessage({ __daisyMedia: { url, frameOrigin: window.location.origin } }, "*"); } catch(e){}
-                }
-            };
-
-            // Headers we want to capture from actual media network requests.
-            // This includes session-specific headers like X-Playback-Session-Id
-            // that are set by the video player JS and never visible to webRequest.
-            const CUSTOM_HEADER_KEYS = /^x-|playback|session|token|auth|range/i;
-            const MEDIA_URL_RE = /(m3u8|mpd|mp4|webm|ts|m4v|flv|mkv|manifest|playlist|\\.mp4|\\.mov|\\.webm)/i;
-
-            function postHeaders(url, headers) {
-                if (!url || !headers || Object.keys(headers).length === 0) return;
-                try {
-                    window.postMessage({ __daisyMediaHeaders: { url, headers } }, "*");
-                } catch(e) {}
-            }
-
-            const _fetch = window.fetch;
-            window.fetch = function(...args) {
-                const url = typeof args[0] === 'string' ? args[0] : (args[0]?.url || '');
-                const opts = args[1] || {};
-
-                if (MEDIA_URL_RE.test(url)) {
-                    _post(url);
-
-                    // Capture any custom headers on this media fetch.
-                    try {
-                        const customHeaders = {};
-                        const rawHeaders = opts.headers;
-                        if (rawHeaders) {
-                            const entries = rawHeaders instanceof Headers
-                                ? [...rawHeaders.entries()]
-                                : Object.entries(rawHeaders);
-                            for (const [k, v] of entries) {
-                                if (CUSTOM_HEADER_KEYS.test(k)) customHeaders[k] = v;
-                            }
-                        }
-                        postHeaders(url, customHeaders);
-                    } catch(_) {}
-                }
-                return _fetch.apply(this, args);
-            };
-
-            const _open = XMLHttpRequest.prototype.open;
-            const _setRequestHeader = XMLHttpRequest.prototype.setRequestHeader;
-            XMLHttpRequest.prototype.open = function(method, url, ...rest) {
-                this._daisyUrl = String(url || '');
-                this._daisyCustomHeaders = {};
-                if (this._daisyUrl && MEDIA_URL_RE.test(this._daisyUrl)) _post(this._daisyUrl);
-                return _open.call(this, method, url, ...rest);
-            };
-            XMLHttpRequest.prototype.setRequestHeader = function(name, value) {
-                if (this._daisyUrl && MEDIA_URL_RE.test(this._daisyUrl) && CUSTOM_HEADER_KEYS.test(name)) {
-                    if (!this._daisyCustomHeaders) this._daisyCustomHeaders = {};
-                    this._daisyCustomHeaders[name] = value;
-                }
-                return _setRequestHeader.call(this, name, value);
-            };
-            // Post captured XHR custom headers when the request actually goes out.
-            const _send = XMLHttpRequest.prototype.send;
-            XMLHttpRequest.prototype.send = function(body) {
-                if (this._daisyUrl && this._daisyCustomHeaders && Object.keys(this._daisyCustomHeaders).length > 0) {
-                    postHeaders(this._daisyUrl, this._daisyCustomHeaders);
-                }
-                return _send.call(this, body);
-            };
-
-            const origSrc = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'src');
-            if (origSrc) {
-                Object.defineProperty(HTMLMediaElement.prototype, 'src', {
-                    get: origSrc.get,
-                    set: function(val) {
-                        _post(val);
-                        return origSrc.set.call(this, val);
-                    }
-                });
-            }
-        })();
-    `;
-    document.documentElement.appendChild(script);
-    script.remove();
-}
-
 async function fetchHlsQualities(masterUrl) {
     return new Promise(resolve => {
         _api.runtime.sendMessage({ type: "FETCH_HLS_QUALITIES", url: masterUrl }, (variants) => {
@@ -514,7 +423,6 @@ document.createElement = function(tag, ...args) {
 };
 
 (function() {
-    injectMainWorldSniffers();
     runScriptSniffer(document);
 
     if (!IS_TOP_FRAME) {
@@ -567,12 +475,14 @@ document.createElement = function(tag, ...args) {
 
         const style = document.createElement('style');
         style.textContent = `
-            @keyframes daisy-fade-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
             @keyframes daisy-shimmer { 0% { background-position: -200% center; } 100% { background-position: 200% center; } }
             * { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
-            .daisydm-overlay-container { position: absolute; z-index: 2147483647; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; display: none; flex-direction: column; min-width: 280px; max-width: 520px; pointer-events: auto; background-color: #1c1c1e; border: 1px solid #2c2c2e; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25); border-radius: 16px; overflow: hidden; opacity: 0; transform: translateY(8px); transition: opacity 0.2s ease, transform 0.2s ease; }
-            .daisydm-overlay-container.visible { display: flex; animation: daisy-fade-in 0.2s ease-out forwards; }
-            .daisydm-overlay-container.scroll-hidden { opacity: 0 !important; pointer-events: none; transform: translateY(4px) !important; }
+            
+            .daisydm-overlay-container { position: absolute; z-index: 2147483647; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; display: flex; flex-direction: column; min-width: 280px; max-width: 280px; width: max-content; pointer-events: none; visibility: hidden; background-color: #1c1c1e; border: 1px solid #2c2c2e; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25); border-radius: 16px; overflow: hidden; opacity: 0; transform: translateY(12px) scale(0.95); transition: opacity 0.25s cubic-bezier(0.2, 0.8, 0.2, 1), transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1), visibility 0.25s, max-width 0.3s cubic-bezier(0.2, 0.8, 0.2, 1); }
+            .daisydm-overlay-container.expanded { max-width: 520px; }
+            .daisydm-overlay-container.visible { opacity: 1; transform: translateY(0) scale(1); visibility: visible; pointer-events: auto; }
+            .daisydm-overlay-container.scroll-hidden { opacity: 0 !important; pointer-events: none !important; transform: translateY(12px) scale(0.95) !important; visibility: hidden !important; }
+            
             .daisydm-overlay-header { padding: 12px 16px; font-size: 14px; font-weight: 500; cursor: pointer; display: flex; align-items: center; gap: 10px; color: #f4f4f5; user-select: none; -webkit-user-select: none; }
             .daisydm-header-icon { font-size: 15px; line-height: 1; flex-shrink: 0; }
             .daisydm-header-label { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -580,8 +490,18 @@ document.createElement = function(tag, ...args) {
             .daisydm-overlay-container.expanded .daisydm-chevron { transform: rotate(180deg); }
             .daisydm-close-btn { background: transparent; border: none; color: #8e8e93; font-size: 12px; line-height: 1; cursor: pointer; padding: 4px; border-radius: 4px; flex-shrink: 0; transition: background 0.15s ease, color 0.15s ease; }
             .daisydm-close-btn:hover { background: #2c2c2e; color: #f4f4f5; }
-            .daisydm-overlay-dropdown { display: none; flex-direction: column; max-height: 300px; overflow-y: auto; background-color: #1c1c1e; border-top: 1px solid #2c2c2e; }
-            .daisydm-overlay-container.expanded .daisydm-overlay-dropdown { display: flex; }
+            
+            /* The CSS Grid Dropdown Wrapper */
+            .daisydm-dropdown-wrapper { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 0.3s cubic-bezier(0.2, 0.8, 0.2, 1), border-color 0.2s ease; border-top: 1px solid transparent; }
+            .daisydm-overlay-container.expanded .daisydm-dropdown-wrapper { grid-template-rows: 1fr; border-top: 1px solid #2c2c2e; }
+            
+            /* The Inner Container that clips content */
+            .daisydm-dropdown-inner { min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+            
+            /* The actual scrollable list */
+            .daisydm-overlay-dropdown { max-height: 350px; overflow-y: auto; display: flex; flex-direction: column; opacity: 0; pointer-events: none; transition: opacity 0.2s ease; background-color: #1c1c1e; }
+            .daisydm-overlay-container.expanded .daisydm-overlay-dropdown { opacity: 1; pointer-events: auto; }
+            
             .daisydm-overlay-option { padding: 12px 16px; font-size: 13px; color: #d1d1d6; cursor: pointer; border-bottom: 1px solid #2c2c2e; display: flex; justify-content: space-between; align-items: center; gap: 12px; transition: background 0.15s ease, color 0.15s ease; }
             .daisydm-overlay-option:last-child { border-bottom: none; }
             .daisydm-overlay-option:hover { background-color: #2c2c2e; color: #ffffff; }
@@ -635,6 +555,8 @@ document.createElement = function(tag, ...args) {
             globalOverlay = document.createElement('div');
             globalOverlay.className = 'daisydm-overlay-container';
             globalOverlay.style.position = 'absolute';
+            
+            // Updated HTML to support the 3-layer Grid wrapper
             globalOverlay.innerHTML = `
                 <div class="daisydm-overlay-header">
                     <span class="daisydm-header-icon">🌼</span>
@@ -642,7 +564,11 @@ document.createElement = function(tag, ...args) {
                     <span class="daisydm-chevron">▼</span>
                     <button class="daisydm-close-btn" title="Dismiss">✕</button>
                 </div>
-                <div class="daisydm-overlay-dropdown"></div>
+                <div class="daisydm-dropdown-wrapper">
+                    <div class="daisydm-dropdown-inner">
+                        <div class="daisydm-overlay-dropdown"></div>
+                    </div>
+                </div>
             `;
             document.body.appendChild(globalOverlay);
 

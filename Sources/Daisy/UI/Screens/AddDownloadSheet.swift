@@ -138,8 +138,11 @@ struct AddDownloadSheet: View {
                             .padding(.horizontal, 2)
                         
                         Button {
-                            if let s = NSPasteboard.general.string(forType: .string), !s.isEmpty {
-                                urlText = s
+                            if let s = NSPasteboard.general.string(forType: .string) {
+                                let extracted = extractValidURLStrings(from: s)
+                                if !extracted.isEmpty {
+                                    urlText = extracted
+                                }
                             }
                         } label: {
                             Image(systemName: "doc.on.clipboard").foregroundStyle(.secondary)
@@ -217,22 +220,40 @@ struct AddDownloadSheet: View {
         }
     }
 
+    private func extractValidURLStrings(from text: String) -> String {
+        return text.components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .filter { str in
+                let url: URL? = {
+                    if str.hasPrefix("/") { return URL(fileURLWithPath: str) }
+                    if str.hasPrefix("file://") {
+                        let clean = str.replacingOccurrences(of: "file://", with: "")
+                        return URL(fileURLWithPath: clean.removingPercentEncoding ?? clean)
+                    }
+                    if let u = URL(string: str), u.scheme != nil { return u }
+                    if let enc = str.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+                       let u = URL(string: enc), u.scheme != nil { return u }
+                    return nil
+                }()
+                
+                guard let validURL = url else { return false }
+                return validURL.scheme?.hasPrefix("http") == true ||
+                       validURL.scheme == "magnet" ||
+                       (validURL.isFileURL && validURL.pathExtension.lowercased() == "torrent")
+            }
+            .joined(separator: "\n")
+    }
+
     private func handleClipboardOnAppear() {
         if !initialURLText.isEmpty {
             urlText = initialURLText
             isValid = true
             triggerAutoResolveIfNeed(newText: urlText)
-        } else if let clip = NSPasteboard.general.string(forType: .string), !clip.trimmingCharacters(in: .whitespaces).isEmpty {
-            let lines = clip.components(separatedBy: .newlines)
-                .map { $0.trimmingCharacters(in: .whitespaces) }
-                .filter { !$0.isEmpty }
-                .compactMap { str -> URL? in
-                    if str.hasPrefix("/") { return URL(fileURLWithPath: str) }
-                    if let url = URL(string: str), url.scheme != nil { return url }
-                    return nil
-                }
-            if !lines.isEmpty {
-                urlText = clip.trimmingCharacters(in: .whitespaces)
+        } else if let clip = NSPasteboard.general.string(forType: .string) {
+            let extracted = extractValidURLStrings(from: clip)
+            if !extracted.isEmpty {
+                urlText = extracted
                 isValid = true
                 triggerAutoResolveIfNeed(newText: urlText)
             }

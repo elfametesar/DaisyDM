@@ -150,9 +150,16 @@ struct ContentView: View {
                 processAddRequest(urls: [url], destination: notif.userInfo?["destination"] as? URL)
             }
         }
-        .onChange(of: engine.items.count) { _, _ in
-            let existingIds = Set(engine.items.map { $0.id })
-            selectedItems.formIntersection(existingIds)
+        .onChange(of: engine.items.map { $0.id }) { oldIds, newIds in
+            let oldSet = Set(oldIds)
+            let newSet = Set(newIds)
+            let addedIds = newSet.subtracting(oldSet)
+            
+            if !addedIds.isEmpty {
+                selectedItems = addedIds
+            } else {
+                selectedItems.formIntersection(newSet)
+            }
         }
         // Native NSItemProvider loop for reliable Drag & Drop
         .onDrop(of: [.url, .fileURL, .plainText], isTargeted: $isDropTargeted) { providers in
