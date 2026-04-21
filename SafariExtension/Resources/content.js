@@ -6,7 +6,6 @@ const IS_TOP_FRAME = window === window.top;
 let bypassKey = "Alt";
 let isExtensionDisabled = false;
 let isKeyCurrentlyHeld = false;
-let bypassMemoryTimeout = null;
 let isBypassActive = false;
 
 _api.storage.local.get(['bypassKey', 'isExtensionDisabled'], (res) => {
@@ -20,57 +19,84 @@ _api.storage.onChanged.addListener((changes) => {
 });
 
 function checkKey(e) {
-  if (bypassKey === "Alt")     return e.altKey   || e.key === "Alt";
-  if (bypassKey === "Shift")   return e.shiftKey  || e.key === "Shift";
-  if (bypassKey === "Control") return e.ctrlKey   || e.key === "Control";
-  if (bypassKey === "Meta")    return e.metaKey   || e.key === "Meta";
+  if (bypassKey === "Alt") return e.altKey || e.key === "Alt";
+  if (bypassKey === "Shift") return e.shiftKey || e.key === "Shift";
+  if (bypassKey === "Control") return e.ctrlKey || e.key === "Control";
+  if (bypassKey === "Meta") return e.metaKey || e.key === "Meta";
   return false;
 }
 
-document.addEventListener("keydown", (e) => {
-  if (checkKey(e)) { isKeyCurrentlyHeld = true; isBypassActive = true; }
-}, { capture: true, passive: true });
-
-document.addEventListener("keyup", (e) => {
-  if (!checkKey(e)) { isKeyCurrentlyHeld = false; }
-}, { capture: true, passive: true });
-
+document.addEventListener("keydown", (e) => { if (checkKey(e)) { isKeyCurrentlyHeld = true; isBypassActive = true; } }, { capture: true, passive: true });
+document.addEventListener("keyup", (e) => { if (!checkKey(e)) isKeyCurrentlyHeld = false; }, { capture: true, passive: true });
 window.addEventListener("blur", () => { isKeyCurrentlyHeld = false; });
 
 function shouldBypass() { return isExtensionDisabled || isBypassActive; }
 
-let sniffedMediaUrls = [];
+// --- STATE MANAGEMENT ---
+let sniffedMediaUrls = []; // Format: { url, mediaType, frameOrigin, timestamp }
 let _lastSeenUrl = window.location.href;
-
-// Stores custom headers seen on actual media/video network requests,
-// keyed by normalised URL. e.g. X-Playback-Session-Id from video element fetches.
 const capturedMediaRequestHeaders = new Map();
+
+// Map format: WeakMap<Element, Map<UrlString, MediaTypeString>>
+const playerUrlMap = new WeakMap();
+const iframeSrcMap = new WeakMap();
+
+// Track when video elements or iframes load new sources to clear stale data
+document.addEventListener('loadstart', (e) => {
+    if (e.target.tagName === 'VIDEO') playerUrlMap.delete(e.target);
+}, true);
+
+// Monitor iframe SRC changes (When you click "Switch Player" on anime sites)
+setInterval(() => {
+    document.querySelectorAll('iframe').forEach(ifr => {
+        if (iframeSrcMap.get(ifr) !== ifr.src) {
+            iframeSrcMap.set(ifr, ifr.src);
+            playerUrlMap.delete(ifr); // Wipe the dictionary for the old player
+        }
+    });
+}, 1000);
+
+// CRITICAL FIX: Include Iframes when tracking active media players
+function getLikelyTargetMediaElements() {
+    const elements = Array.from(document.querySelectorAll('video, iframe'));
+    
+    const playing = elements.filter(v => v.tagName === 'VIDEO' && !v.paused && v.readyState > 0);
+    if (playing.length > 0) return playing;
+    
+    const loading = elements.filter(v => v.tagName === 'VIDEO' && v.networkState === 2);
+    if (loading.length > 0) return loading;
+
+    // Fallback: If it's an iframe, we can't read 'paused' across domains.
+    // Find the media container closest to the center of the screen.
+    let closest = null;
+    let minDistance = Infinity;
+    const centerY = window.innerHeight / 2;
+    
+    elements.forEach(v => {
+        const rect = v.getBoundingClientRect();
+        if (rect.width > 50 && rect.height > 50 && rect.bottom > 0 && rect.top < window.innerHeight) {
+            const vCenterY = rect.top + rect.height / 2;
+            const distance = Math.abs(centerY - vCenterY);
+            if (distance < minDistance) {
+                minDistance = distance;
+                closest = v;
+            }
+        }
+    });
+    return closest ? [closest] : [];
+}
 
 function resetDaisyState() {
     sniffedMediaUrls = [];
-    document.querySelectorAll('.daisydm-overlay-container').forEach(overlay => {
-        overlay.classList.remove('visible', 'expanded');
-    });
+    document.querySelectorAll('.daisydm-overlay-container').forEach(overlay => overlay.classList.remove('visible', 'expanded'));
 }
 
 const _origPushState = history.pushState;
-history.pushState = function(...args) {
-    resetDaisyState();
-    return _origPushState.apply(this, args);
-};
+history.pushState = function(...args) { resetDaisyState(); return _origPushState.apply(this, args); };
 const _origReplaceState = history.replaceState;
-history.replaceState = function(...args) {
-    resetDaisyState();
-    return _origReplaceState.apply(this, args);
-};
+history.replaceState = function(...args) { resetDaisyState(); return _origReplaceState.apply(this, args); };
 window.addEventListener('popstate', resetDaisyState);
-
-setInterval(() => {
-    if (window.location.href !== _lastSeenUrl) {
-        _lastSeenUrl = window.location.href;
-        resetDaisyState();
-    }
-}, 1000);
+setInterval(() => { if (window.location.href !== _lastSeenUrl) { _lastSeenUrl = window.location.href; resetDaisyState(); } }, 1000);
 
 function collectStorageHeaders() {
     const headers = {};
@@ -85,16 +111,10 @@ function collectStorageHeaders() {
                 if (!val || val.length > 512) continue;
                 try {
                     const parsed = JSON.parse(val);
-                    if (typeof parsed === "string") {
-                        headers["Authorization"] = `Bearer ${parsed}`;
-                        headers["X-Auth-Token"] = parsed;
-                    } else if (parsed?.token)  { headers["Authorization"] = `Bearer ${parsed.token}`; headers["X-Auth-Token"] = parsed.token; }
+                    if (typeof parsed === "string") { headers["Authorization"] = `Bearer ${parsed}`; headers["X-Auth-Token"] = parsed; }
+                    else if (parsed?.token) { headers["Authorization"] = `Bearer ${parsed.token}`; headers["X-Auth-Token"] = parsed.token; }
                     else if (parsed?.accessToken) { headers["Authorization"] = `Bearer ${parsed.accessToken}`; }
-                    else if (parsed?.access_token) { headers["Authorization"] = `Bearer ${parsed.access_token}`; }
-                } catch {
-                    headers["Authorization"] = `Bearer ${val}`;
-                    headers["X-Auth-Token"] = val;
-                }
+                } catch { headers["Authorization"] = `Bearer ${val}`; headers["X-Auth-Token"] = val; }
             }
         } catch (_) {}
     }
@@ -110,35 +130,61 @@ function normalizeUrl(url) {
     } catch { return url.toLowerCase().trim(); }
 }
 
-function bubbleMediaToTop(url) {
-    if (!url || url.startsWith('blob:') || url.startsWith('data:')) return;
+function cleanMediaUrl(urlStr) {
+    try {
+        const u = new URL(urlStr);
+        u.searchParams.delete('bytestart');
+        u.searchParams.delete('byteend');
+        u.searchParams.delete('range');
+        return u.toString();
+    } catch { return urlStr; }
+}
+
+function bubbleMediaToTop(data) {
+    let rawUrl = typeof data === 'string' ? data : data.url;
+    let mediaType = typeof data === 'object' && data.mediaType ? data.mediaType : 'unknown';
+    
+    if (!rawUrl || rawUrl.startsWith('blob:') || rawUrl.startsWith('data:')) return;
+    const url = cleanMediaUrl(rawUrl);
+    
+    let lower = url.toLowerCase();
+    if (mediaType === 'unknown') {
+        if (lower.includes('.m3u8') || lower.includes('/m3/')) mediaType = 'hls';
+        else if (lower.includes('.mpd') || lower.includes('/dash/')) mediaType = 'dash';
+        else if (lower.includes('.mp4')) mediaType = 'mp4';
+    }
+    
     if (IS_TOP_FRAME) {
+        const now = Date.now();
+        // Expiry Fix: Clear out old global fallback URLs so they don't haunt new players
+        sniffedMediaUrls = sniffedMediaUrls.filter(m => now - m.timestamp < 35000);
+
         if (!sniffedMediaUrls.some(m => normalizeUrl(m.url) === normalizeUrl(url))) {
-            sniffedMediaUrls.push({ url, frameOrigin: window.location.origin });
+            sniffedMediaUrls.push({ url, mediaType, frameOrigin: window.location.origin, timestamp: now });
         }
+        
+        // Map explicitly to the active element (Video OR Iframe)
+        const targets = getLikelyTargetMediaElements();
+        targets.forEach(el => {
+            if (!playerUrlMap.has(el)) playerUrlMap.set(el, new Map());
+            
+            const existingType = playerUrlMap.get(el).get(url);
+            if (!existingType || existingType === 'unknown' || mediaType !== 'unknown') {
+                playerUrlMap.get(el).set(url, mediaType);
+            }
+        });
     } else {
-        try {
-            window.top.postMessage({ __daisyMedia: { url, frameOrigin: window.location.origin } }, "*");
-        } catch (_) {}
+        try { window.top.postMessage({ __daisyMedia: { url, mediaType, frameOrigin: window.location.origin } }, "*"); } catch (_) {}
     }
 }
 
 window.addEventListener("message", (e) => {
-    if (e.data && e.data.__daisyMedia) {
-        bubbleMediaToTop(e.data.__daisyMedia.url);
-    }
-    // Receive custom headers captured from main-world XHR/fetch on media URLs.
+    if (e.data && e.data.__daisyMedia) bubbleMediaToTop(e.data.__daisyMedia);
     if (e.data && e.data.__daisyMediaHeaders) {
         const { url, headers } = e.data.__daisyMediaHeaders;
         if (url && headers && typeof headers === "object") {
             const existing = capturedMediaRequestHeaders.get(url) || {};
             capturedMediaRequestHeaders.set(url, Object.assign({}, existing, headers));
-            // Also store by origin as a fallback key.
-            try {
-                const origin = new URL(url).origin;
-                const existingOrigin = capturedMediaRequestHeaders.get(origin) || {};
-                capturedMediaRequestHeaders.set(origin, Object.assign({}, existingOrigin, headers));
-            } catch (_) {}
         }
     }
 });
@@ -166,13 +212,11 @@ function sniffScriptUrls(root) {
     const found = [];
     try {
         const scripts = (root || document).querySelectorAll('script');
-        const mediaRe = /https?:\/\/[^\s'"\\]+?(?:\.m3u8|\.mp4|\.webm|\.mov|\.ts|\.mpd|\/m3u8|\/hls\/|\/stream\/|manifest\.m3u8|master\.m3u8|DASHPlaylist\.mpd|HLSPlaylist\.m3u8)[^\s'"\\,;}\]))]*/gi;
+        const mediaRe = /https?:\/\/[^\s'"\\]+?(?:\.m3u8|\.mp4|\.webm|\.mov|\.ts|\.mpd|\/m3u8|\/hls\/|\/stream\/|\/m3\/|\/dash\/)[^\s'"\\,;}\]))]*/gi;
         for (let s of scripts) {
             const text = s.textContent || "";
             let match;
-            while ((match = mediaRe.exec(text)) !== null) {
-                found.push(match[0].replace(/[,;}\]]+$/, ""));
-            }
+            while ((match = mediaRe.exec(text)) !== null) found.push({url: match[0].replace(/[,;}\]]+$/, ""), type: 'unknown'});
         }
     } catch(e) {}
     return found;
@@ -191,7 +235,7 @@ function sniffJsonBlobs(root) {
             ];
             for (const re of patterns) {
                 let m;
-                while ((m = re.exec(text)) !== null) found.push(m[1]);
+                while ((m = re.exec(text)) !== null) found.push({url: m[1], type: 'unknown'});
             }
         }
     } catch(_) {}
@@ -207,9 +251,9 @@ function sniffWindowState() {
                 const val = window[key];
                 if (!val) continue;
                 const str = typeof val === 'string' ? val : JSON.stringify(val);
-                const mediaRe = /https?:\/\/[^\s"'\\]+?(?:\.m3u8|\.mpd|HLSPlaylist\.m3u8|DASHPlaylist\.mpd)[^\s"'\\,;}\]))]*/g;
+                const mediaRe = /https?:\/\/[^\s"'\\]+?(?:\.m3u8|\.mpd|HLSPlaylist\.m3u8|DASHPlaylist\.mpd|\/m3\/|\/dash\/)[^\s"'\\,;}\]))]*/g;
                 let m;
-                while ((m = mediaRe.exec(str)) !== null) found.push(m[0]);
+                while ((m = mediaRe.exec(str)) !== null) found.push({url: m[0], type: 'unknown'});
             } catch(_) {}
         }
     } catch(_) {}
@@ -217,60 +261,121 @@ function sniffWindowState() {
 }
 
 function runScriptSniffer(root) {
-    sniffScriptUrls(root).forEach(url => bubbleMediaToTop(url));
-    sniffJsonBlobs(root).forEach(url => bubbleMediaToTop(url));
-    if (IS_TOP_FRAME) sniffWindowState().forEach(url => bubbleMediaToTop(url));
+    sniffScriptUrls(root).forEach(data => bubbleMediaToTop(data));
+    sniffJsonBlobs(root).forEach(data => bubbleMediaToTop(data));
+    if (IS_TOP_FRAME) sniffWindowState().forEach(data => bubbleMediaToTop(data));
 }
 
 async function fetchHlsQualities(masterUrl) {
-    return new Promise(resolve => {
-        _api.runtime.sendMessage({ type: "FETCH_HLS_QUALITIES", url: masterUrl }, (variants) => {
-            resolve(variants && variants.length ? variants : [{ label: "Original", url: masterUrl, bandwidth: 0 }]);
-        });
-    });
+    try {
+        const res = await new Promise(resolve => _api.runtime.sendMessage({ type: "FETCH_MANIFEST", url: masterUrl }, resolve));
+        if (!res || !res.ok) throw new Error('fetch failed');
+        const text = res.text;
+
+        // Extract title from manifest: #EXT-X-SESSION-DATA:DATA-ID="com.apple.hls.title",VALUE="..."
+        // or #EXT-X-SESSION-DATA:DATA-ID="title",VALUE="..."
+        let manifestTitle = null;
+        const titleMatch = text.match(/#EXT-X-SESSION-DATA:[^\n]*DATA-ID="[^"]*title[^"]*"[^\n]*VALUE="([^"]+)"/i)
+                        || text.match(/#EXT-X-TITLE:([^\n]+)/i);
+        if (titleMatch) manifestTitle = titleMatch[1].trim();
+
+        // If it's not a master playlist (no #EXT-X-STREAM-INF), treat as single stream
+        if (!text.includes('#EXT-X-STREAM-INF')) {
+            return [{ label: "Original", url: masterUrl, bandwidth: 0, title: manifestTitle }];
+        }
+
+        const variants = [];
+        const lines = text.split('\n');
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i].trim();
+            if (!line.startsWith('#EXT-X-STREAM-INF')) continue;
+
+            const bwMatch   = line.match(/BANDWIDTH=(\d+)/);
+            const resMatch  = line.match(/RESOLUTION=(\d+)x(\d+)/);
+            const nameMatch = line.match(/NAME="([^"]+)"/);
+            const bandwidth = bwMatch  ? parseInt(bwMatch[1])  : 0;
+            const height    = resMatch ? parseInt(resMatch[2]) : 0;
+
+            let variantUrl = '';
+            for (let j = i + 1; j < lines.length; j++) {
+                const next = lines[j].trim();
+                if (next && !next.startsWith('#')) { variantUrl = next; break; }
+            }
+            if (!variantUrl) continue;
+
+            try { variantUrl = new URL(variantUrl, masterUrl).toString(); } catch (_) {}
+
+            const label = nameMatch ? nameMatch[1]
+                        : height    ? `${height}p`
+                        : bandwidth ? `${Math.round(bandwidth / 1000)}k`
+                        : "Original";
+
+            variants.push({ label, url: variantUrl, bandwidth, height, title: manifestTitle });
+        }
+
+        if (variants.length === 0) return [{ label: "Original", url: masterUrl, bandwidth: 0, title: manifestTitle }];
+
+        variants.sort((a, b) => (b.height || b.bandwidth) - (a.height || a.bandwidth));
+        return variants;
+    } catch (_) {
+        return [{ label: "Original", url: masterUrl, bandwidth: 0, title: null }];
+    }
 }
 
 async function fetchDashQualities(mpdUrl) {
-    return new Promise(resolve => {
-        _api.runtime.sendMessage({ type: "FETCH_DASH_QUALITIES", url: mpdUrl }, (variants) => {
-            resolve(variants && variants.length ? variants : [{ label: "Original", url: mpdUrl }]);
+    try {
+        const res = await new Promise(resolve => _api.runtime.sendMessage({ type: "FETCH_MANIFEST", url: mpdUrl }, resolve));
+        if (!res || !res.ok) throw new Error('fetch failed');
+        const text = res.text;
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(text, 'application/xml');
+
+        // Extract title from <Title> element inside <ProgramInformation> or root MPD
+        let manifestTitle = null;
+        const titleEl = doc.querySelector('ProgramInformation Title, MPD Title, title');
+        if (titleEl && titleEl.textContent.trim().length > 1) manifestTitle = titleEl.textContent.trim();
+
+        const variants = [];
+        const seen = new Set();
+
+        doc.querySelectorAll('AdaptationSet').forEach(adaptSet => {
+            const contentType = (adaptSet.getAttribute('contentType') || adaptSet.getAttribute('mimeType') || '').toLowerCase();
+            if (contentType && !contentType.includes('video') && contentType !== '') return;
+
+            adaptSet.querySelectorAll('Representation').forEach(rep => {
+                const repMime = (rep.getAttribute('mimeType') || '').toLowerCase();
+                if (repMime && !repMime.includes('video')) return;
+
+                const height    = parseInt(rep.getAttribute('height') || '0');
+                const bandwidth = parseInt(rep.getAttribute('bandwidth') || '0');
+                const id        = rep.getAttribute('id') || '';
+                const key       = `${height}-${bandwidth}`;
+                if (seen.has(key)) return;
+                seen.add(key);
+
+                const label = height ? `${height}p` : bandwidth ? `${Math.round(bandwidth / 1000)}k` : id || "Original";
+                variants.push({ label, url: mpdUrl, height, bandwidth, title: manifestTitle });
+            });
         });
-    });
+
+        if (variants.length === 0) return [{ label: "Original", url: mpdUrl, title: manifestTitle }];
+
+        variants.sort((a, b) => (b.height || b.bandwidth) - (a.height || a.bandwidth));
+        return variants;
+    } catch (_) {
+        return [{ label: "Original", url: mpdUrl, title: null }];
+    }
 }
 
 _api.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "FETCH_BLOB")          handleBlob(message.url, message.filename);
   if (message.type === "CREDENTIALED_FETCH")  handleCredentialedFetch(message.url, message.filename);
-  if (message.type === 'NEW_MEDIA_FOUND' && message.mediaInfo) bubbleMediaToTop(message.mediaInfo.url);
+  if (message.type === 'NEW_MEDIA_FOUND' && message.mediaInfo) bubbleMediaToTop(message.mediaInfo);
   if (message.action === "getPageInfo") {
-    sendResponse({
-        title:    document.title ? document.title.replace(/[\\/:*?"<>|]/g, '').trim() : "Unknown Video",
-        pageUrl:  window.location.href,
-        cookies:  document.cookie,
-        pageHeaders: collectPageHeaders()
-    });
+    sendResponse({ title: document.title, pageUrl: window.location.href, cookies: document.cookie, pageHeaders: collectPageHeaders() });
   }
   return true;
 });
-
-const DOWNLOAD_EXTENSIONS = ["mp4","mkv","avi","mov","wmv","flv","webm","m4v","mpg","mpeg","ts","m3u8","mpd"];
-
-function isDownloadURL(url) {
-  try {
-    const path = new URL(url).pathname.toLowerCase().split("?")[0];
-    return DOWNLOAD_EXTENSIONS.some(ext => path.endsWith("." + ext));
-  } catch { return false; }
-}
-
-function extractFilename(url, anchor) {
-  if (anchor?.getAttribute("download")) return anchor.getAttribute("download");
-  try {
-    const u = new URL(url);
-    const fn = u.searchParams.get("filename") || u.searchParams.get("name");
-    if (fn) return decodeURIComponent(fn);
-    return decodeURIComponent(u.pathname.split("/").pop()) || "download";
-  } catch { return "download"; }
-}
 
 function getExtFromUrl(url) {
     try {
@@ -280,13 +385,10 @@ function getExtFromUrl(url) {
 }
 
 function nativeFallback(url, filename) {
-  const a = document.createElement('a');
-  a.href = url;
+  const a = document.createElement('a'); a.href = url;
   if (filename) a.download = filename;
   a.setAttribute('data-daisy-bypass', 'true');
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
 }
 
 function collectPageHeaders() {
@@ -299,74 +401,40 @@ function collectPageHeaders() {
     return headers;
 }
 
-// Collect any custom headers we captured from actual media network requests for this URL.
-// This is the key path for headers like X-Playback-Session-Id.
 function collectMediaHeaders(mediaUrl) {
     if (!mediaUrl) return {};
     const exact = capturedMediaRequestHeaders.get(mediaUrl) || {};
     let originHeaders = {};
-    try {
-        const origin = new URL(mediaUrl).origin;
-        originHeaders = capturedMediaRequestHeaders.get(origin) || {};
-    } catch (_) {}
+    try { originHeaders = capturedMediaRequestHeaders.get(new URL(mediaUrl).origin) || {}; } catch (_) {}
     return Object.assign({}, originHeaders, exact);
 }
 
 function sendToDispatch(url, filename, additionalData = {}) {
   if (url.startsWith("blob:") && !additionalData.forceHLS && !additionalData.forceDASH) {
-      handleBlob(url, filename);
-      return;
+      handleBlob(url, filename); return;
   }
   let finalFilename = filename || "Download";
   if (!/\.[0-9a-z]+$/i.test(finalFilename)) finalFilename += ".mp4";
   
-  const pageHeaders  = typeof collectPageHeaders  === "function" ? collectPageHeaders()       : {};
-  const mediaHeaders = typeof collectMediaHeaders === "function" ? collectMediaHeaders(url)   : {};
-
-  // Merge: page-level headers as base, media-specific captured headers take precedence
-  // since they reflect exactly what the browser sent for this resource.
-  const mergedPageHeaders = Object.assign({}, pageHeaders, mediaHeaders);
+  const mergedPageHeaders = Object.assign({}, collectPageHeaders(), collectMediaHeaders(url));
   
   try {
     _api.runtime.sendMessage({
-        type:        "PREPARE_DISPATCH_DOWNLOAD",
-        url:         url,
-        filename:    finalFilename,
-        cookies:     "",   // background.js has better cookie access; document.cookie can't see HttpOnly
-        pageHeaders: mergedPageHeaders,
-        ...additionalData
+        type: "PREPARE_DISPATCH_DOWNLOAD", url: url, filename: finalFilename, cookies: "",
+        pageHeaders: mergedPageHeaders, ...additionalData
     }).catch(() => nativeFallback(url, finalFilename));
   } catch (error) {
-    if (error.message && error.message.includes("Extension context invalidated")) {
-        console.warn("DaisyDM: Connection lost due to update. Refresh the page.");
-        alert("DaisyDM updated. Please refresh the page (Cmd+R) to download.");
-    } else {
-        nativeFallback(url, finalFilename);
-    }
+    nativeFallback(url, finalFilename);
   }
 }
 
 async function handleCredentialedFetch(url, filename) {
   try {
-    const r = await fetch(url);
-    const blob = await r.blob();
-    const reader = new FileReader();
+    const r = await fetch(url); const blob = await r.blob(); const reader = new FileReader();
     reader.onload = async () => {
-        const payload = JSON.stringify({
-            url:      reader.result.replace(/^data:[^;]+;base64,/, "data:application/octet-stream;base64,"),
-            filename: filename || "download",
-            referer:  location.href,
-            ua:       navigator.userAgent,
-            cookies:  "",
-            pageHeaders: collectPageHeaders()
-        });
+        const payload = JSON.stringify({ url: reader.result.replace(/^data:[^;]+;base64,/, "data:application/octet-stream;base64,"), filename: filename || "download", referer: location.href, ua: navigator.userAgent, cookies: "", pageHeaders: collectPageHeaders() });
         for (let port = 6840; port <= 6850; port++) {
-            try {
-                const resp = await fetch(`http://127.0.0.1:${port}/dispatch`, {
-                    method: "POST", headers: { "Content-Type": "application/json" }, body: payload
-                });
-                if (resp.ok) return;
-            } catch (_) {}
+            try { const resp = await fetch(`http://127.0.0.1:${port}/dispatch`, { method: "POST", headers: { "Content-Type": "application/json" }, body: payload }); if (resp.ok) return; } catch (_) {}
         }
         nativeFallback(url, filename);
     };
@@ -375,31 +443,29 @@ async function handleCredentialedFetch(url, filename) {
 }
 
 async function handleBlob(blobUrl, filename) {
-  try {
-    const r = await fetch(blobUrl);
-    const blob = await r.blob();
-    const reader = new FileReader();
-    reader.onload = async () => {
-        const payload = JSON.stringify({
-            url:      reader.result.replace(/^data:[^;]+;base64,/, "data:application/octet-stream;base64,"),
-            filename: filename || "download",
-            referer:  location.href,
-            ua:       navigator.userAgent,
-            cookies:  "",
-            pageHeaders: collectPageHeaders()
-        });
-        for (let port = 6840; port <= 6850; port++) {
-            try {
-                const resp = await fetch(`http://127.0.0.1:${port}/dispatch`, {
-                    method: "POST", headers: { "Content-Type": "application/json" }, body: payload
-                });
-                if (resp.ok) return;
-            } catch (_) {}
+    handleCredentialedFetch(blobUrl, filename);
+}
+
+function getContextualVideoName(el) {
+    if (!el) return null;
+    let label = el.getAttribute('aria-label') || el.getAttribute('title');
+    if (label && label.length > 2) return label;
+    
+    let curr = el;
+    for (let i = 0; i < 12 && curr && curr !== document.body; i++) {
+        let socialCaption = curr.querySelector('[data-ad-comet-preview="message"], [data-ad-preview="message"], [data-testid="post_message"], ._5pbx, ._1mwp, h1');
+        if (socialCaption && socialCaption.innerText) {
+            let clean = socialCaption.innerText.trim().split('\n')[0].substring(0, 60);
+            if (clean.length > 2) return clean;
         }
-        nativeFallback(blobUrl, filename);
-    };
-    reader.readAsDataURL(blob);
-  } catch (_) { nativeFallback(blobUrl, filename); }
+        let heading = curr.querySelector('h2, h3, [role="heading"]');
+        if (heading && heading.innerText) {
+            let clean = heading.innerText.trim().split('\n')[0].substring(0, 60);
+            if (clean.length > 2) return clean;
+        }
+        curr = curr.parentElement;
+    }
+    return null;
 }
 
 const _createElement = document.createElement.bind(document);
@@ -408,23 +474,17 @@ document.createElement = function(tag, ...args) {
   if (tag.toLowerCase() === "a") {
     const _click = el.click.bind(el);
     el.click = function() {
-      if (el.hasAttribute('data-daisy-bypass') || shouldBypass() || !el.href) {
-          _click();
-          return;
-      }
-      if (el.href.startsWith("blob:") || el.hasAttribute("download") || isDownloadURL(el.href)) {
-          sendToDispatch(el.href, el.getAttribute("download") || extractFilename(el.href));
-      } else {
-          _click();
-      }
+      if (el.hasAttribute('data-daisy-bypass') || shouldBypass() || !el.href) { _click(); return; }
+      const isDownloadUrl = ['.mp4', '.mkv', '.avi', '.webm', '.mov', '.wmv', '.flv', '.ts', '.m3u8', '.mpd'].some(ext => { try { return new URL(el.href).pathname.toLowerCase().endsWith(ext); } catch { return false; } });
+      if (el.href.startsWith("blob:") || el.hasAttribute("download") || isDownloadUrl) {
+          sendToDispatch(el.href, el.getAttribute("download") || extractFilename(el.href, el));
+      } else { _click(); }
     };
   }
   return el;
 };
 
 (function() {
-    runScriptSniffer(document);
-
     if (!IS_TOP_FRAME) {
         function watchSubframeVideos(root) {
             if (!root) return;
@@ -441,24 +501,12 @@ document.createElement = function(tag, ...args) {
                 v.addEventListener('loadedmetadata', report, { once: true });
             });
             if (root.querySelectorAll) {
-                root.querySelectorAll('*').forEach(el => {
-                    if (el.shadowRoot) watchSubframeVideos(el.shadowRoot);
-                });
+                root.querySelectorAll('*').forEach(el => { if (el.shadowRoot) watchSubframeVideos(el.shadowRoot); });
             }
         }
-        const subObs = new MutationObserver(() => {
-            watchSubframeVideos(document);
-            runScriptSniffer(document);
-        });
-        if (document.body) {
-            subObs.observe(document.body, { childList: true, subtree: true });
-            watchSubframeVideos(document);
-        } else {
-            document.addEventListener('DOMContentLoaded', () => {
-                subObs.observe(document.body, { childList: true, subtree: true });
-                watchSubframeVideos(document);
-            });
-        }
+        const subObs = new MutationObserver(() => { watchSubframeVideos(document); });
+        if (document.body) { subObs.observe(document.body, { childList: true, subtree: true }); watchSubframeVideos(document); }
+        else { document.addEventListener('DOMContentLoaded', () => { subObs.observe(document.body, { childList: true, subtree: true }); watchSubframeVideos(document); }); }
         return;
     }
 
@@ -477,12 +525,10 @@ document.createElement = function(tag, ...args) {
         style.textContent = `
             @keyframes daisy-shimmer { 0% { background-position: -200% center; } 100% { background-position: 200% center; } }
             * { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
-            
             .daisydm-overlay-container { position: absolute; z-index: 2147483647; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; display: flex; flex-direction: column; min-width: 280px; max-width: 280px; width: max-content; pointer-events: none; visibility: hidden; background-color: #1c1c1e; border: 1px solid #2c2c2e; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25); border-radius: 16px; overflow: hidden; opacity: 0; transform: translateY(12px) scale(0.95); transition: opacity 0.25s cubic-bezier(0.2, 0.8, 0.2, 1), transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1), visibility 0.25s, max-width 0.3s cubic-bezier(0.2, 0.8, 0.2, 1); }
             .daisydm-overlay-container.expanded { max-width: 520px; }
             .daisydm-overlay-container.visible { opacity: 1; transform: translateY(0) scale(1); visibility: visible; pointer-events: auto; }
             .daisydm-overlay-container.scroll-hidden { opacity: 0 !important; pointer-events: none !important; transform: translateY(12px) scale(0.95) !important; visibility: hidden !important; }
-            
             .daisydm-overlay-header { padding: 12px 16px; font-size: 14px; font-weight: 500; cursor: pointer; display: flex; align-items: center; gap: 10px; color: #f4f4f5; user-select: none; -webkit-user-select: none; }
             .daisydm-header-icon { font-size: 15px; line-height: 1; flex-shrink: 0; }
             .daisydm-header-label { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -490,18 +536,11 @@ document.createElement = function(tag, ...args) {
             .daisydm-overlay-container.expanded .daisydm-chevron { transform: rotate(180deg); }
             .daisydm-close-btn { background: transparent; border: none; color: #8e8e93; font-size: 12px; line-height: 1; cursor: pointer; padding: 4px; border-radius: 4px; flex-shrink: 0; transition: background 0.15s ease, color 0.15s ease; }
             .daisydm-close-btn:hover { background: #2c2c2e; color: #f4f4f5; }
-            
-            /* The CSS Grid Dropdown Wrapper */
             .daisydm-dropdown-wrapper { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 0.3s cubic-bezier(0.2, 0.8, 0.2, 1), border-color 0.2s ease; border-top: 1px solid transparent; }
             .daisydm-overlay-container.expanded .daisydm-dropdown-wrapper { grid-template-rows: 1fr; border-top: 1px solid #2c2c2e; }
-            
-            /* The Inner Container that clips content */
             .daisydm-dropdown-inner { min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
-            
-            /* The actual scrollable list */
             .daisydm-overlay-dropdown { max-height: 350px; overflow-y: auto; display: flex; flex-direction: column; opacity: 0; pointer-events: none; transition: opacity 0.2s ease; background-color: #1c1c1e; }
             .daisydm-overlay-container.expanded .daisydm-overlay-dropdown { opacity: 1; pointer-events: auto; }
-            
             .daisydm-overlay-option { padding: 12px 16px; font-size: 13px; color: #d1d1d6; cursor: pointer; border-bottom: 1px solid #2c2c2e; display: flex; justify-content: space-between; align-items: center; gap: 12px; transition: background 0.15s ease, color 0.15s ease; }
             .daisydm-overlay-option:last-child { border-bottom: none; }
             .daisydm-overlay-option:hover { background-color: #2c2c2e; color: #ffffff; }
@@ -524,9 +563,7 @@ document.createElement = function(tag, ...args) {
 
         document.addEventListener('mousedown', (e) => {
             if (globalOverlay && globalOverlay.classList.contains('expanded')) {
-                if (!globalOverlay.contains(e.target)) {
-                    globalOverlay.classList.remove('visible', 'expanded');
-                }
+                if (!globalOverlay.contains(e.target)) globalOverlay.classList.remove('visible', 'expanded');
             }
         });
 
@@ -535,9 +572,7 @@ document.createElement = function(tag, ...args) {
             globalOverlay.classList.add('scroll-hidden');
             clearTimeout(scrollTimer);
             scrollTimer = setTimeout(() => {
-                if (currentTarget && globalOverlay.classList.contains('visible')) {
-                    positionOverlay(currentTarget);
-                }
+                if (currentTarget && globalOverlay.classList.contains('visible')) positionOverlay(currentTarget);
                 globalOverlay.classList.remove('scroll-hidden');
             }, 250);
         }, { passive: true, capture: true });
@@ -545,9 +580,7 @@ document.createElement = function(tag, ...args) {
         function initGlobalOverlay() {
             if (globalOverlay) {
                 if (!document.body.contains(globalOverlay)) { document.body.appendChild(globalOverlay); }
-                document.querySelectorAll('.daisydm-overlay-container').forEach(el => {
-                    if (el !== globalOverlay) el.remove();
-                });
+                document.querySelectorAll('.daisydm-overlay-container').forEach(el => { if (el !== globalOverlay) el.remove(); });
                 return;
             }
 
@@ -556,7 +589,6 @@ document.createElement = function(tag, ...args) {
             globalOverlay.className = 'daisydm-overlay-container';
             globalOverlay.style.position = 'absolute';
             
-            // Updated HTML to support the 3-layer Grid wrapper
             globalOverlay.innerHTML = `
                 <div class="daisydm-overlay-header">
                     <span class="daisydm-header-icon">🌼</span>
@@ -593,9 +625,7 @@ document.createElement = function(tag, ...args) {
             globalOverlay.addEventListener('mouseleave', () => {
                 if (!globalOverlay.classList.contains('expanded')) {
                     clearTimeout(hideTimeout);
-                    hideTimeout = setTimeout(() => {
-                        globalOverlay.classList.remove('visible');
-                    }, 350);
+                    hideTimeout = setTimeout(() => { globalOverlay.classList.remove('visible'); }, 350);
                 }
             });
         }
@@ -611,9 +641,8 @@ document.createElement = function(tag, ...args) {
         
         function hasDownloadableMedia(el) {
             const pageUrl = window.location.href;
-            if (pageUrl.includes('youtube.com')) {
-                return window.location.pathname.startsWith('/watch') || window.location.pathname.startsWith('/shorts');
-            }
+            if (pageUrl.includes('youtube.com')) { return window.location.pathname.startsWith('/watch') || window.location.pathname.startsWith('/shorts'); }
+            if (pageUrl.includes('drive.google.com')) { return true; }
             if (sniffedMediaUrls.length > 0) return true;
             let found = false;
             const check = (url) => { if (url && !url.startsWith('blob:') && !url.startsWith('data:')) found = true; };
@@ -648,9 +677,13 @@ document.createElement = function(tag, ...args) {
                 <div class="daisydm-shimmer" style="width:72%;margin-top:5px"></div>
                 <div class="daisydm-shimmer" style="width:44%;margin-top:5px;margin-bottom:8px"></div>
             `;
+            
             const pageUrl = window.location.href;
-            let vidName = document.title ? document.title.split(' - ')[0].replace(/[\\/:*?"<>|]/g, '').trim() : "Media";
-            if (!vidName) vidName = "Video";
+            let contextualName = getContextualVideoName(targetEl);
+            let _pt = document.title.trim();
+            let _ptParts = _pt.split(/\s[-–—|]\s/);
+            let pageTitle = (_ptParts.length > 1 ? _ptParts.slice(0, -1).join(' - ') : _pt).trim();
+            let vidName = (contextualName || pageTitle || "Video").replace(/[\/:*?"<>|]/g, '').trim() || "Video";
 
             if (pageUrl.includes('youtube.com')) {
                 if (!window.location.pathname.startsWith('/watch') && !window.location.pathname.startsWith('/shorts')) {
@@ -668,33 +701,59 @@ document.createElement = function(tag, ...args) {
                 return;
             }
 
-            if (typeof runScriptSniffer === "function") runScriptSniffer(document);
-
-            const urls = new Set(sniffedMediaUrls.map(m => m.url));
-            [targetEl, ...Array.from(targetEl.querySelectorAll ? targetEl.querySelectorAll('video') : [])].forEach(v => {
+            const urlTypeMap = new Map();
+            const mediaNodes = [targetEl, ...Array.from(targetEl.querySelectorAll ? targetEl.querySelectorAll('video, iframe') : [])];
+            
+            mediaNodes.forEach(v => {
                 if (!v) return;
                 [v.src, v.currentSrc, ...Array.from(v.querySelectorAll ? v.querySelectorAll('source') : []).map(s => s.src)]
                     .filter(u => u && !u.startsWith('blob:') && !u.startsWith('data:'))
-                    .forEach(u => urls.add(u));
+                    .forEach(u => urlTypeMap.set(u, 'unknown'));
+                    
+                if (playerUrlMap.has(v)) {
+                    for (const [u, t] of playerUrlMap.get(v).entries()) urlTypeMap.set(u, t);
+                }
             });
 
+            // If we have nothing bound, safely use global fallback (which now auto-expires stale links)
+            if (urlTypeMap.size === 0 && sniffedMediaUrls.length > 0) {
+                sniffedMediaUrls.slice(-4).forEach(m => urlTypeMap.set(m.url, m.mediaType || 'unknown'));
+            }
+
             const options = [];
-            for (const url of urls) {
-                if (!url || url.startsWith('blob:') || url.startsWith('data:')) continue;
-                if (url.includes('m3u8') || url.includes('HLSPlaylist')) {
-                    const variants = await fetchHlsQualities(url);
-                    variants.forEach(v => options.push({ vidName: vidName, quality: v.label === "Original" ? "" : v.label, ext: '.mp4', url: v.url, type: 'hls' }));
-                } else if (url.includes('.mpd') || url.includes('DASHPlaylist')) {
-                    const variants = await fetchDashQualities(url);
+            for (const [rawUrl, type] of urlTypeMap.entries()) {
+                if (!rawUrl || rawUrl.startsWith('blob:') || rawUrl.startsWith('data:')) continue;
+                
+                let lower = rawUrl.toLowerCase();
+                let finalType = type;
+                
+                if (finalType === 'unknown') {
+                    if (lower.includes('.m3u8') || lower.includes('/m3/')) finalType = 'hls';
+                    else if (lower.includes('.mpd') || lower.includes('/dash/')) finalType = 'dash';
+                    else if (lower.includes('.mp4')) finalType = 'mp4';
+                }
+                
+                const isManifest = (finalType === 'hls' || finalType === 'dash');
+                
+                // SPAM FILTER
+                if (!isManifest && finalType !== 'mp4') {
+                    const spamSigs = ['.ts', '.m4s', '.m4v', '.m4a', 'bytestart=', 'segment', 'frag', 'init.mp4', 'seg-'];
+                    const fakeExts = ['.woff', '.css', '.js', '.html', '.png', '.jpg'];
+                    
+                    if (spamSigs.some(s => lower.includes(s))) continue;
+                    if (fakeExts.some(e => lower.includes(e))) continue;
+                }
+                
+                if (finalType === 'hls') {
+                    const variants = await fetchHlsQualities(rawUrl);
+                    variants.forEach(v => options.push({ vidName: v.title || vidName, quality: v.label, ext: '.mp4', url: v.url, type: 'hls' }));
+                } else if (finalType === 'dash') {
+                    const variants = await fetchDashQualities(rawUrl);
                     variants.forEach(v => {
-                        if (v.height) {
-                            options.push({ vidName: vidName, quality: v.label, ext: '.mp4', url: v.url, type: 'dash', ytQuality: `bestvideo[height<=${v.height}]+bestaudio/best` });
-                        } else {
-                            options.push({ vidName: vidName, quality: '', ext: '.mp4', url: v.url, type: 'dash' });
-                        }
+                        options.push({ vidName: v.title || vidName, quality: v.label, ext: '.mp4', url: v.url, type: 'dash', ytQuality: v.height ? `bestvideo[height<=${v.height}]+bestaudio/best` : undefined });
                     });
-                } else if (isDownloadURL(url)) {
-                    options.push({ vidName: vidName, quality: '', ext: getExtFromUrl(url), url, type: 'mp4' });
+                } else {
+                    options.push({ vidName: vidName, quality: '', ext: getExtFromUrl(rawUrl), url: rawUrl, type: 'mp4' });
                 }
             }
 
@@ -704,15 +763,23 @@ document.createElement = function(tag, ...args) {
                 if (typeof dismissedEls !== "undefined" && targetEl) dismissedEls.add(targetEl);
                 return;
             }
-            options.forEach(opt => renderOption(dropdownEl, opt));
+            
+            const seenOptions = new Set();
+            options.forEach(opt => {
+                const uid = `${opt.quality}-${opt.type}-${opt.url}`;
+                if (!seenOptions.has(uid)) {
+                    seenOptions.add(uid);
+                    renderOption(dropdownEl, opt);
+                }
+            });
         }
 
         function renderOption(dropdownEl, opt) {
             let typeLabel = (opt.type || 'MP4').toUpperCase(), badgeClass = `daisydm-badge ${(opt.type || 'mp4').toLowerCase()}`;
-            if (opt.ytQuality && opt.type !== 'dash') { typeLabel = 'YT'; badgeClass = 'daisydm-badge yt'; }
+            if (opt.ytQuality && opt.type !== 'dash') { typeLabel = 'DASH'; badgeClass = 'daisydm-badge yt'; }
             else if (opt.type === 'dash') { typeLabel = 'DASH'; badgeClass = 'daisydm-badge dash'; }
             else if (opt.type === 'hls') { typeLabel = 'HLS'; badgeClass = 'daisydm-badge hls'; }
-            else if (opt.type === 'yt') { typeLabel = 'YT'; badgeClass = 'daisydm-badge yt'; }
+            else if (opt.type === 'yt') { typeLabel = 'DASH'; badgeClass = 'daisydm-badge yt'; }
 
             const extLabel   = (opt.ext || '.mp4').replace('.', '').toUpperCase();
             const item = document.createElement('div');
@@ -754,37 +821,30 @@ document.createElement = function(tag, ...args) {
                 const r = el.getBoundingClientRect();
                 if (r.width > 60 && r.height > 50) attachToElement(el);
             });
+            
+            document.querySelectorAll('video').forEach(v => {
+                const r = v.getBoundingClientRect();
+                if (r.width > 50 && r.height > 50) {
+                    attachToElement(v);
+                    let parent = v.parentElement;
+                    for (let i = 0; i < 8 && parent; i++) {
+                        if (parent.tagName === 'BODY' || parent.tagName === 'HTML') break;
+                        attachToElement(parent);
+                        parent = parent.parentElement;
+                    }
+                }
+            });
 
             document.querySelectorAll('iframe').forEach(el => {
                 const src = el.src || '', r = el.getBoundingClientRect();
                 if (r.width > 200 && r.height > 120) attachToElement(el);
-                else if (/youtube|vimeo|twitch|reddit|dailymotion|facebook|tiktok|streamable/i.test(src)) attachToElement(el);
+                else if (/youtube|vimeo|twitch|reddit|dailymotion|facebook|tiktok|streamable|drive\.google/i.test(src)) attachToElement(el);
             });
-
-            function walkShadow(root) {
-                try {
-                    if (!root || !root.querySelectorAll) return;
-                    root.querySelectorAll('video').forEach(v => {
-                        const r = v.getBoundingClientRect();
-                        if (r.width > 50 && r.height > 50) {
-                            if (v.src && !v.src.startsWith('blob:')) bubbleMediaToTop(v.src);
-                            if (v.currentSrc && !v.currentSrc.startsWith('blob:')) bubbleMediaToTop(v.currentSrc);
-                            attachToElement(v);
-                        }
-                    });
-                    root.querySelectorAll('*').forEach(el => { if (el.shadowRoot) walkShadow(el.shadowRoot); });
-                } catch(_) {}
-            }
-            walkShadow(document);
         }
 
-        const observer = new MutationObserver(() => {
-            scanForMedia(); if (typeof runScriptSniffer === "function") runScriptSniffer(document);
-        });
+        const observer = new MutationObserver(() => { scanForMedia(); });
         observer.observe(document.body, { childList: true, subtree: true });
-        setInterval(() => {
-            scanForMedia(); if (typeof runScriptSniffer === "function") runScriptSniffer(document);
-        }, 2000);
+        setInterval(() => { scanForMedia(); }, 2000);
         scanForMedia();
     }
     init();

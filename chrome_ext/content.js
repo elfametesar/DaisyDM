@@ -19,53 +19,76 @@ _api.storage.onChanged.addListener((changes) => {
 });
 
 function checkKey(e) {
-  if (bypassKey === "Alt")     return e.altKey   || e.key === "Alt";
-  if (bypassKey === "Shift")   return e.shiftKey  || e.key === "Shift";
-  if (bypassKey === "Control") return e.ctrlKey   || e.key === "Control";
-  if (bypassKey === "Meta")    return e.metaKey   || e.key === "Meta";
+  if (bypassKey === "Alt") return e.altKey || e.key === "Alt";
+  if (bypassKey === "Shift") return e.shiftKey || e.key === "Shift";
+  if (bypassKey === "Control") return e.ctrlKey || e.key === "Control";
+  if (bypassKey === "Meta") return e.metaKey || e.key === "Meta";
   return false;
 }
 
-document.addEventListener("keydown", (e) => {
-  if (checkKey(e)) { isKeyCurrentlyHeld = true; isBypassActive = true; }
-}, { capture: true, passive: true });
-
-document.addEventListener("keyup", (e) => {
-  if (!checkKey(e)) { isKeyCurrentlyHeld = false; }
-}, { capture: true, passive: true });
-
+document.addEventListener("keydown", (e) => { if (checkKey(e)) { isKeyCurrentlyHeld = true; isBypassActive = true; } }, { capture: true, passive: true });
+document.addEventListener("keyup", (e) => { if (!checkKey(e)) isKeyCurrentlyHeld = false; }, { capture: true, passive: true });
 window.addEventListener("blur", () => { isKeyCurrentlyHeld = false; });
 
 function shouldBypass() { return isExtensionDisabled || isBypassActive; }
 
 // --- STATE MANAGEMENT ---
-let sniffedMediaUrls = [];
+let sniffedMediaUrls = []; // Format: { url, mediaType, frameOrigin, timestamp }
 let _lastSeenUrl = window.location.href;
 const capturedMediaRequestHeaders = new Map();
 
-// Strict mapping to isolate URLs to specific video elements
+// Map format: WeakMap<Element, Map<UrlString, MediaTypeString>>
 const playerUrlMap = new WeakMap();
+const iframeSrcMap = new WeakMap();
 
-// Flush dictionaries when feeds recycle DOM elements
+// Track when video elements or iframes load new sources to clear stale data
 document.addEventListener('loadstart', (e) => {
     if (e.target.tagName === 'VIDEO') playerUrlMap.delete(e.target);
 }, true);
 
-// Find exact playing video to assign incoming background network chunks to
+// Monitor iframe SRC changes (When you click "Switch Player" on anime sites)
+setInterval(() => {
+    document.querySelectorAll('iframe').forEach(ifr => {
+        if (iframeSrcMap.get(ifr) !== ifr.src) {
+            iframeSrcMap.set(ifr, ifr.src);
+            playerUrlMap.delete(ifr); // Wipe the dictionary for the old player
+        }
+    });
+}, 1000);
+
+// CRITICAL FIX: Include Iframes when tracking active media players
 function getLikelyTargetMediaElements() {
-    const elements = Array.from(document.querySelectorAll('video'));
-    const playing = elements.filter(v => !v.paused && v.readyState > 0);
+    const elements = Array.from(document.querySelectorAll('video, iframe'));
+    
+    const playing = elements.filter(v => v.tagName === 'VIDEO' && !v.paused && v.readyState > 0);
     if (playing.length > 0) return playing;
     
-    const loading = elements.filter(v => v.networkState === 2);
-    return loading.length > 0 ? loading : [];
+    const loading = elements.filter(v => v.tagName === 'VIDEO' && v.networkState === 2);
+    if (loading.length > 0) return loading;
+
+    // Fallback: If it's an iframe, we can't read 'paused' across domains.
+    // Find the media container closest to the center of the screen.
+    let closest = null;
+    let minDistance = Infinity;
+    const centerY = window.innerHeight / 2;
+    
+    elements.forEach(v => {
+        const rect = v.getBoundingClientRect();
+        if (rect.width > 50 && rect.height > 50 && rect.bottom > 0 && rect.top < window.innerHeight) {
+            const vCenterY = rect.top + rect.height / 2;
+            const distance = Math.abs(centerY - vCenterY);
+            if (distance < minDistance) {
+                minDistance = distance;
+                closest = v;
+            }
+        }
+    });
+    return closest ? [closest] : [];
 }
 
 function resetDaisyState() {
     sniffedMediaUrls = [];
-    document.querySelectorAll('.daisydm-overlay-container').forEach(overlay => {
-        overlay.classList.remove('visible', 'expanded');
-    });
+    document.querySelectorAll('.daisydm-overlay-container').forEach(overlay => overlay.classList.remove('visible', 'expanded'));
 }
 
 const _origPushState = history.pushState;
@@ -73,13 +96,7 @@ history.pushState = function(...args) { resetDaisyState(); return _origPushState
 const _origReplaceState = history.replaceState;
 history.replaceState = function(...args) { resetDaisyState(); return _origReplaceState.apply(this, args); };
 window.addEventListener('popstate', resetDaisyState);
-
-setInterval(() => {
-    if (window.location.href !== _lastSeenUrl) {
-        _lastSeenUrl = window.location.href;
-        resetDaisyState();
-    }
-}, 1000);
+setInterval(() => { if (window.location.href !== _lastSeenUrl) { _lastSeenUrl = window.location.href; resetDaisyState(); } }, 1000);
 
 function collectStorageHeaders() {
     const headers = {};
@@ -118,32 +135,51 @@ function cleanMediaUrl(urlStr) {
         const u = new URL(urlStr);
         u.searchParams.delete('bytestart');
         u.searchParams.delete('byteend');
+        u.searchParams.delete('range');
         return u.toString();
     } catch { return urlStr; }
 }
 
-function bubbleMediaToTop(rawUrl) {
+function bubbleMediaToTop(data) {
+    let rawUrl = typeof data === 'string' ? data : data.url;
+    let mediaType = typeof data === 'object' && data.mediaType ? data.mediaType : 'unknown';
+    
     if (!rawUrl || rawUrl.startsWith('blob:') || rawUrl.startsWith('data:')) return;
     const url = cleanMediaUrl(rawUrl);
     
+    let lower = url.toLowerCase();
+    if (mediaType === 'unknown') {
+        if (lower.includes('.m3u8') || lower.includes('/m3/')) mediaType = 'hls';
+        else if (lower.includes('.mpd') || lower.includes('/dash/')) mediaType = 'dash';
+        else if (lower.includes('.mp4')) mediaType = 'mp4';
+    }
+    
     if (IS_TOP_FRAME) {
+        const now = Date.now();
+        // Expiry Fix: Clear out old global fallback URLs so they don't haunt new players
+        sniffedMediaUrls = sniffedMediaUrls.filter(m => now - m.timestamp < 35000);
+
         if (!sniffedMediaUrls.some(m => normalizeUrl(m.url) === normalizeUrl(url))) {
-            sniffedMediaUrls.push({ url, frameOrigin: window.location.origin });
-            if (sniffedMediaUrls.length > 30) sniffedMediaUrls.shift(); // Keep memory clean
+            sniffedMediaUrls.push({ url, mediaType, frameOrigin: window.location.origin, timestamp: now });
         }
         
+        // Map explicitly to the active element (Video OR Iframe)
         const targets = getLikelyTargetMediaElements();
         targets.forEach(el => {
-            if (!playerUrlMap.has(el)) playerUrlMap.set(el, new Set());
-            playerUrlMap.get(el).add(url);
+            if (!playerUrlMap.has(el)) playerUrlMap.set(el, new Map());
+            
+            const existingType = playerUrlMap.get(el).get(url);
+            if (!existingType || existingType === 'unknown' || mediaType !== 'unknown') {
+                playerUrlMap.get(el).set(url, mediaType);
+            }
         });
     } else {
-        try { window.top.postMessage({ __daisyMedia: { url, frameOrigin: window.location.origin } }, "*"); } catch (_) {}
+        try { window.top.postMessage({ __daisyMedia: { url, mediaType, frameOrigin: window.location.origin } }, "*"); } catch (_) {}
     }
 }
 
 window.addEventListener("message", (e) => {
-    if (e.data && e.data.__daisyMedia) bubbleMediaToTop(e.data.__daisyMedia.url);
+    if (e.data && e.data.__daisyMedia) bubbleMediaToTop(e.data.__daisyMedia);
     if (e.data && e.data.__daisyMediaHeaders) {
         const { url, headers } = e.data.__daisyMediaHeaders;
         if (url && headers && typeof headers === "object") {
@@ -172,26 +208,169 @@ function getActualYtFormats() {
     return Array.from(formats).sort((a, b) => b - a);
 }
 
+function sniffScriptUrls(root) {
+    const found = [];
+    try {
+        const scripts = (root || document).querySelectorAll('script');
+        const mediaRe = /https?:\/\/[^\s'"\\]+?(?:\.m3u8|\.mp4|\.webm|\.mov|\.ts|\.mpd|\/m3u8|\/hls\/|\/stream\/|\/m3\/|\/dash\/)[^\s'"\\,;}\]))]*/gi;
+        for (let s of scripts) {
+            const text = s.textContent || "";
+            let match;
+            while ((match = mediaRe.exec(text)) !== null) found.push({url: match[0].replace(/[,;}\]]+$/, ""), type: 'unknown'});
+        }
+    } catch(e) {}
+    return found;
+}
+
+function sniffJsonBlobs(root) {
+    const found = [];
+    try {
+        const scripts = (root || document).querySelectorAll('script[type="application/json"], script#data');
+        for (let s of scripts) {
+            const text = s.textContent || "";
+            const patterns = [
+                /["']hlsUrl["']\s*:\s*["'](https?:\/\/[^"']+\.m3u8[^"']*)/g,
+                /["']dashUrl["']\s*:\s*["'](https?:\/\/[^"']+\.mpd[^"']*)/g,
+                /["'](?:hls_url|hlsUrl|hls|streamUrl|stream_url|playbackUrl|playback_url|videoUrl|video_url|manifestUrl|manifest_url)["']\s*:\s*["'](https?:\/\/[^"']+)/g
+            ];
+            for (const re of patterns) {
+                let m;
+                while ((m = re.exec(text)) !== null) found.push({url: m[1], type: 'unknown'});
+            }
+        }
+    } catch(_) {}
+    return found;
+}
+
+function sniffWindowState() {
+    const found = [];
+    try {
+        const stateKeys = ['__INITIAL_STATE__', '__REDUX_STATE__', '__DATA__', '__NEXT_DATA__', 'reduxStore', '__APP_STATE__'];
+        for (const key of stateKeys) {
+            try {
+                const val = window[key];
+                if (!val) continue;
+                const str = typeof val === 'string' ? val : JSON.stringify(val);
+                const mediaRe = /https?:\/\/[^\s"'\\]+?(?:\.m3u8|\.mpd|HLSPlaylist\.m3u8|DASHPlaylist\.mpd|\/m3\/|\/dash\/)[^\s"'\\,;}\]))]*/g;
+                let m;
+                while ((m = mediaRe.exec(str)) !== null) found.push({url: m[0], type: 'unknown'});
+            } catch(_) {}
+        }
+    } catch(_) {}
+    return found;
+}
+
+function runScriptSniffer(root) {
+    sniffScriptUrls(root).forEach(data => bubbleMediaToTop(data));
+    sniffJsonBlobs(root).forEach(data => bubbleMediaToTop(data));
+    if (IS_TOP_FRAME) sniffWindowState().forEach(data => bubbleMediaToTop(data));
+}
+
 async function fetchHlsQualities(masterUrl) {
-    return new Promise(resolve => {
-        _api.runtime.sendMessage({ type: "FETCH_HLS_QUALITIES", url: masterUrl }, (variants) => {
-            resolve(variants && variants.length ? variants : [{ label: "Original", url: masterUrl, bandwidth: 0 }]);
-        });
-    });
+    try {
+        const res = await new Promise(resolve => _api.runtime.sendMessage({ type: "FETCH_MANIFEST", url: masterUrl }, resolve));
+        if (!res || !res.ok) throw new Error('fetch failed');
+        const text = res.text;
+
+        // Extract title from manifest: #EXT-X-SESSION-DATA:DATA-ID="com.apple.hls.title",VALUE="..."
+        // or #EXT-X-SESSION-DATA:DATA-ID="title",VALUE="..."
+        let manifestTitle = null;
+        const titleMatch = text.match(/#EXT-X-SESSION-DATA:[^\n]*DATA-ID="[^"]*title[^"]*"[^\n]*VALUE="([^"]+)"/i)
+                        || text.match(/#EXT-X-TITLE:([^\n]+)/i);
+        if (titleMatch) manifestTitle = titleMatch[1].trim();
+
+        // If it's not a master playlist (no #EXT-X-STREAM-INF), treat as single stream
+        if (!text.includes('#EXT-X-STREAM-INF')) {
+            return [{ label: "Original", url: masterUrl, bandwidth: 0, title: manifestTitle }];
+        }
+
+        const variants = [];
+        const lines = text.split('\n');
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i].trim();
+            if (!line.startsWith('#EXT-X-STREAM-INF')) continue;
+
+            const bwMatch   = line.match(/BANDWIDTH=(\d+)/);
+            const resMatch  = line.match(/RESOLUTION=(\d+)x(\d+)/);
+            const nameMatch = line.match(/NAME="([^"]+)"/);
+            const bandwidth = bwMatch  ? parseInt(bwMatch[1])  : 0;
+            const height    = resMatch ? parseInt(resMatch[2]) : 0;
+
+            let variantUrl = '';
+            for (let j = i + 1; j < lines.length; j++) {
+                const next = lines[j].trim();
+                if (next && !next.startsWith('#')) { variantUrl = next; break; }
+            }
+            if (!variantUrl) continue;
+
+            try { variantUrl = new URL(variantUrl, masterUrl).toString(); } catch (_) {}
+
+            const label = nameMatch ? nameMatch[1]
+                        : height    ? `${height}p`
+                        : bandwidth ? `${Math.round(bandwidth / 1000)}k`
+                        : "Original";
+
+            variants.push({ label, url: variantUrl, bandwidth, height, title: manifestTitle });
+        }
+
+        if (variants.length === 0) return [{ label: "Original", url: masterUrl, bandwidth: 0, title: manifestTitle }];
+
+        variants.sort((a, b) => (b.height || b.bandwidth) - (a.height || a.bandwidth));
+        return variants;
+    } catch (_) {
+        return [{ label: "Original", url: masterUrl, bandwidth: 0, title: null }];
+    }
 }
 
 async function fetchDashQualities(mpdUrl) {
-    return new Promise(resolve => {
-        _api.runtime.sendMessage({ type: "FETCH_DASH_QUALITIES", url: mpdUrl }, (variants) => {
-            resolve(variants && variants.length ? variants : [{ label: "Original", url: mpdUrl }]);
+    try {
+        const res = await new Promise(resolve => _api.runtime.sendMessage({ type: "FETCH_MANIFEST", url: mpdUrl }, resolve));
+        if (!res || !res.ok) throw new Error('fetch failed');
+        const text = res.text;
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(text, 'application/xml');
+
+        // Extract title from <Title> element inside <ProgramInformation> or root MPD
+        let manifestTitle = null;
+        const titleEl = doc.querySelector('ProgramInformation Title, MPD Title, title');
+        if (titleEl && titleEl.textContent.trim().length > 1) manifestTitle = titleEl.textContent.trim();
+
+        const variants = [];
+        const seen = new Set();
+
+        doc.querySelectorAll('AdaptationSet').forEach(adaptSet => {
+            const contentType = (adaptSet.getAttribute('contentType') || adaptSet.getAttribute('mimeType') || '').toLowerCase();
+            if (contentType && !contentType.includes('video') && contentType !== '') return;
+
+            adaptSet.querySelectorAll('Representation').forEach(rep => {
+                const repMime = (rep.getAttribute('mimeType') || '').toLowerCase();
+                if (repMime && !repMime.includes('video')) return;
+
+                const height    = parseInt(rep.getAttribute('height') || '0');
+                const bandwidth = parseInt(rep.getAttribute('bandwidth') || '0');
+                const id        = rep.getAttribute('id') || '';
+                const key       = `${height}-${bandwidth}`;
+                if (seen.has(key)) return;
+                seen.add(key);
+
+                const label = height ? `${height}p` : bandwidth ? `${Math.round(bandwidth / 1000)}k` : id || "Original";
+                variants.push({ label, url: mpdUrl, height, bandwidth, title: manifestTitle });
+            });
         });
-    });
+
+        if (variants.length === 0) return [{ label: "Original", url: mpdUrl, title: manifestTitle }];
+
+        variants.sort((a, b) => (b.height || b.bandwidth) - (a.height || a.bandwidth));
+        return variants;
+    } catch (_) {
+        return [{ label: "Original", url: mpdUrl, title: null }];
+    }
 }
 
 _api.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "FETCH_BLOB")          handleBlob(message.url, message.filename);
   if (message.type === "CREDENTIALED_FETCH")  handleCredentialedFetch(message.url, message.filename);
-  if (message.type === 'NEW_MEDIA_FOUND' && message.mediaInfo) bubbleMediaToTop(message.mediaInfo.url);
+  if (message.type === 'NEW_MEDIA_FOUND' && message.mediaInfo) bubbleMediaToTop(message.mediaInfo);
   if (message.action === "getPageInfo") {
     sendResponse({ title: document.title, pageUrl: window.location.href, cookies: document.cookie, pageHeaders: collectPageHeaders() });
   }
@@ -267,8 +446,6 @@ async function handleBlob(blobUrl, filename) {
     handleCredentialedFetch(blobUrl, filename);
 }
 
-// ━━━ THE SMART TITLE EXTRACTOR ━━━
-// Climbs the DOM to find the exact caption/title for the specific video you hovered over
 function getContextualVideoName(el) {
     if (!el) return null;
     let label = el.getAttribute('aria-label') || el.getAttribute('title');
@@ -276,20 +453,16 @@ function getContextualVideoName(el) {
     
     let curr = el;
     for (let i = 0; i < 12 && curr && curr !== document.body; i++) {
-        // Facebook & Instagram Specific Captions
         let socialCaption = curr.querySelector('[data-ad-comet-preview="message"], [data-ad-preview="message"], [data-testid="post_message"], ._5pbx, ._1mwp, h1');
         if (socialCaption && socialCaption.innerText) {
             let clean = socialCaption.innerText.trim().split('\n')[0].substring(0, 60);
             if (clean.length > 2) return clean;
         }
-        
-        // Reddit / Twitter / General Header Fallback
         let heading = curr.querySelector('h2, h3, [role="heading"]');
         if (heading && heading.innerText) {
             let clean = heading.innerText.trim().split('\n')[0].substring(0, 60);
             if (clean.length > 2) return clean;
         }
-        
         curr = curr.parentElement;
     }
     return null;
@@ -469,6 +642,7 @@ document.createElement = function(tag, ...args) {
         function hasDownloadableMedia(el) {
             const pageUrl = window.location.href;
             if (pageUrl.includes('youtube.com')) { return window.location.pathname.startsWith('/watch') || window.location.pathname.startsWith('/shorts'); }
+            if (pageUrl.includes('drive.google.com')) { return true; }
             if (sniffedMediaUrls.length > 0) return true;
             let found = false;
             const check = (url) => { if (url && !url.startsWith('blob:') && !url.startsWith('data:')) found = true; };
@@ -505,11 +679,11 @@ document.createElement = function(tag, ...args) {
             `;
             
             const pageUrl = window.location.href;
-            
-            // 1. EXTRACT ACCURATE VIDEO NAME
             let contextualName = getContextualVideoName(targetEl);
-            let vidName = contextualName || (document.title ? document.title.split(' - ')[0] : "Media");
-            vidName = vidName.replace(/[\\/:*?"<>|]/g, '').trim() || "Video";
+            let _pt = document.title.trim();
+            let _ptParts = _pt.split(/\s[-–—|]\s/);
+            let pageTitle = (_ptParts.length > 1 ? _ptParts.slice(0, -1).join(' - ') : _pt).trim();
+            let vidName = (contextualName || pageTitle || "Video").replace(/[\/:*?"<>|]/g, '').trim() || "Video";
 
             if (pageUrl.includes('youtube.com')) {
                 if (!window.location.pathname.startsWith('/watch') && !window.location.pathname.startsWith('/shorts')) {
@@ -527,59 +701,59 @@ document.createElement = function(tag, ...args) {
                 return;
             }
 
-            const urls = new Set();
+            const urlTypeMap = new Map();
             const mediaNodes = [targetEl, ...Array.from(targetEl.querySelectorAll ? targetEl.querySelectorAll('video, iframe') : [])];
             
-            // 2. GET URLS STRICTLY BOUND TO THIS SPECIFIC PLAYER
             mediaNodes.forEach(v => {
                 if (!v) return;
                 [v.src, v.currentSrc, ...Array.from(v.querySelectorAll ? v.querySelectorAll('source') : []).map(s => s.src)]
                     .filter(u => u && !u.startsWith('blob:') && !u.startsWith('data:'))
-                    .forEach(u => urls.add(u));
+                    .forEach(u => urlTypeMap.set(u, 'unknown'));
                     
                 if (playerUrlMap.has(v)) {
-                    playerUrlMap.get(v).forEach(u => urls.add(u));
+                    for (const [u, t] of playerUrlMap.get(v).entries()) urlTypeMap.set(u, t);
                 }
             });
 
-            // 3. AGGRESSIVE LOCAL DOM SNIFFER (Pierces Facebook/React hidden states)
-            let container = targetEl;
-            for (let i=0; i<8 && container.parentElement && container.tagName !== 'BODY'; i++) {
-                container = container.parentElement;
-            }
-            const mediaRe = /https?:\/\/[^\s'"\\]+?(?:\.m3u8|\.mp4|\.webm|\.mov|\.ts|\.mpd|\/m3u8|\/hls\/|\/stream\/)[^\s'"\\,;}\]))]*/gi;
-            let match;
-            const htmlObj = container.outerHTML || "";
-            while ((match = mediaRe.exec(htmlObj)) !== null) {
-                let clean = match[0].replace(/[,;}\]]+$/, "").replace(/\\/g, '').replace(/&amp;/g, '&');
-                urls.add(cleanMediaUrl(clean));
-            }
-
-            // 4. SMART FALLBACK (Only use global list if this isn't an infinite feed)
-            const allVideosOnPage = document.querySelectorAll('video').length;
-            if (urls.size === 0 && sniffedMediaUrls.length > 0 && allVideosOnPage <= 2) {
-                sniffedMediaUrls.slice(-4).forEach(m => urls.add(m.url));
+            // If we have nothing bound, safely use global fallback (which now auto-expires stale links)
+            if (urlTypeMap.size === 0 && sniffedMediaUrls.length > 0) {
+                sniffedMediaUrls.slice(-4).forEach(m => urlTypeMap.set(m.url, m.mediaType || 'unknown'));
             }
 
             const options = [];
-            for (const url of urls) {
-                if (!url || url.startsWith('blob:') || url.startsWith('data:')) continue;
-                if (url.includes('.ts') && !url.includes('.m3u8') && !url.includes('.mp4')) continue; // Ignore spam fragments
+            for (const [rawUrl, type] of urlTypeMap.entries()) {
+                if (!rawUrl || rawUrl.startsWith('blob:') || rawUrl.startsWith('data:')) continue;
                 
-                if (url.includes('m3u8') || url.includes('HLSPlaylist') || url.includes('m3u8?')) {
-                    const variants = await fetchHlsQualities(url);
-                    variants.forEach(v => options.push({ vidName: vidName, quality: v.label === "Original" ? "" : v.label, ext: '.mp4', url: v.url, type: 'hls' }));
-                } else if (url.includes('.mpd') || url.includes('DASHPlaylist')) {
-                    const variants = await fetchDashQualities(url);
+                let lower = rawUrl.toLowerCase();
+                let finalType = type;
+                
+                if (finalType === 'unknown') {
+                    if (lower.includes('.m3u8') || lower.includes('/m3/')) finalType = 'hls';
+                    else if (lower.includes('.mpd') || lower.includes('/dash/')) finalType = 'dash';
+                    else if (lower.includes('.mp4')) finalType = 'mp4';
+                }
+                
+                const isManifest = (finalType === 'hls' || finalType === 'dash');
+                
+                // SPAM FILTER
+                if (!isManifest && finalType !== 'mp4') {
+                    const spamSigs = ['.ts', '.m4s', '.m4v', '.m4a', 'bytestart=', 'segment', 'frag', 'init.mp4', 'seg-'];
+                    const fakeExts = ['.woff', '.css', '.js', '.html', '.png', '.jpg'];
+                    
+                    if (spamSigs.some(s => lower.includes(s))) continue;
+                    if (fakeExts.some(e => lower.includes(e))) continue;
+                }
+                
+                if (finalType === 'hls') {
+                    const variants = await fetchHlsQualities(rawUrl);
+                    variants.forEach(v => options.push({ vidName: v.title || vidName, quality: v.label, ext: '.mp4', url: v.url, type: 'hls' }));
+                } else if (finalType === 'dash') {
+                    const variants = await fetchDashQualities(rawUrl);
                     variants.forEach(v => {
-                        if (v.height) {
-                            options.push({ vidName: vidName, quality: v.label, ext: '.mp4', url: v.url, type: 'dash', ytQuality: `bestvideo[height<=${v.height}]+bestaudio/best` });
-                        } else {
-                            options.push({ vidName: vidName, quality: '', ext: '.mp4', url: v.url, type: 'dash' });
-                        }
+                        options.push({ vidName: v.title || vidName, quality: v.label, ext: '.mp4', url: v.url, type: 'dash', ytQuality: v.height ? `bestvideo[height<=${v.height}]+bestaudio/best` : undefined });
                     });
                 } else {
-                    options.push({ vidName: vidName, quality: '', ext: getExtFromUrl(url), url, type: 'mp4' });
+                    options.push({ vidName: vidName, quality: '', ext: getExtFromUrl(rawUrl), url: rawUrl, type: 'mp4' });
                 }
             }
 
@@ -589,15 +763,23 @@ document.createElement = function(tag, ...args) {
                 if (typeof dismissedEls !== "undefined" && targetEl) dismissedEls.add(targetEl);
                 return;
             }
-            options.forEach(opt => renderOption(dropdownEl, opt));
+            
+            const seenOptions = new Set();
+            options.forEach(opt => {
+                const uid = `${opt.quality}-${opt.type}-${opt.url}`;
+                if (!seenOptions.has(uid)) {
+                    seenOptions.add(uid);
+                    renderOption(dropdownEl, opt);
+                }
+            });
         }
 
         function renderOption(dropdownEl, opt) {
             let typeLabel = (opt.type || 'MP4').toUpperCase(), badgeClass = `daisydm-badge ${(opt.type || 'mp4').toLowerCase()}`;
-            if (opt.ytQuality && opt.type !== 'dash') { typeLabel = 'YT'; badgeClass = 'daisydm-badge yt'; }
+            if (opt.ytQuality && opt.type !== 'dash') { typeLabel = 'DASH'; badgeClass = 'daisydm-badge yt'; }
             else if (opt.type === 'dash') { typeLabel = 'DASH'; badgeClass = 'daisydm-badge dash'; }
             else if (opt.type === 'hls') { typeLabel = 'HLS'; badgeClass = 'daisydm-badge hls'; }
-            else if (opt.type === 'yt') { typeLabel = 'YT'; badgeClass = 'daisydm-badge yt'; }
+            else if (opt.type === 'yt') { typeLabel = 'DASH'; badgeClass = 'daisydm-badge yt'; }
 
             const extLabel   = (opt.ext || '.mp4').replace('.', '').toUpperCase();
             const item = document.createElement('div');
@@ -656,7 +838,7 @@ document.createElement = function(tag, ...args) {
             document.querySelectorAll('iframe').forEach(el => {
                 const src = el.src || '', r = el.getBoundingClientRect();
                 if (r.width > 200 && r.height > 120) attachToElement(el);
-                else if (/youtube|vimeo|twitch|reddit|dailymotion|facebook|tiktok|streamable/i.test(src)) attachToElement(el);
+                else if (/youtube|vimeo|twitch|reddit|dailymotion|facebook|tiktok|streamable|drive\.google/i.test(src)) attachToElement(el);
             });
         }
 

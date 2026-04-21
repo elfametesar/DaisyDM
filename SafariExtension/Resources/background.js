@@ -1,101 +1,54 @@
-// background.js - Daisy Safari Extension
+// background.js - Daisy Chrome Extension
 
 const _api = typeof browser !== "undefined" ? browser : chrome;
-
 let dispatchEnabled = true;
 
-// The Accumulator Maps
 const capturedRequestHeaders  = new Map();
 const capturedResponseHeaders = new Map();
 const capturedCookies         = new Map();
 const headerCacheTimestamps   = new Map();
-const HEADER_CACHE_TTL_MS     = 15 * 60 * 1000; // 15 minute retention
+const HEADER_CACHE_TTL_MS     = 15 * 60 * 1000;
 
-// CRITICAL FIX: Merge headers instead of overwriting, so we never lose
-// X-Playback-Session-Id, Range, or Sec-Fetch headers across multiple sub-requests.
 function mergeIntoMap(map, key, incomingData) {
     if (!key || typeof incomingData !== 'object') return;
-    
     const existing = map.get(key) || {};
     const merged = { ...existing };
-    
     for (const [k, v] of Object.entries(incomingData)) {
-        // Only merge if the new header has actual value, preserving existing rich headers
         if (v !== undefined && v !== null && v.toString().trim() !== "") {
-            merged[k] = v;
+            merged[k.toLowerCase()] = v;
         }
     }
-    
     map.set(key, merged);
     headerCacheTimestamps.set(key, Date.now());
     
-    // Cleanup old entries
     for (const [k, ts] of headerCacheTimestamps) {
         if (Date.now() - ts > HEADER_CACHE_TTL_MS) {
-            capturedRequestHeaders.delete(k);
-            capturedResponseHeaders.delete(k);
-            capturedCookies.delete(k);
-            headerCacheTimestamps.delete(k);
+            capturedRequestHeaders.delete(k); capturedResponseHeaders.delete(k);
+            capturedCookies.delete(k); headerCacheTimestamps.delete(k);
         }
     }
 }
 
-// Store request headers at 3 levels of specificity so query parameter changes
-// by the AVPlayer daemon don't cause us to lose the headers.
-function storeHeadersAggressively(url, reqHeaders, isResponse = false) {
-    const targetMap = isResponse ? capturedResponseHeaders : capturedRequestHeaders;
-    
+function getCapturedHeaders(map, targetUrl) {
+    if (!targetUrl) return {};
+    if (map.has(targetUrl)) return map.get(targetUrl);
     try {
-        const urlObj = new URL(url);
-        const exactUrl = url;
-        const baseUrl = urlObj.origin + urlObj.pathname; // Strip query/hash
-        const origin = urlObj.origin;
-
-        mergeIntoMap(targetMap, exactUrl, reqHeaders);
-        if (baseUrl !== exactUrl) mergeIntoMap(targetMap, baseUrl, reqHeaders);
-        mergeIntoMap(targetMap, origin, reqHeaders);
-    } catch (e) {
-        mergeIntoMap(targetMap, url, reqHeaders);
-    }
+        const u = new URL(targetUrl);
+        const withoutQuery = u.origin + u.pathname;
+        if (map.has(withoutQuery)) return map.get(withoutQuery);
+        if (map.has(u.origin)) return map.get(u.origin);
+    } catch(_) {}
+    return {};
 }
 
-function storeCookiesAggressively(url, cookieStr) {
-    if (!cookieStr) return;
+function cleanMediaUrl(urlStr) {
     try {
-        const urlObj = new URL(url);
-        mergeIntoMap(capturedCookies, url, { _cookie: cookieStr });
-        mergeIntoMap(capturedCookies, urlObj.origin, { _cookie: cookieStr });
-    } catch (e) {
-        mergeIntoMap(capturedCookies, url, { _cookie: cookieStr });
-    }
-}
-
-// Lookup accumulates headers from general to specific, giving us the richest possible dict.
-function lookupHeadersAggressively(url) {
-    let result = {};
-    try {
-        const urlObj = new URL(url);
-        const baseUrl = urlObj.origin + urlObj.pathname;
-        const origin = urlObj.origin;
-
-        // Start with origin, override with base, override with exact
-        result = { ...result, ...(capturedRequestHeaders.get(origin) || {}) };
-        result = { ...result, ...(capturedRequestHeaders.get(baseUrl) || {}) };
-        result = { ...result, ...(capturedRequestHeaders.get(url) || {}) };
-    } catch (e) {
-        result = { ...(capturedRequestHeaders.get(url) || {}) };
-    }
-    return result;
-}
-
-function lookupCookiesAggressively(url) {
-    try {
-        const exact = capturedCookies.get(url)?._cookie;
-        if (exact) return exact;
-        const origin = capturedCookies.get(new URL(url).origin)?._cookie;
-        if (origin) return origin;
-    } catch (e) {}
-    return "";
+        const u = new URL(urlStr);
+        u.searchParams.delete('bytestart');
+        u.searchParams.delete('byteend');
+        u.searchParams.delete('range');
+        return u.toString();
+    } catch { return urlStr; }
 }
 
 _api.storage.local.get(["dispatchEnabled"]).then(res => {
@@ -106,8 +59,7 @@ _api.storage.onChanged.addListener((changes, area) => {
     if (area === "local" && changes.dispatchEnabled) {
         dispatchEnabled = changes.dispatchEnabled.newValue;
         fetch(`http://127.0.0.1:6840/setenabled`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
+            method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ enabled: changes.dispatchEnabled.newValue })
         }).catch(() => {});
     }
@@ -121,6 +73,30 @@ _api.contextMenus.onClicked.addListener((info, tab) => {
     if (info.menuItemId === "dispatch-download" && info.linkUrl) {
         triggerDownload(info.linkUrl, extractFilename(info.linkUrl), tab?.url || "");
     }
+});
+
+_api.downloads.onCreated.addListener(async (downloadItem) => {
+    if (!dispatchEnabled) return;
+    
+    const targetUrl = downloadItem.finalUrl || downloadItem.url;
+    if ((targetUrl || "").startsWith("blob:") || (targetUrl || "").startsWith("data:")) return;
+
+    _api.downloads.cancel(downloadItem.id, () => {
+        setTimeout(() => _api.downloads.erase({ id: downloadItem.id }, () => {}), 150);
+    });
+
+    let fname = "download";
+    if (downloadItem.filename) {
+        const parts = downloadItem.filename.split(/[/\\]/);
+        fname = parts[parts.length - 1];
+    } else {
+        fname = extractFilename(targetUrl);
+    }
+
+    let cookies = lookupCookiesAggressively(targetUrl);
+    if (!cookies && targetUrl.startsWith("http")) cookies = await fetchBaseDomainCookies(targetUrl);
+
+    triggerDownload(targetUrl, fname, downloadItem.referrer || "", cookies, null, false, false, { "referer": downloadItem.referrer || "" });
 });
 
 function extractFilename(url) {
@@ -143,11 +119,23 @@ function formatNetscapeCookies(cookies) {
     return output;
 }
 
+function netscapeToCookieHeader(netscapeStr) {
+    if (!netscapeStr || !netscapeStr.includes("\t")) return netscapeStr;
+    const lines = netscapeStr.split("\n");
+    const cookieParts = [];
+    for (const line of lines) {
+        if (line.startsWith("#") || line.trim() === "") continue;
+        const tabs = line.split("\t");
+        if (tabs.length >= 7) cookieParts.push(`${tabs[5]}=${tabs[6]}`);
+    }
+    return cookieParts.join("; ");
+}
+
 async function fetchBaseDomainCookies(targetUrl) {
     return new Promise(resolve => {
         try {
-            const urlObj     = new URL(targetUrl);
-            const hostParts  = urlObj.hostname.split('.');
+            const urlObj = new URL(targetUrl);
+            const hostParts = urlObj.hostname.split('.');
             const baseDomain = hostParts.length > 2 ? hostParts.slice(-2).join('.') : urlObj.hostname;
             _api.cookies.getAll({ domain: baseDomain }, cookies => {
                 resolve(cookies && cookies.length > 0 ? formatNetscapeCookies(cookies) : "");
@@ -164,205 +152,140 @@ async function getYouTubeAuthCookies() {
     });
 }
 
-async function fetchCookiesForUrl(targetUrl) {
-    return new Promise(resolve => {
-        try {
-            const urlObj    = new URL(targetUrl);
-            const hostname  = urlObj.hostname;
-            const hostParts = hostname.split('.');
-            const baseDomain = hostParts.length > 2 ? hostParts.slice(-2).join('.') : hostname;
-
-            _api.cookies.getAll({ domain: hostname }, exactCookies => {
-                _api.cookies.getAll({ domain: baseDomain }, baseCookies => {
-                    const all = [...(exactCookies || []), ...(baseCookies || [])];
-                    resolve(all.length > 0 ? formatNetscapeCookies(all) : "");
-                });
-            });
-        } catch { resolve(""); }
-    });
+function lookupCookiesAggressively(url) {
+    if (capturedCookies.has(url)) return capturedCookies.get(url);
+    try {
+        const origin = new URL(url).origin;
+        if (capturedCookies.has(origin)) return capturedCookies.get(origin);
+    } catch(_) {}
+    return null;
 }
 
 _api.webRequest.onBeforeSendHeaders.addListener(
     function(details) {
+        if (details.url.includes("127.0.0.1:684")) return;
         const reqHeaders = {};
-        for (const h of (details.requestHeaders || [])) {
-            reqHeaders[h.name.toLowerCase()] = h.value;
-        }
-
-        // Send to accumulator
-        storeHeadersAggressively(details.url, reqHeaders, false);
+        for (const h of (details.requestHeaders || [])) reqHeaders[h.name.toLowerCase()] = h.value;
+        
+        mergeIntoMap(capturedRequestHeaders, details.url, reqHeaders);
+        try {
+            const u = new URL(details.url);
+            mergeIntoMap(capturedRequestHeaders, u.origin + u.pathname, reqHeaders);
+            mergeIntoMap(capturedRequestHeaders, u.origin, reqHeaders);
+        } catch(_) {}
 
         fetchBaseDomainCookies(details.url).then(cookieStr => {
-            if (cookieStr) storeCookiesAggressively(details.url, cookieStr);
+            if (cookieStr) mergeIntoMap(capturedCookies, details.url, cookieStr);
         });
     },
     { urls: ["<all_urls>"] },
-    ["requestHeaders"]
+    ["requestHeaders", "extraHeaders"]
 );
+
+const IGNORABLE_EXTS = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg', '.css', '.js', '.woff', '.woff2', '.ttf', '.eot', '.ico'];
 
 _api.webRequest.onHeadersReceived.addListener(
     function(details) {
-        const respHeaders = {};
-        for (const h of (details.responseHeaders || [])) {
-            respHeaders[h.name.toLowerCase()] = h.value;
-        }
-        
-        storeHeadersAggressively(details.url, respHeaders, true);
+        if (details.url.includes("127.0.0.1:684")) return;
+        if (details.type !== 'xmlhttprequest' && details.type !== 'media' && details.type !== 'fetch') return;
 
-        const ct = respHeaders["content-type"] || "";
-        const isMedia = ["video/", "audio/", "mpegurl", "m3u8", "video/mp2t", "application/x-mpegurl", "application/vnd.apple.mpegurl", "application/dash+xml"].some(m => ct.includes(m));
         const urlLower = details.url.toLowerCase();
+        const urlWithoutQuery = urlLower.split('?')[0];
         
-        const isMediaByUrl = [
-            '.m3u8', '.ts', '.mp4', '.webm', '.mov', '.mkv',
-            '/hls/', '/m3u8', 'manifest.m3u8', 'master.m3u8', '.mpd',
-            'googlevideo.com', 'sibnet.ru', 'video_file'
-        ].some(p => urlLower.includes(p));
+        if (IGNORABLE_EXTS.some(ext => urlWithoutQuery.endsWith(ext))) return;
 
-        if ((isMedia || isMediaByUrl) && details.tabId !== -1) {
-            _api.tabs.sendMessage(details.tabId, {
-                type: 'NEW_MEDIA_FOUND',
-                mediaInfo: { url: details.url, frameId: details.frameId }
-            }, { frameId: 0 }).catch(() => {});
-            
-            if (details.frameId !== 0 && details.frameId !== undefined) {
-                _api.tabs.sendMessage(details.tabId, {
-                    type: 'NEW_MEDIA_FOUND',
-                    mediaInfo: { url: details.url, frameId: details.frameId }
-                }, { frameId: details.frameId }).catch(() => {});
+        const respHeaders = {};
+        for (const h of (details.responseHeaders || [])) respHeaders[h.name.toLowerCase()] = h.value;
+        
+        mergeIntoMap(capturedResponseHeaders, details.url, respHeaders);
+        try {
+            const u = new URL(details.url);
+            mergeIntoMap(capturedResponseHeaders, u.origin + u.pathname, respHeaders);
+            mergeIntoMap(capturedResponseHeaders, u.origin, respHeaders);
+        } catch(_) {}
+
+        let mediaType = 'unknown';
+        const ct = (respHeaders["content-type"] || "").toLowerCase();
+        
+        // Strictly evaluate obfuscated anime/social URLs without fetching payload (preserves single-use tokens)
+        if (urlLower.includes('bytestart=')) {
+            mediaType = 'mp4';
+        } else if (ct.includes('mpegurl') || ct.includes('m3u8') || urlLower.includes('/m3/') || urlLower.includes('/hls/')) {
+            mediaType = 'hls';
+        } else if (ct.includes('dash+xml') || urlLower.includes('/dash/')) {
+            mediaType = 'dash';
+        } else if (ct.includes('video/mp4') || ct.includes('video/webm')) {
+            mediaType = 'mp4';
+        }
+
+        const isMedia = mediaType !== 'unknown' || ct.includes('video/') || ct.includes('audio/');
+        const isMediaByUrl = ['.m3u8', '.ts', '.mp4', '.webm', '.mov', '.mkv', '/hls/', '/m3u8', '/m3/', '/dash/', 'manifest.m3u8', 'master.m3u8', '.mpd'].some(p => urlLower.includes(p));
+
+        if (isMedia || isMediaByUrl) {
+            // Drop raw spam segments
+            if (urlLower.includes('.ts') && !urlLower.includes('.m3u8')) return;
+            if (ct.includes('video/mp2t')) return;
+
+            const finalUrl = cleanMediaUrl(details.url);
+            const payload = { type: 'NEW_MEDIA_FOUND', mediaInfo: { url: finalUrl, frameId: details.frameId, mediaType: mediaType } };
+
+            if (details.tabId !== -1) {
+                _api.tabs.sendMessage(details.tabId, payload).catch(() => {});
+            } else {
+                _api.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+                    if (tabs && tabs.length > 0) _api.tabs.sendMessage(tabs[0].id, payload).catch(() => {});
+                });
             }
         }
     },
     { urls: ["<all_urls>"] },
-    ["responseHeaders"]
+    ["responseHeaders", "extraHeaders"]
 );
 
 _api.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (message.type === "FETCH_DASH_QUALITIES") {
-        const headers = lookupHeadersAggressively(message.url);
-        const cookieStr = lookupCookiesAggressively(message.url);
-        if (cookieStr && !headers["cookie"]) headers["cookie"] = netscapeToCookieHeader(cookieStr);
-        
-        fetch(message.url, { headers })
-            .then(r => r.text())
-            .then(text => {
-                const regex = /<Representation[^>]+height="(\d+)"[^>]*>/gi;
-                let variants = [];
-                let seenHeights = new Set();
-                let match;
-                while ((match = regex.exec(text)) !== null) {
-                    const height = parseInt(match[1]);
-                    if (!seenHeights.has(height)) {
-                        seenHeights.add(height);
-                        variants.push({ label: `${height}p`, url: message.url, height: height });
-                    }
-                }
-                variants.sort((a, b) => b.height - a.height);
-                sendResponse(variants.length ? variants : [{ label: "Original", url: message.url }]);
-            }).catch(() => sendResponse([{ label: "Original", url: message.url }]));
+    if (message.type === "FETCH_MANIFEST") {
+        fetch(message.url, { credentials: 'include' })
+            .then(r => r.ok ? r.text() : Promise.reject(r.status))
+            .then(text => sendResponse({ ok: true, text }))
+            .catch(err => sendResponse({ ok: false }));
         return true;
     }
-
-    if (message.type === "FETCH_HLS_QUALITIES") {
-        const headers = lookupHeadersAggressively(message.url);
-        const cookieStr = lookupCookiesAggressively(message.url);
-        if (cookieStr && !headers["cookie"]) headers["cookie"] = netscapeToCookieHeader(cookieStr);
-        
-        fetch(message.url, { headers })
-            .then(r => r.text())
-            .then(text => {
-                if (!text.includes("#EXT-X-STREAM-INF")) return sendResponse([{ label: "Original", url: message.url, bandwidth: 0 }]);
-                const variants = [];
-                const seenHeights = new Set();
-                const lines = text.split("\n");
-                for (let i = 0; i < lines.length; i++) {
-                    if (lines[i].trim().startsWith("#EXT-X-STREAM-INF")) {
-                        const resMatch = lines[i].match(/RESOLUTION=\d+x(\d+)/);
-                        const height = resMatch ? parseInt(resMatch[1]) : null;
-                        let variantUri = "";
-                        for (let j = i + 1; j < lines.length; j++) {
-                            const next = lines[j].trim();
-                            if (next && !next.startsWith("#")) { variantUri = next; break; }
-                        }
-                        if (!variantUri) continue;
-                        const variantUrl = variantUri.startsWith("http") ? variantUri : new URL(variantUri, message.url).href;
-                        if (height && !seenHeights.has(height)) {
-                            seenHeights.add(height);
-                            variants.push({ label: `${height}p`, url: variantUrl, bandwidth: lines[i].match(/BANDWIDTH=(\d+)/)?.[1] || 0, height: height });
-                        }
-                    }
-                }
-                variants.sort((a, b) => b.height - a.height);
-                sendResponse(variants.length ? variants : [{ label: "Original", url: message.url, bandwidth: 0 }]);
-            }).catch(() => sendResponse([{ label: "Original", url: message.url, bandwidth: 0 }]));
-        return true;
-    }
-
     if (message.type === "PREPARE_DISPATCH_DOWNLOAD") {
         const pageUrl = sender.tab?.url || message.url || "";
         const finish = async () => {
+            let cookiePayload = "";
             if (pageUrl.includes("youtube.com") || pageUrl.includes("youtu.be")) {
                 const cookies = await getYouTubeAuthCookies();
-                const cookiePayload = cookies && cookies.length > 0 ? formatNetscapeCookies(cookies) : (message.cookies || "");
-                await triggerDownload(message.url, message.filename, sender.tab?.url || "", cookiePayload, message.youtubeQuality, message.forceHLS, message.forceDASH, message.pageHeaders || {});
+                cookiePayload = cookies && cookies.length > 0 ? formatNetscapeCookies(cookies) : (message.cookies || "");
             } else {
-                let cookiePayload = lookupCookiesAggressively(message.url);
-                if (!cookiePayload) cookiePayload = await fetchCookiesForUrl(message.url);
-                if (!cookiePayload && pageUrl.startsWith("http")) cookiePayload = await fetchCookiesForUrl(pageUrl);
+                cookiePayload = lookupCookiesAggressively(message.url);
+                if (!cookiePayload && pageUrl.startsWith("http")) cookiePayload = await fetchBaseDomainCookies(pageUrl);
                 if (!cookiePayload) cookiePayload = message.cookies || "";
-
-                await triggerDownload(message.url, message.filename, sender.tab?.url || "", cookiePayload, message.youtubeQuality, message.forceHLS, message.forceDASH, message.pageHeaders || {});
             }
+            await triggerDownload(message.url, message.filename, sender.tab?.url || "", cookiePayload, message.youtubeQuality, message.forceHLS, message.forceDASH, message.pageHeaders || {});
         };
         finish().then(() => sendResponse({ success: true })).catch(() => sendResponse({ success: false }));
         return true;
     }
 });
 
-function netscapeToCookieHeader(netscapeStr) {
-    if (!netscapeStr || netscapeStr.startsWith("# Netscape") === false) return netscapeStr;
-    return netscapeStr
-        .split("\n")
-        .filter(line => line && !line.startsWith("#") && !line.startsWith(" "))
-        .map(line => {
-            const parts = line.split("\t");
-            if (parts.length >= 7) return `${parts[5]}=${parts[6]}`;
-            return null;
-        })
-        .filter(Boolean)
-        .join("; ");
-}
-
 async function triggerDownload(url, filename, referer, cookies, youtubeQuality, forceHLS, forceDASH, pageHeaders) {
-    // The master merge. This will now contain Range, Sec-Fetch, X-Playback-Session-Id, etc.
-    const capturedReqHeaders  = lookupHeadersAggressively(url);
-    const capturedRespHeaders = capturedResponseHeaders.get(url) || (() => { try { return capturedResponseHeaders.get(new URL(url).origin) || {}; } catch(_) { return {}; } })();
+    const capturedReqHeaders = getCapturedHeaders(capturedRequestHeaders, url);
+    const capturedRespHeaders = getCapturedHeaders(capturedResponseHeaders, url);
 
     const mergedHeaders = Object.assign({}, pageHeaders || {}, capturedReqHeaders);
-
     if (referer && !mergedHeaders["referer"]) mergedHeaders["referer"] = referer;
+    if (!mergedHeaders["user-agent"]) mergedHeaders["user-agent"] = navigator.userAgent;
 
-    let finalCookies = cookies;
-    if (!finalCookies) finalCookies = lookupCookiesAggressively(url);
-    if (!finalCookies && referer) finalCookies = await fetchCookiesForUrl(referer);
-    if (!finalCookies) finalCookies = await fetchBaseDomainCookies(url);
+    let finalCookies = cookies || lookupCookiesAggressively(url);
+    if (!finalCookies && url.startsWith("http")) finalCookies = await fetchBaseDomainCookies(url);
 
-    if (finalCookies && !mergedHeaders["cookie"]) {
-        mergedHeaders["cookie"] = netscapeToCookieHeader(finalCookies) || finalCookies;
-    }
+    if (finalCookies && !mergedHeaders["cookie"]) mergedHeaders["cookie"] = netscapeToCookieHeader(finalCookies) || finalCookies;
 
     const payload = JSON.stringify({
-        url,
-        filename: filename || "download",
-        cookies: finalCookies || "",
-        referer: mergedHeaders["referer"] || referer || "",
-        ua: mergedHeaders["user-agent"] || navigator.userAgent,
-        browser: "safari",
-        youtubeQuality,
-        forceHLS,
-        forceDASH,
-        headers: mergedHeaders,
-        responseHeaders: capturedRespHeaders,
+        url, filename: filename || "download", cookies: finalCookies || "", referer: mergedHeaders["referer"] || referer || "",
+        ua: mergedHeaders["user-agent"], browser: "chrome", youtubeQuality, forceHLS, forceDASH,
+        headers: mergedHeaders, responseHeaders: capturedRespHeaders,
         extraHeadersFlat: Object.entries(mergedHeaders).map(([k, v]) => `${k}: ${v}`).join("\n")
     });
 

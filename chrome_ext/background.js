@@ -1,9 +1,8 @@
 // background.js - Daisy Chrome Extension
 
-const _api = chrome;
+const _api = typeof browser !== "undefined" ? browser : chrome;
 let dispatchEnabled = true;
 
-// Maps for capturing media headers
 const capturedRequestHeaders  = new Map();
 const capturedResponseHeaders = new Map();
 const capturedCookies         = new Map();
@@ -42,6 +41,16 @@ function getCapturedHeaders(map, targetUrl) {
     return {};
 }
 
+function cleanMediaUrl(urlStr) {
+    try {
+        const u = new URL(urlStr);
+        u.searchParams.delete('bytestart');
+        u.searchParams.delete('byteend');
+        u.searchParams.delete('range');
+        return u.toString();
+    } catch { return urlStr; }
+}
+
 _api.storage.local.get(["dispatchEnabled"]).then(res => {
     if (typeof res.dispatchEnabled === "boolean") dispatchEnabled = res.dispatchEnabled;
 });
@@ -66,7 +75,6 @@ _api.contextMenus.onClicked.addListener((info, tab) => {
     }
 });
 
-// Intercept Standard Downloads
 _api.downloads.onCreated.addListener(async (downloadItem) => {
     if (!dispatchEnabled) return;
     
@@ -86,14 +94,9 @@ _api.downloads.onCreated.addListener(async (downloadItem) => {
     }
 
     let cookies = lookupCookiesAggressively(targetUrl);
-    if (!cookies && targetUrl.startsWith("http")) {
-        cookies = await fetchBaseDomainCookies(targetUrl);
-    }
+    if (!cookies && targetUrl.startsWith("http")) cookies = await fetchBaseDomainCookies(targetUrl);
 
-    triggerDownload(
-        targetUrl, fname, downloadItem.referrer || "", cookies,
-        null, false, false, { "referer": downloadItem.referrer || "" }
-    );
+    triggerDownload(targetUrl, fname, downloadItem.referrer || "", cookies, null, false, false, { "referer": downloadItem.referrer || "" });
 });
 
 function extractFilename(url) {
@@ -161,7 +164,6 @@ function lookupCookiesAggressively(url) {
 _api.webRequest.onBeforeSendHeaders.addListener(
     function(details) {
         if (details.url.includes("127.0.0.1:684")) return;
-
         const reqHeaders = {};
         for (const h of (details.requestHeaders || [])) reqHeaders[h.name.toLowerCase()] = h.value;
         
@@ -180,9 +182,17 @@ _api.webRequest.onBeforeSendHeaders.addListener(
     ["requestHeaders", "extraHeaders"]
 );
 
+const IGNORABLE_EXTS = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg', '.css', '.js', '.woff', '.woff2', '.ttf', '.eot', '.ico'];
+
 _api.webRequest.onHeadersReceived.addListener(
     function(details) {
         if (details.url.includes("127.0.0.1:684")) return;
+        if (details.type !== 'xmlhttprequest' && details.type !== 'media' && details.type !== 'fetch') return;
+
+        const urlLower = details.url.toLowerCase();
+        const urlWithoutQuery = urlLower.split('?')[0];
+        
+        if (IGNORABLE_EXTS.some(ext => urlWithoutQuery.endsWith(ext))) return;
 
         const respHeaders = {};
         for (const h of (details.responseHeaders || [])) respHeaders[h.name.toLowerCase()] = h.value;
@@ -194,23 +204,36 @@ _api.webRequest.onHeadersReceived.addListener(
             mergeIntoMap(capturedResponseHeaders, u.origin, respHeaders);
         } catch(_) {}
 
-        const ct = respHeaders["content-type"] || "";
-        const isMedia = ["video/", "audio/", "mpegurl", "m3u8", "video/mp2t", "application/x-mpegurl", "application/vnd.apple.mpegurl", "application/dash+xml"].some(m => ct.includes(m));
-        const urlLower = details.url.toLowerCase();
-        const isMediaByUrl = ['.m3u8', '.ts', '.mp4', '.webm', '.mov', '.mkv', '/hls/', '/m3u8', 'manifest.m3u8', 'master.m3u8', '.mpd'].some(p => urlLower.includes(p));
+        let mediaType = 'unknown';
+        const ct = (respHeaders["content-type"] || "").toLowerCase();
+        
+        // Strictly evaluate obfuscated anime/social URLs without fetching payload (preserves single-use tokens)
+        if (urlLower.includes('bytestart=')) {
+            mediaType = 'mp4';
+        } else if (ct.includes('mpegurl') || ct.includes('m3u8') || urlLower.includes('/m3/') || urlLower.includes('/hls/')) {
+            mediaType = 'hls';
+        } else if (ct.includes('dash+xml') || urlLower.includes('/dash/')) {
+            mediaType = 'dash';
+        } else if (ct.includes('video/mp4') || ct.includes('video/webm')) {
+            mediaType = 'mp4';
+        }
+
+        const isMedia = mediaType !== 'unknown' || ct.includes('video/') || ct.includes('audio/');
+        const isMediaByUrl = ['.m3u8', '.ts', '.mp4', '.webm', '.mov', '.mkv', '/hls/', '/m3u8', '/m3/', '/dash/', 'manifest.m3u8', 'master.m3u8', '.mpd'].some(p => urlLower.includes(p));
 
         if (isMedia || isMediaByUrl) {
-            // VITAL: Ignore individual .ts segments from spamming the UI if they are part of a stream
+            // Drop raw spam segments
             if (urlLower.includes('.ts') && !urlLower.includes('.m3u8')) return;
+            if (ct.includes('video/mp2t')) return;
 
-            // VITAL: If tabId is -1 (Service Worker), query the active tab and force the message to it
+            const finalUrl = cleanMediaUrl(details.url);
+            const payload = { type: 'NEW_MEDIA_FOUND', mediaInfo: { url: finalUrl, frameId: details.frameId, mediaType: mediaType } };
+
             if (details.tabId !== -1) {
-                _api.tabs.sendMessage(details.tabId, { type: 'NEW_MEDIA_FOUND', mediaInfo: { url: details.url, frameId: details.frameId } }).catch(() => {});
+                _api.tabs.sendMessage(details.tabId, payload).catch(() => {});
             } else {
                 _api.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-                    if (tabs && tabs.length > 0) {
-                        _api.tabs.sendMessage(tabs[0].id, { type: 'NEW_MEDIA_FOUND', mediaInfo: { url: details.url, frameId: 0 } }).catch(() => {});
-                    }
+                    if (tabs && tabs.length > 0) _api.tabs.sendMessage(tabs[0].id, payload).catch(() => {});
                 });
             }
         }
@@ -220,6 +243,13 @@ _api.webRequest.onHeadersReceived.addListener(
 );
 
 _api.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message.type === "FETCH_MANIFEST") {
+        fetch(message.url, { credentials: 'include' })
+            .then(r => r.ok ? r.text() : Promise.reject(r.status))
+            .then(text => sendResponse({ ok: true, text }))
+            .catch(err => sendResponse({ ok: false }));
+        return true;
+    }
     if (message.type === "PREPARE_DISPATCH_DOWNLOAD") {
         const pageUrl = sender.tab?.url || message.url || "";
         const finish = async () => {
@@ -248,24 +278,14 @@ async function triggerDownload(url, filename, referer, cookies, youtubeQuality, 
     if (!mergedHeaders["user-agent"]) mergedHeaders["user-agent"] = navigator.userAgent;
 
     let finalCookies = cookies || lookupCookiesAggressively(url);
-    if (!finalCookies && url.startsWith("http")) {
-        finalCookies = await fetchBaseDomainCookies(url);
-    }
+    if (!finalCookies && url.startsWith("http")) finalCookies = await fetchBaseDomainCookies(url);
 
-    if (finalCookies && !mergedHeaders["cookie"]) {
-        mergedHeaders["cookie"] = netscapeToCookieHeader(finalCookies) || finalCookies;
-    }
+    if (finalCookies && !mergedHeaders["cookie"]) mergedHeaders["cookie"] = netscapeToCookieHeader(finalCookies) || finalCookies;
 
     const payload = JSON.stringify({
-        url,
-        filename: filename || "download",
-        cookies: finalCookies || "",
-        referer: mergedHeaders["referer"] || referer || "",
-        ua: mergedHeaders["user-agent"],
-        browser: "chrome",
-        youtubeQuality, forceHLS, forceDASH,
-        headers: mergedHeaders,
-        responseHeaders: capturedRespHeaders,
+        url, filename: filename || "download", cookies: finalCookies || "", referer: mergedHeaders["referer"] || referer || "",
+        ua: mergedHeaders["user-agent"], browser: "chrome", youtubeQuality, forceHLS, forceDASH,
+        headers: mergedHeaders, responseHeaders: capturedRespHeaders,
         extraHeadersFlat: Object.entries(mergedHeaders).map(([k, v]) => `${k}: ${v}`).join("\n")
     });
 
