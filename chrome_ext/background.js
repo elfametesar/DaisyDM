@@ -30,7 +30,6 @@ function mergeIntoMap(map, key, incomingData) {
     }
 }
 
-// Better fuzzy lookup for headers (matches full URL, URL without query, or just origin)
 function getCapturedHeaders(map, targetUrl) {
     if (!targetUrl) return {};
     if (map.has(targetUrl)) return map.get(targetUrl);
@@ -67,7 +66,7 @@ _api.contextMenus.onClicked.addListener((info, tab) => {
     }
 });
 
-// ━━━ INTERCEPT REGULAR CHROME DOWNLOADS ━━━
+// Intercept Standard Downloads
 _api.downloads.onCreated.addListener(async (downloadItem) => {
     if (!dispatchEnabled) return;
     
@@ -86,19 +85,14 @@ _api.downloads.onCreated.addListener(async (downloadItem) => {
         fname = extractFilename(targetUrl);
     }
 
-    // Explicitly grab cookies for this specific domain before firing off the payload
     let cookies = lookupCookiesAggressively(targetUrl);
     if (!cookies && targetUrl.startsWith("http")) {
         cookies = await fetchBaseDomainCookies(targetUrl);
     }
 
     triggerDownload(
-        targetUrl,
-        fname,
-        downloadItem.referrer || "",
-        cookies,
-        null, false, false,
-        { "referer": downloadItem.referrer || "" }
+        targetUrl, fname, downloadItem.referrer || "", cookies,
+        null, false, false, { "referer": downloadItem.referrer || "" }
     );
 });
 
@@ -166,7 +160,6 @@ function lookupCookiesAggressively(url) {
 
 _api.webRequest.onBeforeSendHeaders.addListener(
     function(details) {
-        // Ignore our own internal dispatch requests so they don't pollute the cache
         if (details.url.includes("127.0.0.1:684")) return;
 
         const reqHeaders = {};
@@ -206,9 +199,20 @@ _api.webRequest.onHeadersReceived.addListener(
         const urlLower = details.url.toLowerCase();
         const isMediaByUrl = ['.m3u8', '.ts', '.mp4', '.webm', '.mov', '.mkv', '/hls/', '/m3u8', 'manifest.m3u8', 'master.m3u8', '.mpd'].some(p => urlLower.includes(p));
 
-        // Background script can't access frameId safely if tabId is -1
-        if ((isMedia || isMediaByUrl) && details.tabId !== -1) {
-            _api.tabs.sendMessage(details.tabId, { type: 'NEW_MEDIA_FOUND', mediaInfo: { url: details.url, frameId: details.frameId } }).catch(() => {});
+        if (isMedia || isMediaByUrl) {
+            // VITAL: Ignore individual .ts segments from spamming the UI if they are part of a stream
+            if (urlLower.includes('.ts') && !urlLower.includes('.m3u8')) return;
+
+            // VITAL: If tabId is -1 (Service Worker), query the active tab and force the message to it
+            if (details.tabId !== -1) {
+                _api.tabs.sendMessage(details.tabId, { type: 'NEW_MEDIA_FOUND', mediaInfo: { url: details.url, frameId: details.frameId } }).catch(() => {});
+            } else {
+                _api.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+                    if (tabs && tabs.length > 0) {
+                        _api.tabs.sendMessage(tabs[0].id, { type: 'NEW_MEDIA_FOUND', mediaInfo: { url: details.url, frameId: 0 } }).catch(() => {});
+                    }
+                });
+            }
         }
     },
     { urls: ["<all_urls>"] },
@@ -241,8 +245,6 @@ async function triggerDownload(url, filename, referer, cookies, youtubeQuality, 
 
     const mergedHeaders = Object.assign({}, pageHeaders || {}, capturedReqHeaders);
     if (referer && !mergedHeaders["referer"]) mergedHeaders["referer"] = referer;
-    
-    // Crucial: Fallback user-agent if missing
     if (!mergedHeaders["user-agent"]) mergedHeaders["user-agent"] = navigator.userAgent;
 
     let finalCookies = cookies || lookupCookiesAggressively(url);
