@@ -118,7 +118,17 @@ struct PropertiesSheet: View {
                             PropRow("Host",   URL(string: urlText)?.host ?? item.url.host ?? "–")
                             PropRow("Scheme", URL(string: urlText)?.scheme?.uppercased() ?? item.url.scheme?.uppercased() ?? "–")
                         }
-                        if let ua = item.userAgent, !ua.isEmpty { PropRow("User-Agent", ua, expandable: true) }
+                        
+                        // Output every parsed header right in the Source section.
+                        if let headers = item.headers, !headers.isEmpty {
+                            ForEach(headers.sorted(by: { $0.key < $1.key }), id: \.key) { key, value in
+                                PropRow(key.capitalized, value, expandable: true)
+                            }
+                        } else {
+                            if let ua = item.userAgent, !ua.isEmpty { PropRow("User-Agent", ua, expandable: true) }
+                            if let ref = item.referer, !ref.isEmpty { PropRow("Referer", ref, expandable: true) }
+                        }
+                        
                         if let ck = item.cookies,  !ck.isEmpty  { PropRow("Cookies",    ck, expandable: true) }
                     }
 

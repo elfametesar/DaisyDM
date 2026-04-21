@@ -6,6 +6,7 @@ struct ConfirmDownloadRequest: Identifiable {
     let id = UUID()
     let url:      URL
     var filename: String
+    var headers:  [String: String]? = [:]
     let cookies:  String
     let referer:  String
     let ua:       String
@@ -312,7 +313,7 @@ struct ConfirmDownloadView: View {
                             Image(systemName: showDetails ? "chevron.down" : "chevron.right")
                                 .font(.system(size: 10, weight: .bold))
                                 .frame(width: 12)
-                            Text("Advanced Details")
+                            Text("Advanced Details (Headers & Cookies)")
                                 .font(.system(size: 10, weight: .semibold))
                         }
                         .foregroundStyle(.primary)
@@ -321,16 +322,21 @@ struct ConfirmDownloadView: View {
 
                     if showDetails {
                         VStack(alignment: .leading, spacing: 10) {
-                            if !request.referer.isEmpty {
-                                ScrollableDetailRow(label: "Referer", value: request.referer, labelWidth: 70)
+                            if let headers = request.headers, !headers.isEmpty {
+                                ForEach(headers.sorted(by: { $0.key < $1.key }), id: \.key) { key, value in
+                                    ScrollableDetailRow(label: key.capitalized, value: value, labelWidth: 100)
+                                }
                             }
                             if !request.cookies.isEmpty {
-                                ScrollableDetailRow(label: "Cookies", value: request.cookies, labelWidth: 70)
+                                ScrollableDetailRow(label: "Cookies", value: request.cookies, labelWidth: 100)
                             }
-                            if !request.ua.isEmpty {
-                                ScrollableDetailRow(label: "User-Agent", value: request.ua, labelWidth: 70)
+                            if !request.referer.isEmpty && request.headers?["referer"] == nil {
+                                ScrollableDetailRow(label: "Referer", value: request.referer, labelWidth: 100)
                             }
-                            if request.referer.isEmpty && request.cookies.isEmpty && request.ua.isEmpty {
+                            if !request.ua.isEmpty && request.headers?["user-agent"] == nil {
+                                ScrollableDetailRow(label: "User-Agent", value: request.ua, labelWidth: 100)
+                            }
+                            if (request.headers?.isEmpty ?? true) && request.referer.isEmpty && request.cookies.isEmpty && request.ua.isEmpty {
                                 Text("No advanced headers provided.")
                                     .font(.system(size: 10))
                                     .foregroundStyle(.secondary)
@@ -511,7 +517,7 @@ struct ConfirmDownloadView: View {
                         return vcodec != "none" && height > 0
                     }.sorted {
                         let h1 = $0["height"] as? Int ?? 0
-                        let h2 = $1["height"] as? Int ?? 0
+                        let h2 = $1["height"] as? Int ?? 0 // Fixed $0 to $1 here
                         return h1 > h2
                     }
                     
@@ -602,6 +608,12 @@ struct ConfirmDownloadView: View {
         req.setValue("document", forHTTPHeaderField: "Sec-Fetch-Dest")
         req.setValue("navigate", forHTTPHeaderField: "Sec-Fetch-Mode")
         req.setValue("none", forHTTPHeaderField: "Sec-Fetch-Site")
+        
+        if let hdrs = request.headers {
+            for (k, v) in hdrs {
+                req.setValue(v, forHTTPHeaderField: k)
+            }
+        }
         
         if !request.cookies.isEmpty { req.setValue(request.cookies, forHTTPHeaderField: "Cookie") }
         if !request.ua.isEmpty { req.setValue(request.ua, forHTTPHeaderField: "User-Agent") }

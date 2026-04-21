@@ -11,14 +11,14 @@ struct DownloadPayload: Decodable {
     let youtubeQuality: String?
     let forceHLS: Bool?
     let forceDASH: Bool?
-    let forceDirectDownload: Bool? // <--- Added this flag
+    let forceDirectDownload: Bool?
     let browser: String?
-    let requestHeaders: [String: String]?
+    let headers: [String: String]? // <--- Correctly maps to the background.js payload
     let responseHeaders: [String: String]?
     let extraHeadersFlat: String?
 
     var mergedHeaders: [String: String] {
-        var merged = requestHeaders ?? [:]
+        var merged = headers ?? [:]
         if let ref = referer, !ref.isEmpty  { merged["referer"]    = merged["referer"]    ?? ref }
         if let agent = ua, !agent.isEmpty   { merged["user-agent"] = merged["user-agent"] ?? agent }
         return merged
@@ -30,7 +30,7 @@ struct DownloadPayload: Decodable {
 
     init(url: String, filename: String?, cookies: String?, referer: String?,
          ua: String?, youtubeQuality: String?, forceHLS: Bool?, forceDASH: Bool?, forceDirectDownload: Bool?, browser: String?,
-         requestHeaders: [String: String]? = nil,
+         headers: [String: String]? = nil,
          responseHeaders: [String: String]? = nil,
          extraHeadersFlat: String? = nil) {
         self.url             = url
@@ -41,9 +41,9 @@ struct DownloadPayload: Decodable {
         self.youtubeQuality  = youtubeQuality
         self.forceHLS        = forceHLS
         self.forceDASH       = forceDASH
-        self.forceDirectDownload = forceDirectDownload // <--- Added this flag
+        self.forceDirectDownload = forceDirectDownload
         self.browser         = browser
-        self.requestHeaders  = requestHeaders
+        self.headers         = headers
         self.responseHeaders = responseHeaders
         self.extraHeadersFlat = extraHeadersFlat
     }
@@ -51,7 +51,7 @@ struct DownloadPayload: Decodable {
     enum CodingKeys: String, CodingKey {
         case url, filename, cookies, referer, ua
         case youtubeQuality, forceHLS, forceDASH, forceDirectDownload, browser
-        case requestHeaders, responseHeaders, extraHeadersFlat
+        case headers, responseHeaders, extraHeadersFlat
     }
 
     init(from decoder: Decoder) throws {
@@ -64,9 +64,9 @@ struct DownloadPayload: Decodable {
         browser  = try c.decodeIfPresent(String.self, forKey: .browser)
         forceHLS = try c.decodeIfPresent(Bool.self,   forKey: .forceHLS)
         forceDASH = try c.decodeIfPresent(Bool.self, forKey: .forceDASH)
-        forceDirectDownload = try c.decodeIfPresent(Bool.self, forKey: .forceDirectDownload) // <--- Added this flag
+        forceDirectDownload = try c.decodeIfPresent(Bool.self, forKey: .forceDirectDownload)
         extraHeadersFlat = try c.decodeIfPresent(String.self, forKey: .extraHeadersFlat)
-        requestHeaders   = try c.decodeIfPresent([String: String].self, forKey: .requestHeaders)
+        headers   = try c.decodeIfPresent([String: String].self, forKey: .headers)
         responseHeaders  = try c.decodeIfPresent([String: String].self, forKey: .responseHeaders)
 
         if let qInt = try? c.decodeIfPresent(Int.self, forKey: .youtubeQuality) {
@@ -178,9 +178,9 @@ class LocalServer {
                         youtubeQuality:  payload.youtubeQuality,
                         forceHLS:        payload.forceHLS,
                         forceDASH:       payload.forceDASH,
-                        forceDirectDownload: payload.forceDirectDownload, // <--- Forwarded
+                        forceDirectDownload: payload.forceDirectDownload,
                         browser:         payload.browser,
-                        requestHeaders:  payload.requestHeaders,
+                        headers:         payload.headers, // <--- Correctly passing it
                         responseHeaders: payload.responseHeaders,
                         extraHeadersFlat: payload.extraHeadersFlat
                     )
@@ -204,6 +204,9 @@ class LocalServer {
     }
 
     private func showConfirmation(for payload: DownloadPayload) {
+        print("🔔 referer: \(payload.referer ?? "nil")")
+        print("🔔 cookies: \(payload.cookies?.prefix(100) ?? "nil")")
+
         guard let url = URL(string: payload.url)
             ?? URL(string: payload.url.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")
         else { return }
@@ -222,9 +225,9 @@ class LocalServer {
                 "youtubeQuality":   payload.youtubeQuality  ?? "",
                 "forceHLS":         payload.forceHLS        ?? false,
                 "forceDASH":        payload.forceDASH       ?? false,
-                "forceDirectDownload": payload.forceDirectDownload ?? false, // <--- Passed to notification
+                "forceDirectDownload": payload.forceDirectDownload ?? false,
                 "browser":          payload.browser         ?? "",
-                "headers":          payload.mergedHeaders,
+                "headers":          payload.mergedHeaders, // <--- Relaying the headers
                 "extraHeadersFlat": payload.extraHeadersFlat
                     ?? payload.mergedHeaders.map { "\($0): \($1)" }.joined(separator: "\n")
             ]

@@ -14,6 +14,15 @@
 		53F624789BAF9FB2DB63EDBB /* SafariExtensionHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02FA831F84964C6E30740ED4 /* SafariExtensionHandler.swift */; };
 		712C631C2F8A952D00504612 /* LocalServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 712C631B2F8A952800504612 /* LocalServer.swift */; };
 		714070032F88B43700875649 /* popup.js in Resources */ = {isa = PBXBuildFile; fileRef = 714070022F88B43400875649 /* popup.js */; };
+		714913882F96081800167751 /* DownloadEngineUtilities.swift in Sources */ = {isa = PBXBuildFile; fileRef = 714913872F96081500167751 /* DownloadEngineUtilities.swift */; };
+		7149138A2F9609D700167751 /* DownloadEngineAria2.swift in Sources */ = {isa = PBXBuildFile; fileRef = 714913892F9609D400167751 /* DownloadEngineAria2.swift */; };
+		7149138C2F9609EB00167751 /* DownloadEngineCurl.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7149138B2F9609E800167751 /* DownloadEngineCurl.swift */; };
+		7149138E2F9609FB00167751 /* DownloadEngineYouTube.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7149138D2F9609F900167751 /* DownloadEngineYouTube.swift */; };
+		714913902F960A2300167751 /* DownloadEngineDASH.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7149138F2F960A1E00167751 /* DownloadEngineDASH.swift */; };
+		714913922F960A3700167751 /* DownloadEngineHLS.swift in Sources */ = {isa = PBXBuildFile; fileRef = 714913912F960A3400167751 /* DownloadEngineHLS.swift */; };
+		714913942F960AE800167751 /* DownloadModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 714913932F960AE600167751 /* DownloadModels.swift */; };
+		714913962F960B0500167751 /* HLSBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 714913952F960B0100167751 /* HLSBridge.swift */; };
+		714913982F960B3800167751 /* Utilities.swift in Sources */ = {isa = PBXBuildFile; fileRef = 714913972F960B3400167751 /* Utilities.swift */; };
 		7161C5EB2F8D4DC800FFB581 /* ProgressWindowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7161C5EA2F8D4DBC00FFB581 /* ProgressWindowView.swift */; };
 		7161C5ED2F8D4FB900FFB581 /* FailedDownloadDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7161C5EC2F8D4FB800FFB581 /* FailedDownloadDialog.swift */; };
 		7161C5EF2F8D769B00FFB581 /* SharedUIComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7161C5EE2F8D769600FFB581 /* SharedUIComponents.swift */; };
@@ -33,7 +42,7 @@
 		D03D0C1410EEC02AB846A437 /* DownloadDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24DFD2C04C85C517992B2C81 /* DownloadDetailView.swift */; };
 		D2841A44D4CDA47E09F5A0EA /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E16D72692BAB7622BBD388D3 /* ContentView.swift */; };
 		E6466915463132C126752D64 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0159ADC2E90F823FF4B7A57 /* AppDelegate.swift */; };
-		E83E1A8BDEBD4355E446E247 /* DownloadEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = D333474D0B94942D2F1B8D61 /* DownloadEngine.swift */; };
+		E83E1A8BDEBD4355E446E247 /* DownloadEngineCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D333474D0B94942D2F1B8D61 /* DownloadEngineCore.swift */; };
 		FA21961A36B68ECAA613D7DC /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2238E812354119FCD1EFFAC1 /* SidebarView.swift */; };
 		FE3349E82E4588853A8EEABD /* URLSchemeHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17671D7F8AB5C98F683D0703 /* URLSchemeHandler.swift */; };
 /* End PBXBuildFile section */
@@ -84,6 +93,15 @@
 		7108AF5B2F8974030059958D /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		712C631B2F8A952800504612 /* LocalServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalServer.swift; sourceTree = "<group>"; };
 		714070022F88B43400875649 /* popup.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = popup.js; sourceTree = "<group>"; };
+		714913872F96081500167751 /* DownloadEngineUtilities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadEngineUtilities.swift; sourceTree = "<group>"; };
+		714913892F9609D400167751 /* DownloadEngineAria2.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadEngineAria2.swift; sourceTree = "<group>"; };
+		7149138B2F9609E800167751 /* DownloadEngineCurl.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadEngineCurl.swift; sourceTree = "<group>"; };
+		7149138D2F9609F900167751 /* DownloadEngineYouTube.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadEngineYouTube.swift; sourceTree = "<group>"; };
+		7149138F2F960A1E00167751 /* DownloadEngineDASH.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadEngineDASH.swift; sourceTree = "<group>"; };
+		714913912F960A3400167751 /* DownloadEngineHLS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadEngineHLS.swift; sourceTree = "<group>"; };
+		714913932F960AE600167751 /* DownloadModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadModels.swift; sourceTree = "<group>"; };
+		714913952F960B0100167751 /* HLSBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HLSBridge.swift; sourceTree = "<group>"; };
+		714913972F960B3400167751 /* Utilities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Utilities.swift; sourceTree = "<group>"; };
 		7161C5EA2F8D4DBC00FFB581 /* ProgressWindowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProgressWindowView.swift; sourceTree = "<group>"; };
 		7161C5EC2F8D4FB800FFB581 /* FailedDownloadDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FailedDownloadDialog.swift; sourceTree = "<group>"; };
 		7161C5EE2F8D769600FFB581 /* SharedUIComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedUIComponents.swift; sourceTree = "<group>"; };
@@ -99,7 +117,7 @@
 		A0159ADC2E90F823FF4B7A57 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		AA11BB22CC33DD44EE55FF67 /* ConfirmDownloadView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfirmDownloadView.swift; sourceTree = "<group>"; };
 		CB44EE0F7D6EA3AA72232245 /* AddDownloadSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddDownloadSheet.swift; sourceTree = "<group>"; };
-		D333474D0B94942D2F1B8D61 /* DownloadEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadEngine.swift; sourceTree = "<group>"; };
+		D333474D0B94942D2F1B8D61 /* DownloadEngineCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadEngineCore.swift; sourceTree = "<group>"; };
 		E16D72692BAB7622BBD388D3 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		E6A6721BDA522881F9B1938F /* DownloadListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadListView.swift; sourceTree = "<group>"; };
 		ECF7392741EE1B516970CA7B /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
@@ -201,8 +219,17 @@
 		C75B2CAB48984D2934A96A32 /* Core */ = {
 			isa = PBXGroup;
 			children = (
+				714913972F960B3400167751 /* Utilities.swift */,
+				714913952F960B0100167751 /* HLSBridge.swift */,
+				714913932F960AE600167751 /* DownloadModels.swift */,
+				714913912F960A3400167751 /* DownloadEngineHLS.swift */,
+				7149138F2F960A1E00167751 /* DownloadEngineDASH.swift */,
+				7149138D2F9609F900167751 /* DownloadEngineYouTube.swift */,
+				7149138B2F9609E800167751 /* DownloadEngineCurl.swift */,
+				714913892F9609D400167751 /* DownloadEngineAria2.swift */,
+				714913872F96081500167751 /* DownloadEngineUtilities.swift */,
 				17671D7F8AB5C98F683D0703 /* URLSchemeHandler.swift */,
-				D333474D0B94942D2F1B8D61 /* DownloadEngine.swift */,
+				D333474D0B94942D2F1B8D61 /* DownloadEngineCore.swift */,
 				712C631B2F8A952800504612 /* LocalServer.swift */,
 			);
 			path = Core;
@@ -351,6 +378,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				712C631C2F8A952D00504612 /* LocalServer.swift in Sources */,
+				714913942F960AE800167751 /* DownloadModels.swift in Sources */,
 				94239571324F1E220C2EDA5A /* AddDownloadSheet.swift in Sources */,
 				AA11BB22CC33DD44EE55FF66 /* ConfirmDownloadView.swift in Sources */,
 				E6466915463132C126752D64 /* AppDelegate.swift in Sources */,
@@ -360,12 +388,20 @@
 				7161C5EB2F8D4DC800FFB581 /* ProgressWindowView.swift in Sources */,
 				D2841A44D4CDA47E09F5A0EA /* ContentView.swift in Sources */,
 				D03D0C1410EEC02AB846A437 /* DownloadDetailView.swift in Sources */,
-				E83E1A8BDEBD4355E446E247 /* DownloadEngine.swift in Sources */,
+				E83E1A8BDEBD4355E446E247 /* DownloadEngineCore.swift in Sources */,
+				7149138C2F9609EB00167751 /* DownloadEngineCurl.swift in Sources */,
+				714913922F960A3700167751 /* DownloadEngineHLS.swift in Sources */,
 				B5A502C1B883ABB2001778D5 /* DownloadListView.swift in Sources */,
 				A632EED8E7FCE3E2E9321090 /* SettingsView.swift in Sources */,
+				714913902F960A2300167751 /* DownloadEngineDASH.swift in Sources */,
 				7161C5ED2F8D4FB900FFB581 /* FailedDownloadDialog.swift in Sources */,
 				FA21961A36B68ECAA613D7DC /* SidebarView.swift in Sources */,
+				714913882F96081800167751 /* DownloadEngineUtilities.swift in Sources */,
 				FE3349E82E4588853A8EEABD /* URLSchemeHandler.swift in Sources */,
+				7149138A2F9609D700167751 /* DownloadEngineAria2.swift in Sources */,
+				714913962F960B0500167751 /* HLSBridge.swift in Sources */,
+				714913982F960B3800167751 /* Utilities.swift in Sources */,
+				7149138E2F9609FB00167751 /* DownloadEngineYouTube.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

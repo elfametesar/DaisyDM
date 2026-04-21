@@ -21,6 +21,10 @@ struct DetailView: View {
             VStack(alignment: .leading, spacing: 20) {
                 overviewCard(for: item)
                 storageCard(for: item)
+                
+                if (item.headers != nil && !item.headers!.isEmpty) || (item.cookies != nil && !item.cookies!.isEmpty) || (item.userAgent != nil && !item.userAgent!.isEmpty) {
+                    headersCard(for: item)
+                }
 
                 if let err = item.error, item.status == .failed {
                     errorCard(message: err)
@@ -148,6 +152,27 @@ struct DetailView: View {
             Text("Storage").font(.headline)
             pathRow(title: "Destination", systemImage: "folder", path: item.destinationURL.deletingLastPathComponent().path(percentEncoded: false), url: item.destinationURL.deletingLastPathComponent(), isReveal: false)
             pathRow(title: "Saved File", systemImage: "doc", path: item.destinationURL.path(percentEncoded: false), url: item.destinationURL, isReveal: true)
+        }
+    }
+    
+    private func headersCard(for item: DownloadItem) -> some View {
+        inspectorCard {
+            Text("Headers & Cookies").font(.headline)
+            if let headers = item.headers, !headers.isEmpty {
+                ForEach(headers.sorted(by: { $0.key < $1.key }), id: \.key) { key, value in
+                    pathRow(title: key.capitalized, systemImage: "text.alignleft", path: value, url: nil, isReveal: false)
+                }
+            } else {
+                if let ua = item.userAgent, !ua.isEmpty {
+                    pathRow(title: "User-Agent", systemImage: "text.alignleft", path: ua, url: nil, isReveal: false)
+                }
+                if let ref = item.referer, !ref.isEmpty {
+                    pathRow(title: "Referer", systemImage: "link", path: ref, url: nil, isReveal: false)
+                }
+            }
+            if let cookies = item.cookies, !cookies.isEmpty {
+                pathRow(title: "Cookies", systemImage: "lock.shield", path: cookies, url: nil, isReveal: false)
+            }
         }
     }
 

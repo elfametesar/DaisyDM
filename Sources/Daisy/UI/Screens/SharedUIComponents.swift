@@ -122,3 +122,106 @@ func applyFloatingWindowStyle(window: NSWindow?) {
     win.standardWindowButton(.miniaturizeButton)?.isHidden = false
     win.standardWindowButton(.zoomButton)?.isHidden = false
 }
+
+extension NSColor {
+    convenience init?(hex: String) {
+        var s = hex.trimmingCharacters(in: .whitespacesAndNewlines)
+        if s.hasPrefix("#") { s = String(s.dropFirst()) }
+        if s.count == 3 { s = s.map { "\($0)\($0)" }.joined() }
+        guard let value = UInt64(s, radix: 16) else { return nil }
+        let r = CGFloat((value >> 16) & 0xFF) / 255
+        let g = CGFloat((value >>  8) & 0xFF) / 255
+        let b = CGFloat( value        & 0xFF) / 255
+        self.init(srgbRed: r, green: g, blue: b, alpha: 1.0)
+    }
+}
+
+class DockProgressView: NSView {
+    var progress: Double = 0.0 {
+        didSet { needsDisplay = true }
+    }
+    
+    private func getBarColor() -> NSColor {
+        let defaults = UserDefaults.standard
+        let match = defaults.bool(forKey: "matchProgressBarToAccent")
+        let hexString = match ? (defaults.string(forKey: "accentColorHex") ?? "#0A84FF") : (defaults.string(forKey: "progressBarColorHex") ?? "#34C759")
+        return NSColor(hex: hexString) ?? .systemGreen
+    }
+    
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        if let appIcon = NSImage(named: NSImage.applicationIconName) { appIcon.draw(in: bounds) }
+        
+        let inset: CGFloat = bounds.width * 0.12
+        let cornerRadius: CGFloat = bounds.width * 0.18
+        let barThick: CGFloat = 6.0
+        let rect = bounds.insetBy(dx: inset, dy: inset)
+        let startY = rect.maxY - (rect.height * 0.45)
+        let straightLen = startY - (rect.minY + cornerRadius)
+        let arcLen = 0.5 * .pi * cornerRadius
+        let bottomLen = rect.width - (2 * cornerRadius)
+        let totalLen = (straightLen * 2) + (arcLen * 2) + bottomLen
+        
+        let bgPath = NSBezierPath()
+        bgPath.move(to: NSPoint(x: rect.minX, y: startY))
+        bgPath.line(to: NSPoint(x: rect.minX, y: rect.minY + cornerRadius))
+        bgPath.appendArc(withCenter: NSPoint(x: rect.minX + cornerRadius, y: rect.minY + cornerRadius), radius: cornerRadius, startAngle: 180, endAngle: 270)
+        bgPath.line(to: NSPoint(x: rect.maxX - cornerRadius, y: rect.minY))
+        bgPath.appendArc(withCenter: NSPoint(x: rect.maxX - cornerRadius, y: rect.minY + cornerRadius), radius: cornerRadius, startAngle: 270, endAngle: 360)
+        bgPath.line(to: NSPoint(x: rect.maxX, y: startY))
+        bgPath.lineWidth = barThick; bgPath.lineCapStyle = .round
+        NSColor.black.withAlphaComponent(0.4).setStroke(); bgPath.stroke()
+        
+        if progress > 0 {
+            let targetLen = totalLen * CGFloat(min(1.0, progress))
+            var currentLen: CGFloat = 0
+            let fgPath = NSBezierPath()
+            fgPath.move(to: NSPoint(x: rect.minX, y: startY))
+            
+            if targetLen > currentLen {
+                let segLen = straightLen
+                if targetLen < currentLen + segLen {
+                    let p = (targetLen - currentLen) / segLen
+                    fgPath.line(to: NSPoint(x: rect.minX, y: startY - (straightLen * p)))
+                    currentLen = targetLen
+                } else { fgPath.line(to: NSPoint(x: rect.minX, y: rect.minY + cornerRadius)); currentLen += segLen }
+            }
+            if targetLen > currentLen {
+                let segLen = arcLen
+                let center = NSPoint(x: rect.minX + cornerRadius, y: rect.minY + cornerRadius)
+                if targetLen < currentLen + segLen {
+                    let p = (targetLen - currentLen) / segLen
+                    fgPath.appendArc(withCenter: center, radius: cornerRadius, startAngle: 180, endAngle: 180 + (90 * p))
+                    currentLen = targetLen
+                } else { fgPath.appendArc(withCenter: center, radius: cornerRadius, startAngle: 180, endAngle: 270); currentLen += segLen }
+            }
+            if targetLen > currentLen {
+                let segLen = bottomLen
+                if targetLen < currentLen + segLen {
+                    let p = (targetLen - currentLen) / segLen
+                    fgPath.line(to: NSPoint(x: rect.minX + cornerRadius + (bottomLen * p), y: rect.minY))
+                    currentLen = targetLen
+                } else { fgPath.line(to: NSPoint(x: rect.maxX - cornerRadius, y: rect.minY)); currentLen += segLen }
+            }
+            if targetLen > currentLen {
+                let segLen = arcLen
+                let center = NSPoint(x: rect.maxX - cornerRadius, y: rect.minY + cornerRadius)
+                if targetLen < currentLen + segLen {
+                    let p = (targetLen - currentLen) / segLen
+                    fgPath.appendArc(withCenter: center, radius: cornerRadius, startAngle: 270, endAngle: 270 + (90 * p))
+                    currentLen = targetLen
+                } else { fgPath.appendArc(withCenter: center, radius: cornerRadius, startAngle: 270, endAngle: 360); currentLen += segLen }
+            }
+            if targetLen > currentLen {
+                let segLen = straightLen
+                if targetLen < currentLen + segLen {
+                    let p = (targetLen - currentLen) / segLen
+                    fgPath.line(to: NSPoint(x: rect.maxX, y: rect.minY + cornerRadius + (straightLen * p)))
+                    currentLen = targetLen
+                } else { fgPath.line(to: NSPoint(x: rect.maxX, y: startY)); currentLen += segLen }
+            }
+            fgPath.lineWidth = barThick; fgPath.lineCapStyle = .round
+            getBarColor().setStroke(); fgPath.stroke()
+        }
+    }
+}
