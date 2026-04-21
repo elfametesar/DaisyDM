@@ -2,9 +2,10 @@
   "manifest_version": 3,
   "name": "Daisy DM",
   "version": "1.1",
-  "description": "Intercepts Chrome downloads and sends them directly to the Daisy Mac app — no dialogs.",
+  "description": "Intercepts downloads and sends them directly to the Daisy Mac app.",
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "background.js",
+    "type": "module"
   },
   "action": {
     "default_popup": "popup.html",
@@ -19,19 +20,12 @@
       "match_about_blank": true
     }
   ],
-  "web_accessible_resources": [
-    {
-      "resources": ["main_sniffer.js"],
-      "matches": ["<all_urls>"]
-    }
-  ],
   "permissions": [
     "downloads",
     "contextMenus",
     "storage",
     "tabs",
     "cookies",
-    "nativeMessaging",
     "webRequest"
   ],
   "host_permissions": ["<all_urls>"]

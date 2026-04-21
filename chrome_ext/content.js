@@ -1,5 +1,77 @@
 // content.js - Daisy Extension (Chrome & Safari)
 
+// INJECT XHR/FETCH INTERCEPTOR TO CAPTURE AUTH HEADERS SENT BY CLIENT JS
+const interceptorScript = document.createElement('script');
+interceptorScript.textContent = `
+    (function() {
+        const MEDIA_RE = /\\.m3u8|stream\\.mpd|\\.mpd|dash|hls|\\.mp4|\\.webm|\\.mov|\\.ts|manifest/i;
+
+        const _fetch = window.fetch;
+        window.fetch = async function(...args) {
+            const req = args[0];
+            const opts = args[1] || {};
+            let url = typeof req === 'string' ? req : (req && req.url ? req.url : '');
+            let headers = {};
+            
+            if (opts.headers) {
+                if (opts.headers instanceof Headers) {
+                    for (let [k, v] of opts.headers.entries()) headers[k] = v;
+                } else if (typeof opts.headers === 'object') {
+                    headers = { ...opts.headers };
+                } else if (Array.isArray(opts.headers)) {
+                    opts.headers.forEach(h => headers[h[0]] = h[1]);
+                }
+            }
+            
+            if (req instanceof Request) {
+                for (let [k, v] of req.headers.entries()) headers[k] = v;
+            }
+            
+            // Always fire for media URLs, even if no custom headers
+            if (Object.keys(headers).length > 0 || MEDIA_RE.test(url)) {
+                window.postMessage({ __daisyMediaHeaders: { url, headers } }, "*");
+            }
+            return _fetch.apply(this, args);
+        };
+
+        const _open = XMLHttpRequest.prototype.open;
+        const _setRequestHeader = XMLHttpRequest.prototype.setRequestHeader;
+        const _send = XMLHttpRequest.prototype.send;
+        
+        XMLHttpRequest.prototype.open = function(method, url, ...rest) {
+            this._daisyUrl = url;
+            this._daisyHeaders = {};
+            return _open.call(this, method, url, ...rest);
+        };
+        
+        XMLHttpRequest.prototype.setRequestHeader = function(header, value) {
+            if (this._daisyHeaders) this._daisyHeaders[header] = value;
+            return _setRequestHeader.call(this, header, value);
+        };
+        
+        XMLHttpRequest.prototype.send = function(...args) {
+            if (this._daisyUrl) {
+                try {
+                    const absoluteUrl = new URL(this._daisyUrl, document.baseURI).href;
+                    // Always fire for media URLs, even if no custom headers
+                    if (Object.keys(this._daisyHeaders || {}).length > 0 || MEDIA_RE.test(absoluteUrl)) {
+                        window.postMessage({ __daisyMediaHeaders: { url: absoluteUrl, headers: this._daisyHeaders || {} } }, "*");
+                    }
+                } catch(e) {
+                    if (Object.keys(this._daisyHeaders || {}).length > 0 || MEDIA_RE.test(this._daisyUrl)) {
+                        window.postMessage({ __daisyMediaHeaders: { url: this._daisyUrl, headers: this._daisyHeaders || {} } }, "*");
+                    }
+                }
+            }
+            return _send.apply(this, args);
+        };
+    })();
+`;
+if (document.head || document.documentElement) {
+    (document.head || document.documentElement).prepend(interceptorScript);
+    interceptorScript.remove();
+}
+
 const _api = typeof browser !== "undefined" ? browser : chrome;
 const IS_TOP_FRAME = window === window.top;
 
@@ -33,30 +105,26 @@ window.addEventListener("blur", () => { isKeyCurrentlyHeld = false; });
 function shouldBypass() { return isExtensionDisabled || isBypassActive; }
 
 // --- STATE MANAGEMENT ---
-let sniffedMediaUrls = []; // Format: { url, mediaType, frameOrigin, timestamp }
+let sniffedMediaUrls = [];
 let _lastSeenUrl = window.location.href;
 const capturedMediaRequestHeaders = new Map();
 
-// Map format: WeakMap<Element, Map<UrlString, MediaTypeString>>
 const playerUrlMap = new WeakMap();
 const iframeSrcMap = new WeakMap();
 
-// Track when video elements or iframes load new sources to clear stale data
 document.addEventListener('loadstart', (e) => {
     if (e.target.tagName === 'VIDEO') playerUrlMap.delete(e.target);
 }, true);
 
-// Monitor iframe SRC changes (When you click "Switch Player" on anime sites)
 setInterval(() => {
     document.querySelectorAll('iframe').forEach(ifr => {
         if (iframeSrcMap.get(ifr) !== ifr.src) {
             iframeSrcMap.set(ifr, ifr.src);
-            playerUrlMap.delete(ifr); // Wipe the dictionary for the old player
+            playerUrlMap.delete(ifr);
         }
     });
 }, 1000);
 
-// CRITICAL FIX: Include Iframes when tracking active media players
 function getLikelyTargetMediaElements() {
     const elements = Array.from(document.querySelectorAll('video, iframe'));
     
@@ -66,8 +134,6 @@ function getLikelyTargetMediaElements() {
     const loading = elements.filter(v => v.tagName === 'VIDEO' && v.networkState === 2);
     if (loading.length > 0) return loading;
 
-    // Fallback: If it's an iframe, we can't read 'paused' across domains.
-    // Find the media container closest to the center of the screen.
     let closest = null;
     let minDistance = Infinity;
     const centerY = window.innerHeight / 2;
@@ -156,14 +222,15 @@ function bubbleMediaToTop(data) {
     
     if (IS_TOP_FRAME) {
         const now = Date.now();
-        // Expiry Fix: Clear out old global fallback URLs so they don't haunt new players
         sniffedMediaUrls = sniffedMediaUrls.filter(m => now - m.timestamp < 35000);
 
         if (!sniffedMediaUrls.some(m => normalizeUrl(m.url) === normalizeUrl(url))) {
-            sniffedMediaUrls.push({ url, mediaType, frameOrigin: window.location.origin, timestamp: now });
+            const entry = { url, mediaType, frameOrigin: data.frameOrigin || window.location.origin, timestamp: now };
+            if (data.mailRuKey) entry.mailRuKey = data.mailRuKey;
+            if (data.mailRuTitle) entry.mailRuTitle = data.mailRuTitle;
+            sniffedMediaUrls.push(entry);
         }
         
-        // Map explicitly to the active element (Video OR Iframe)
         const targets = getLikelyTargetMediaElements();
         targets.forEach(el => {
             if (!playerUrlMap.has(el)) playerUrlMap.set(el, new Map());
@@ -184,7 +251,13 @@ window.addEventListener("message", (e) => {
         const { url, headers } = e.data.__daisyMediaHeaders;
         if (url && headers && typeof headers === "object") {
             const existing = capturedMediaRequestHeaders.get(url) || {};
-            capturedMediaRequestHeaders.set(url, Object.assign({}, existing, headers));
+            const merged = Object.assign({}, existing, headers);
+            capturedMediaRequestHeaders.set(url, merged);
+            try {
+                _api.runtime.sendMessage({ type: "PUSH_MEDIA_HEADERS", headers: { [url]: headers } }).catch(() => {});
+            } catch(err) {}
+            // Also register the URL itself as a media candidate
+            bubbleMediaToTop({ url, mediaType: 'unknown', frameOrigin: window.location.origin });
         }
     }
 });
@@ -216,7 +289,7 @@ function sniffScriptUrls(root) {
         for (let s of scripts) {
             const text = s.textContent || "";
             let match;
-            while ((match = mediaRe.exec(text)) !== null) found.push({url: match[0].replace(/[,;}\]]+$/, ""), type: 'unknown'});
+            while ((match = mediaRe.exec(text)) !== null) found.push({url: match[0].replace(/[,;}\]]+$/, ""), type: 'unknown', frameOrigin: window.location.origin});
         }
     } catch(e) {}
     return found;
@@ -235,7 +308,7 @@ function sniffJsonBlobs(root) {
             ];
             for (const re of patterns) {
                 let m;
-                while ((m = re.exec(text)) !== null) found.push({url: m[1], type: 'unknown'});
+                while ((m = re.exec(text)) !== null) found.push({url: m[1], type: 'unknown', frameOrigin: window.location.origin});
             }
         }
     } catch(_) {}
@@ -253,7 +326,7 @@ function sniffWindowState() {
                 const str = typeof val === 'string' ? val : JSON.stringify(val);
                 const mediaRe = /https?:\/\/[^\s"'\\]+?(?:\.m3u8|\.mpd|HLSPlaylist\.m3u8|DASHPlaylist\.mpd|\/m3\/|\/dash\/)[^\s"'\\,;}\]))]*/g;
                 let m;
-                while ((m = mediaRe.exec(str)) !== null) found.push({url: m[0], type: 'unknown'});
+                while ((m = mediaRe.exec(str)) !== null) found.push({url: m[0], type: 'unknown', frameOrigin: window.location.origin});
             } catch(_) {}
         }
     } catch(_) {}
@@ -264,6 +337,110 @@ function runScriptSniffer(root) {
     sniffScriptUrls(root).forEach(data => bubbleMediaToTop(data));
     sniffJsonBlobs(root).forEach(data => bubbleMediaToTop(data));
     if (IS_TOP_FRAME) sniffWindowState().forEach(data => bubbleMediaToTop(data));
+    if (IS_TOP_FRAME) sniffMailRu(root);
+}
+
+async function sniffMailRu(root) {
+    try {
+        const host = window.location.hostname;
+        if (!host.includes('mail.ru')) return;
+
+        let metaUrl = null;
+
+        const cfgScripts = (root || document).querySelectorAll('script.sp-video__page-config, script[class*="page-config"]');
+        for (const s of cfgScripts) {
+            try {
+                const cfg = JSON.parse(s.textContent);
+                metaUrl = cfg.metaUrl || (cfg.video && cfg.video.metaUrl);
+                if (metaUrl) break;
+            } catch (_) {}
+        }
+
+        if (!metaUrl) {
+            const allScripts = (root || document).querySelectorAll('script:not([src])');
+            for (const s of allScripts) {
+                const m = s.textContent.match(/"metaUrl"\s*:\s*"(https?:\/\/[^"]+)"/);
+                if (m) { metaUrl = m[1]; break; }
+            }
+        }
+
+        if (!metaUrl) return;
+
+        const res = await new Promise(resolve =>
+            _api.runtime.sendMessage({ type: "FETCH_MANIFEST", url: metaUrl }, resolve)
+        );
+        if (!res || !res.ok) return;
+
+        const data = JSON.parse(res.text);
+        const videos = data.videos || [];
+        const title = (data.meta && data.meta.title) ? data.meta.title.replace(/\.mp4$/i, '') : null;
+
+        for (const v of videos) {
+            if (!v.url) continue;
+            bubbleMediaToTop({ url: v.url, mediaType: 'mp4', frameOrigin: window.location.origin, mailRuKey: v.key, mailRuTitle: title });
+        }
+    } catch (_) {}
+}
+
+async function fetchDashQualities(mpdUrl) {
+    try {
+        const res = await new Promise(resolve => _api.runtime.sendMessage({ type: "FETCH_MANIFEST", url: mpdUrl }, resolve));
+        if (!res || !res.ok) throw new Error('fetch failed');
+        const text = res.text;
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(text, 'application/xml');
+
+        let manifestTitle = null;
+        const titleEl = doc.querySelector('ProgramInformation Title, MPD Title, title');
+        if (titleEl && titleEl.textContent.trim().length > 1) manifestTitle = titleEl.textContent.trim();
+
+        const variants = [];
+        const seen = new Set();
+
+        doc.querySelectorAll('AdaptationSet').forEach(adaptSet => {
+            const contentType = (adaptSet.getAttribute('contentType') || '').toLowerCase();
+            const mimeType    = (adaptSet.getAttribute('mimeType') || '').toLowerCase();
+
+            const combinedType = contentType || mimeType;
+            if (combinedType && !combinedType.includes('video')) return;
+
+            const role = adaptSet.querySelector('Role');
+            if (role) {
+                const roleVal = (role.getAttribute('value') || '').toLowerCase();
+                if (roleVal === 'supplemental' || roleVal === 'caption' || roleVal === 'subtitle') return;
+            }
+
+            adaptSet.querySelectorAll('Representation').forEach(rep => {
+                const repMime = (rep.getAttribute('mimeType') || '').toLowerCase();
+                if (repMime && !repMime.includes('video')) return;
+
+                const height    = parseInt(rep.getAttribute('height') || adaptSet.getAttribute('height') || '0');
+                const bandwidth = parseInt(rep.getAttribute('bandwidth') || '0');
+                const id        = rep.getAttribute('id') || '';
+
+                if (height === 0 && bandwidth === 0) return;
+
+                const key = height > 0 ? `h${height}` : `bw${bandwidth}`;
+                if (seen.has(key)) return;
+                seen.add(key);
+
+                const label = height > 0
+                    ? `${height}p`
+                    : bandwidth > 0
+                        ? `${Math.round(bandwidth / 1000)}k`
+                        : id || "Original";
+
+                variants.push({ label, url: mpdUrl, height, bandwidth, title: manifestTitle });
+            });
+        });
+
+        if (variants.length === 0) return [{ label: "Original", url: mpdUrl, title: manifestTitle }];
+
+        variants.sort((a, b) => (b.height || b.bandwidth) - (a.height || a.bandwidth));
+        return variants;
+    } catch (_) {
+        return [{ label: "Original", url: mpdUrl, title: null }];
+    }
 }
 
 async function fetchHlsQualities(masterUrl) {
@@ -272,14 +449,11 @@ async function fetchHlsQualities(masterUrl) {
         if (!res || !res.ok) throw new Error('fetch failed');
         const text = res.text;
 
-        // Extract title from manifest: #EXT-X-SESSION-DATA:DATA-ID="com.apple.hls.title",VALUE="..."
-        // or #EXT-X-SESSION-DATA:DATA-ID="title",VALUE="..."
         let manifestTitle = null;
         const titleMatch = text.match(/#EXT-X-SESSION-DATA:[^\n]*DATA-ID="[^"]*title[^"]*"[^\n]*VALUE="([^"]+)"/i)
                         || text.match(/#EXT-X-TITLE:([^\n]+)/i);
         if (titleMatch) manifestTitle = titleMatch[1].trim();
 
-        // If it's not a master playlist (no #EXT-X-STREAM-INF), treat as single stream
         if (!text.includes('#EXT-X-STREAM-INF')) {
             return [{ label: "Original", url: masterUrl, bandwidth: 0, title: manifestTitle }];
         }
@@ -322,49 +496,32 @@ async function fetchHlsQualities(masterUrl) {
     }
 }
 
-async function fetchDashQualities(mpdUrl) {
-    try {
-        const res = await new Promise(resolve => _api.runtime.sendMessage({ type: "FETCH_MANIFEST", url: mpdUrl }, resolve));
-        if (!res || !res.ok) throw new Error('fetch failed');
-        const text = res.text;
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(text, 'application/xml');
+function collectPageHeaders(mediaUrl = null) {
+    const headers = {};
+    let realReferer = window.location.href;
+    let realOrigin = window.location.origin;
 
-        // Extract title from <Title> element inside <ProgramInformation> or root MPD
-        let manifestTitle = null;
-        const titleEl = doc.querySelector('ProgramInformation Title, MPD Title, title');
-        if (titleEl && titleEl.textContent.trim().length > 1) manifestTitle = titleEl.textContent.trim();
-
-        const variants = [];
-        const seen = new Set();
-
-        doc.querySelectorAll('AdaptationSet').forEach(adaptSet => {
-            const contentType = (adaptSet.getAttribute('contentType') || adaptSet.getAttribute('mimeType') || '').toLowerCase();
-            if (contentType && !contentType.includes('video') && contentType !== '') return;
-
-            adaptSet.querySelectorAll('Representation').forEach(rep => {
-                const repMime = (rep.getAttribute('mimeType') || '').toLowerCase();
-                if (repMime && !repMime.includes('video')) return;
-
-                const height    = parseInt(rep.getAttribute('height') || '0');
-                const bandwidth = parseInt(rep.getAttribute('bandwidth') || '0');
-                const id        = rep.getAttribute('id') || '';
-                const key       = `${height}-${bandwidth}`;
-                if (seen.has(key)) return;
-                seen.add(key);
-
-                const label = height ? `${height}p` : bandwidth ? `${Math.round(bandwidth / 1000)}k` : id || "Original";
-                variants.push({ label, url: mpdUrl, height, bandwidth, title: manifestTitle });
-            });
-        });
-
-        if (variants.length === 0) return [{ label: "Original", url: mpdUrl, title: manifestTitle }];
-
-        variants.sort((a, b) => (b.height || b.bandwidth) - (a.height || a.bandwidth));
-        return variants;
-    } catch (_) {
-        return [{ label: "Original", url: mpdUrl, title: null }];
+    if (mediaUrl && typeof mediaUrl === 'string' && mediaUrl.startsWith('http')) {
+        const sniffed = sniffedMediaUrls.find(m => m.url === mediaUrl || normalizeUrl(m.url) === normalizeUrl(mediaUrl));
+        
+        if (sniffed && sniffed.frameOrigin && sniffed.frameOrigin !== "null" && sniffed.frameOrigin !== "undefined") {
+            realOrigin = sniffed.frameOrigin;
+            realReferer = sniffed.frameOrigin + "/";
+        } else {
+            try {
+                const u = new URL(mediaUrl);
+                realOrigin = u.origin;
+                realReferer = u.origin + "/";
+            } catch(e) {}
+        }
     }
+
+    headers["referer"] = realReferer;
+    headers["origin"] = realOrigin;
+    if (navigator.language) headers["accept-language"] = navigator.language;
+    headers["user-agent"] = navigator.userAgent;
+    Object.assign(headers, collectStorageHeaders());
+    return headers;
 }
 
 _api.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -384,21 +541,26 @@ function getExtFromUrl(url) {
     } catch { return '.mp4'; }
 }
 
+// Fixed missing extractFilename
+function extractFilename(url) {
+    try {
+        const parts = new URL(url).pathname.split("/");
+        return decodeURIComponent(parts[parts.length - 1]) || "download";
+    } catch { return "download"; }
+}
+
 function nativeFallback(url, filename) {
-  const a = document.createElement('a'); a.href = url;
+  let bypassUrl = url;
+  try {
+      const u = new URL(url);
+      u.searchParams.set('daisy_bypass', 'true');
+      bypassUrl = u.toString();
+  } catch(e) {}
+  
+  const a = document.createElement('a'); a.href = bypassUrl;
   if (filename) a.download = filename;
   a.setAttribute('data-daisy-bypass', 'true');
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
-}
-
-function collectPageHeaders() {
-    const headers = {};
-    headers["referer"] = window.location.href;
-    headers["origin"] = window.location.origin;
-    if (navigator.language) headers["accept-language"] = navigator.language;
-    headers["user-agent"] = navigator.userAgent;
-    Object.assign(headers, collectStorageHeaders());
-    return headers;
 }
 
 function collectMediaHeaders(mediaUrl) {
@@ -416,7 +578,7 @@ function sendToDispatch(url, filename, additionalData = {}) {
   let finalFilename = filename || "Download";
   if (!/\.[0-9a-z]+$/i.test(finalFilename)) finalFilename += ".mp4";
   
-  const mergedPageHeaders = Object.assign({}, collectPageHeaders(), collectMediaHeaders(url));
+  const mergedPageHeaders = Object.assign({}, collectPageHeaders(url), collectMediaHeaders(url));
   
   try {
     _api.runtime.sendMessage({
@@ -432,7 +594,7 @@ async function handleCredentialedFetch(url, filename) {
   try {
     const r = await fetch(url); const blob = await r.blob(); const reader = new FileReader();
     reader.onload = async () => {
-        const payload = JSON.stringify({ url: reader.result.replace(/^data:[^;]+;base64,/, "data:application/octet-stream;base64,"), filename: filename || "download", referer: location.href, ua: navigator.userAgent, cookies: "", pageHeaders: collectPageHeaders() });
+        const payload = JSON.stringify({ url: reader.result.replace(/^data:[^;]+;base64,/, "data:application/octet-stream;base64,"), filename: filename || "download", referer: collectPageHeaders(url)["referer"], ua: navigator.userAgent, cookies: "", pageHeaders: collectPageHeaders(url) });
         for (let port = 6840; port <= 6850; port++) {
             try { const resp = await fetch(`http://127.0.0.1:${port}/dispatch`, { method: "POST", headers: { "Content-Type": "application/json" }, body: payload }); if (resp.ok) return; } catch (_) {}
         }
@@ -468,6 +630,26 @@ function getContextualVideoName(el) {
     return null;
 }
 
+// Catch globally triggered click downloads
+document.addEventListener('click', (e) => {
+    if (shouldBypass()) return;
+    const link = e.target.closest('a');
+    if (!link || !link.href) return;
+    if (link.hasAttribute('data-daisy-bypass')) return;
+
+    // Expand the list below if you want Daisy to act as a global manager for things like PDFs, EXEs, ZIPs, etc.
+    const isDownloadUrl = ['.mp4', '.mkv', '.avi', '.webm', '.mov', '.wmv', '.flv', '.ts', '.m3u8', '.mpd', '.zip', '.rar', '.7z', '.pdf', '.exe', '.dmg', '.iso'].some(ext => {
+        try { return new URL(link.href).pathname.toLowerCase().endsWith(ext); }
+        catch { return false; }
+    });
+
+    if (link.hasAttribute('download') || isDownloadUrl) {
+        e.preventDefault();
+        e.stopPropagation();
+        sendToDispatch(link.href, link.getAttribute('download') || extractFilename(link.href));
+    }
+}, true); // Capture phase
+
 const _createElement = document.createElement.bind(document);
 document.createElement = function(tag, ...args) {
   const el = _createElement(tag, ...args);
@@ -477,7 +659,7 @@ document.createElement = function(tag, ...args) {
       if (el.hasAttribute('data-daisy-bypass') || shouldBypass() || !el.href) { _click(); return; }
       const isDownloadUrl = ['.mp4', '.mkv', '.avi', '.webm', '.mov', '.wmv', '.flv', '.ts', '.m3u8', '.mpd'].some(ext => { try { return new URL(el.href).pathname.toLowerCase().endsWith(ext); } catch { return false; } });
       if (el.href.startsWith("blob:") || el.hasAttribute("download") || isDownloadUrl) {
-          sendToDispatch(el.href, el.getAttribute("download") || extractFilename(el.href, el));
+          sendToDispatch(el.href, el.getAttribute("download") || extractFilename(el.href));
       } else { _click(); }
     };
   }
@@ -493,9 +675,9 @@ document.createElement = function(tag, ...args) {
                 if (v.dataset.daisySniffed) return;
                 v.dataset.daisySniffed = "true";
                 const report = () => {
-                    if (v.src) bubbleMediaToTop(v.src);
-                    v.querySelectorAll('source').forEach(s => bubbleMediaToTop(s.src));
-                    if (v.currentSrc) bubbleMediaToTop(v.currentSrc);
+                    if (v.src) bubbleMediaToTop({url: v.src, mediaType: 'unknown', frameOrigin: window.location.origin});
+                    v.querySelectorAll('source').forEach(s => bubbleMediaToTop({url: s.src, mediaType: 'unknown', frameOrigin: window.location.origin}));
+                    if (v.currentSrc) bubbleMediaToTop({url: v.currentSrc, mediaType: 'unknown', frameOrigin: window.location.origin});
                 };
                 report();
                 v.addEventListener('loadedmetadata', report, { once: true });
@@ -678,6 +860,8 @@ document.createElement = function(tag, ...args) {
                 <div class="daisydm-shimmer" style="width:44%;margin-top:5px;margin-bottom:8px"></div>
             `;
             
+            console.log('[Daisy] populateDropdown called. sniffedMediaUrls:', JSON.stringify(sniffedMediaUrls.map(m => ({url: m.url, type: m.mediaType}))));
+            
             const pageUrl = window.location.href;
             let contextualName = getContextualVideoName(targetEl);
             let _pt = document.title.trim();
@@ -715,9 +899,8 @@ document.createElement = function(tag, ...args) {
                 }
             });
 
-            // If we have nothing bound, safely use global fallback (which now auto-expires stale links)
             if (urlTypeMap.size === 0 && sniffedMediaUrls.length > 0) {
-                sniffedMediaUrls.slice(-4).forEach(m => urlTypeMap.set(m.url, m.mediaType || 'unknown'));
+                sniffedMediaUrls.forEach(m => urlTypeMap.set(m.url, m.mediaType || 'unknown'));
             }
 
             const options = [];
@@ -727,15 +910,23 @@ document.createElement = function(tag, ...args) {
                 let lower = rawUrl.toLowerCase();
                 let finalType = type;
                 
-                if (finalType === 'unknown') {
-                    if (lower.includes('.m3u8') || lower.includes('/m3/')) finalType = 'hls';
-                    else if (lower.includes('.mpd') || lower.includes('/dash/')) finalType = 'dash';
+                // Look up extra metadata stored by site-specific sniffers (e.g. mail.ru)
+                const sniffedEntry = sniffedMediaUrls.find(m => m.url === rawUrl || normalizeUrl(m.url) === normalizeUrl(rawUrl));
+
+                // Aggressive type detection — check URL patterns broadly, not just exact extensions
+                if (finalType === 'unknown' || finalType === 'hls' || finalType === 'dash') {
+                    if (lower.includes('.m3u8') || lower.includes('/m3/') || lower.includes('/hls/') || lower.includes('playlist.m3u8') || lower.includes('master.m3u8')) finalType = 'hls';
+                    else if (lower.includes('.mpd') || lower.includes('/dash/') || lower.includes('/manifest') || lower.includes('dash.xml') || lower.includes('dashplaylist') || lower.includes('video.ism')) finalType = 'dash';
                     else if (lower.includes('.mp4')) finalType = 'mp4';
+                }
+
+                // Trust sniffedMediaUrls type if URL matches and type is still unknown
+                if (finalType === 'unknown' && sniffedEntry && sniffedEntry.mediaType && sniffedEntry.mediaType !== 'unknown') {
+                    finalType = sniffedEntry.mediaType;
                 }
                 
                 const isManifest = (finalType === 'hls' || finalType === 'dash');
                 
-                // SPAM FILTER
                 if (!isManifest && finalType !== 'mp4') {
                     const spamSigs = ['.ts', '.m4s', '.m4v', '.m4a', 'bytestart=', 'segment', 'frag', 'init.mp4', 'seg-'];
                     const fakeExts = ['.woff', '.css', '.js', '.html', '.png', '.jpg'];
@@ -744,16 +935,20 @@ document.createElement = function(tag, ...args) {
                     if (fakeExts.some(e => lower.includes(e))) continue;
                 }
                 
+                // Use site-specific quality label and title if available (e.g. mail.ru "720p", "360p")
+                const siteQuality = sniffedEntry && sniffedEntry.mailRuKey ? sniffedEntry.mailRuKey : null;
+                const siteTitle   = sniffedEntry && sniffedEntry.mailRuTitle ? sniffedEntry.mailRuTitle : null;
+                
                 if (finalType === 'hls') {
                     const variants = await fetchHlsQualities(rawUrl);
-                    variants.forEach(v => options.push({ vidName: v.title || vidName, quality: v.label, ext: '.mp4', url: v.url, type: 'hls' }));
+                    variants.forEach(v => options.push({ vidName: siteTitle || v.title || vidName, quality: v.label, ext: '.mp4', url: v.url, type: 'hls' }));
                 } else if (finalType === 'dash') {
                     const variants = await fetchDashQualities(rawUrl);
                     variants.forEach(v => {
-                        options.push({ vidName: v.title || vidName, quality: v.label, ext: '.mp4', url: v.url, type: 'dash', ytQuality: v.height ? `bestvideo[height<=${v.height}]+bestaudio/best` : undefined });
+                        options.push({ vidName: siteTitle || v.title || vidName, quality: v.label, ext: '.mp4', url: v.url, type: 'dash', ytQuality: v.ytQuality });
                     });
                 } else {
-                    options.push({ vidName: vidName, quality: '', ext: getExtFromUrl(rawUrl), url: rawUrl, type: 'mp4' });
+                    options.push({ vidName: siteTitle || vidName, quality: siteQuality || '', ext: getExtFromUrl(rawUrl), url: rawUrl, type: 'mp4' });
                 }
             }
 

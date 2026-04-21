@@ -79,14 +79,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let forceDASH = info["forceDASH"] as? Bool ?? false
             let forceDirectDownload = info["forceDirectDownload"] as? Bool ?? false
             let youtubeQuality = info["youtubeQuality"] as? String
-            
-            // Extract the headers dictionary from the notification info payload
             let headers = info["headers"] as? [String: String] ?? [:]
 
             let request = ConfirmDownloadRequest(
                 url:      url,
                 filename: filename,
-                headers:  headers, // <-- Corrected: Use the extracted local 'headers' variable
+                headers:  headers,
                 cookies:  cookies,
                 referer:  referer,
                 ua:       ua,
@@ -157,8 +155,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         forceDirectDownload: confirmedRequest.forceDirectDownload
                     )
                     
-                    // Inject custom captured headers (like X-Playback-Session-Id)
-                    // directly into the newly created DownloadItem
                     if let newestItem = engine.items.last(where: { $0.url == url }) {
                         newestItem.headers = confirmedRequest.headers
                     }

@@ -36,6 +36,19 @@ extension DownloadEngine {
 
         if downloadedBytes > 0 { args.append(contentsOf: ["-C", "-"]) }
         if speedLimit > 0 { args.append(contentsOf: ["--limit-rate", "\(speedLimit)K"]) }
+
+        let skipKeys: Set<String> = ["range", "connection", "accept-encoding", "host", "content-length"]
+        var appliedKeys = Set<String>()
+
+        if let headers = extraHeaders {
+            for (key, value) in headers {
+                let lowerKey = key.lowercased()
+                if skipKeys.contains(lowerKey) { continue }
+                if lowerKey == "cookie" { continue }
+                args.append(contentsOf: ["--header", "\(key): \(value)"])
+                appliedKeys.insert(lowerKey)
+            }
+        }
         
         if let cookies = cookies, !cookies.isEmpty {
             if cookies.hasPrefix("# Netscape") {
@@ -43,45 +56,40 @@ extension DownloadEngine {
                 try? cookies.write(to: cookieFile, atomically: true, encoding: .utf8)
                 args.append(contentsOf: ["--cookie", cookieFile.path])
             } else { args.append(contentsOf: ["--cookie", cookies]) }
+        } else if let headers = extraHeaders, let c = headers.first(where: { $0.key.lowercased() == "cookie" })?.value {
+            args.append(contentsOf: ["--cookie", c])
         }
         
-        if let ref = referer, !ref.isEmpty { args.append(contentsOf: ["--referer", ref]) }
-        let host = url.host ?? ""
-        args.append(contentsOf: ["--header", "Origin: https://\(host)"])
+        if !appliedKeys.contains("referer"), let ref = referer, !ref.isEmpty {
+            args.append(contentsOf: ["--referer", ref])
+        }
+        
+        if !appliedKeys.contains("user-agent") {
+            let ua = (userAgent != nil && !userAgent!.isEmpty) ? userAgent! : "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15"
+            args.append(contentsOf: ["--user-agent", ua])
+        }
+
+        if !appliedKeys.contains("accept") { args.append(contentsOf: ["--header", "Accept: */*"]) }
+        if !appliedKeys.contains("accept-language") { args.append(contentsOf: ["--header", "Accept-Language: en-US,en;q=0.9"]) }
+        if !appliedKeys.contains("sec-ch-ua") {
+            args.append(contentsOf: ["--header", "Sec-Ch-Ua: \"Google Chrome\";v=\"131\", \"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\""])
+            args.append(contentsOf: ["--header", "Sec-Ch-Ua-Mobile: ?0"])
+            args.append(contentsOf: ["--header", "Sec-Ch-Ua-Platform: \"macOS\""])
+        }
+        if !appliedKeys.contains("origin") {
+            let hostStr = url.host ?? ""
+            args.append(contentsOf: ["--header", "Origin: https://\(hostStr)"])
+        }
 
         let isMedia = isMediaFileURL(url)
         if isMedia {
-            args.append(contentsOf: ["--header", "Sec-Fetch-Dest: video"])
-            args.append(contentsOf: ["--header", "Sec-Fetch-Mode: no-cors"])
+            if !appliedKeys.contains("sec-fetch-dest") { args.append(contentsOf: ["--header", "Sec-Fetch-Dest: video"]) }
+            if !appliedKeys.contains("sec-fetch-mode") { args.append(contentsOf: ["--header", "Sec-Fetch-Mode: no-cors"]) }
         } else {
-            args.append(contentsOf: ["--header", "Sec-Fetch-Dest: document"])
-            args.append(contentsOf: ["--header", "Sec-Fetch-Mode: navigate"])
-            args.append(contentsOf: ["--header", "Sec-Fetch-User: ?1"])
-        }
-        
-        let ua = (userAgent != nil && !userAgent!.isEmpty) ? userAgent! : "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15"
-        args.append(contentsOf: ["--user-agent", ua])
-        args.append(contentsOf: [
-            "--header", "Sec-Ch-Ua: \"Google Chrome\";v=\"131\", \"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"",
-            "--header", "Sec-Ch-Ua-Mobile: ?0", "--header", "Sec-Ch-Ua-Platform: \"macOS\"",
-            "--header", "Accept: */*",
-            "--header", "Accept-Language: en-US,en;q=0.9"
-        ])
-
-        // Extension'dan gelen tüm başlıkları enjekte et
-        let skipKeys: Set<String> = [
-            "referer", "origin", "user-agent", "accept", "accept-language",
-            "accept-encoding", "sec-fetch-site", "sec-fetch-dest", "sec-fetch-mode",
-            "sec-fetch-user", "sec-ch-ua", "sec-ch-ua-mobile", "sec-ch-ua-platform",
-            "cookie", "host", "content-length", "connection", "upgrade-insecure-requests"
-        ]
-
-        if let headers = extraHeaders {
-            for (key, value) in headers {
-                if !skipKeys.contains(key.lowercased()) {
-                    args.append(contentsOf: ["--header", "\(key): \(value)"])
-                }
-            }
+            if !appliedKeys.contains("sec-fetch-dest") { args.append(contentsOf: ["--header", "Sec-Fetch-Dest: document"]) }
+            if !appliedKeys.contains("sec-fetch-mode") { args.append(contentsOf: ["--header", "Sec-Fetch-Mode: navigate"]) }
+            if !appliedKeys.contains("sec-fetch-user") { args.append(contentsOf: ["--header", "Sec-Fetch-User: ?1"]) }
+            if !appliedKeys.contains("upgrade-insecure-requests") { args.append(contentsOf: ["--header", "Upgrade-Insecure-Requests: 1"]) }
         }
 
         args.append(url.absoluteString)
@@ -215,7 +223,6 @@ extension DownloadEngine {
             }
         }
     }
-
 
     nonisolated func isMediaFileURL(_ url: URL) -> Bool {
         let mediaExtensions: Set<String> = ["mp4","webm","mov","mkv","avi","flv","ts","m4v","m4a","mp3","aac","ogg","opus","m3u8","mpd"]

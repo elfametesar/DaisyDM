@@ -61,6 +61,20 @@ extension DownloadEngine {
         if speedLimit > 0 { args.append("--max-overall-download-limit=\(speedLimit)K") }
         if type != .torrent && type != .batch { args.append("--out=\(fileName)") }
         
+        let skipKeys: Set<String> = ["range", "connection", "accept-encoding", "host", "content-length"]
+        var appliedKeys = Set<String>()
+
+        if let headers = extraHeaders {
+            for (key, value) in headers {
+                let lowerKey = key.lowercased()
+                if skipKeys.contains(lowerKey) { continue }
+                if lowerKey == "cookie" { continue } // Handled below safely
+                args.append("--header=\(key): \(value)")
+                appliedKeys.insert(lowerKey)
+            }
+        }
+
+        // Apply cookies
         if let cookies = cookies, !cookies.isEmpty {
             if cookies.hasPrefix("# Netscape") {
                 let cookieFile = tempDir.appendingPathComponent("cookies.txt")
@@ -69,45 +83,41 @@ extension DownloadEngine {
             } else {
                 args.append("--header=Cookie: \(cookies)")
             }
+        } else if let headers = extraHeaders, let c = headers.first(where: { $0.key.lowercased() == "cookie" })?.value {
+            args.append("--header=Cookie: \(c)")
+        }
+
+        // ONLY fallback to defaults if the Safari network stream didn't provide them
+        if !appliedKeys.contains("referer"), let ref = referer, !ref.isEmpty {
+            args.append("--referer=\(ref)")
         }
         
-        if let ref = referer, !ref.isEmpty { args.append("--referer=\(ref)") }
-        let host = url.host ?? ""
-        args.append("--header=Origin: https://\(host)")
+        if !appliedKeys.contains("user-agent") {
+            let ua = (userAgent != nil && !userAgent!.isEmpty) ? userAgent! : "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15"
+            args.append("--user-agent=\(ua)")
+        }
+
+        if !appliedKeys.contains("accept") { args.append("--header=Accept: */*") }
+        if !appliedKeys.contains("accept-language") { args.append("--header=Accept-Language: en-US,en;q=0.9") }
+        if !appliedKeys.contains("sec-ch-ua") {
+            args.append("--header=Sec-Ch-Ua: \"Google Chrome\";v=\"131\", \"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"")
+            args.append("--header=Sec-Ch-Ua-Mobile: ?0")
+            args.append("--header=Sec-Ch-Ua-Platform: \"macOS\"")
+        }
+        if !appliedKeys.contains("origin") {
+            let hostStr = url.host ?? ""
+            args.append("--header=Origin: https://\(hostStr)")
+        }
 
         let isMedia = isMediaFileURL(url)
         if isMedia {
-            args.append("--header=Sec-Fetch-Dest: video")
-            args.append("--header=Sec-Fetch-Mode: no-cors")
+            if !appliedKeys.contains("sec-fetch-dest") { args.append("--header=Sec-Fetch-Dest: video") }
+            if !appliedKeys.contains("sec-fetch-mode") { args.append("--header=Sec-Fetch-Mode: no-cors") }
         } else {
-            args.append("--header=Sec-Fetch-Dest: document")
-            args.append("--header=Sec-Fetch-Mode: navigate")
-            args.append("--header=Sec-Fetch-User: ?1")
-            args.append("--header=Upgrade-Insecure-Requests: 1")
-        }
-        
-        let ua = (userAgent != nil && !userAgent!.isEmpty) ? userAgent! : "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15"
-        args.append("--user-agent=\(ua)")
-        args.append("--header=Sec-Ch-Ua: \"Google Chrome\";v=\"131\", \"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"")
-        args.append("--header=Sec-Ch-Ua-Mobile: ?0")
-        args.append("--header=Sec-Ch-Ua-Platform: \"macOS\"")
-        args.append("--header=Accept: */*")
-        args.append("--header=Accept-Language: en-US,en;q=0.9")
-
-        // Uzantıdan gelen tüm özel başlıkları (headers) enjekte et
-        let skipKeys: Set<String> = [
-            "referer", "origin", "user-agent", "accept", "accept-language",
-            "accept-encoding", "sec-fetch-site", "sec-fetch-dest", "sec-fetch-mode",
-            "sec-fetch-user", "sec-ch-ua", "sec-ch-ua-mobile", "sec-ch-ua-platform",
-            "cookie", "host", "content-length", "connection", "upgrade-insecure-requests"
-        ]
-
-        if let headers = extraHeaders {
-            for (key, value) in headers {
-                if !skipKeys.contains(key.lowercased()) {
-                    args.append("--header=\(key): \(value)")
-                }
-            }
+            if !appliedKeys.contains("sec-fetch-dest") { args.append("--header=Sec-Fetch-Dest: document") }
+            if !appliedKeys.contains("sec-fetch-mode") { args.append("--header=Sec-Fetch-Mode: navigate") }
+            if !appliedKeys.contains("sec-fetch-user") { args.append("--header=Sec-Fetch-User: ?1") }
+            if !appliedKeys.contains("upgrade-insecure-requests") { args.append("--header=Upgrade-Insecure-Requests: 1") }
         }
 
         if type == .torrent {

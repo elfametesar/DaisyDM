@@ -162,6 +162,8 @@ class LocalServer {
 
             if headers.hasPrefix("POST") {
                 do {
+                    let rawJSON = String(data: bodyData, encoding: .utf8) ?? "Bozuk JSON Verisi"
+
                     let payload = try JSONDecoder().decode(DownloadPayload.self, from: bodyData)
 
                     var sanitizedUrl = payload.url
@@ -204,33 +206,40 @@ class LocalServer {
     }
 
     private func showConfirmation(for payload: DownloadPayload) {
-        print("🔔 referer: \(payload.referer ?? "nil")")
-        print("🔔 cookies: \(payload.cookies?.prefix(100) ?? "nil")")
+            guard let url = URL(string: payload.url)
+                ?? URL(string: payload.url.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")
+            else { return }
 
-        guard let url = URL(string: payload.url)
-            ?? URL(string: payload.url.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")
-        else { return }
+            NSApp.activate(ignoringOtherApps: true)
 
-        NSApp.activate(ignoringOtherApps: true)
+            var finalHeaders = payload.mergedHeaders
+            if finalHeaders.isEmpty, let flat = payload.extraHeadersFlat, !flat.isEmpty {
+                let lines = flat.components(separatedBy: "\n")
+                for line in lines {
+                    let parts = line.components(separatedBy: ": ")
+                    if parts.count == 2 {
+                        finalHeaders[parts[0]] = parts[1]
+                    }
+                }
+            }
 
-        NotificationCenter.default.post(
-            name: .confirmDownload,
-            object: nil,
-            userInfo: [
-                "url":              url,
-                "filename":         payload.filename        ?? "",
-                "cookies":          payload.cookies         ?? "",
-                "referer":          payload.referer         ?? "",
-                "ua":               payload.ua              ?? "",
-                "youtubeQuality":   payload.youtubeQuality  ?? "",
-                "forceHLS":         payload.forceHLS        ?? false,
-                "forceDASH":        payload.forceDASH       ?? false,
-                "forceDirectDownload": payload.forceDirectDownload ?? false,
-                "browser":          payload.browser         ?? "",
-                "headers":          payload.mergedHeaders, // <--- Relaying the headers
-                "extraHeadersFlat": payload.extraHeadersFlat
-                    ?? payload.mergedHeaders.map { "\($0): \($1)" }.joined(separator: "\n")
-            ]
-        )
-    }
+            NotificationCenter.default.post(
+                name: .confirmDownload,
+                object: nil,
+                userInfo: [
+                    "url":              url,
+                    "filename":         payload.filename        ?? "",
+                    "cookies":          payload.cookies         ?? "",
+                    "referer":          payload.referer         ?? "",
+                    "ua":               payload.ua              ?? "",
+                    "youtubeQuality":   payload.youtubeQuality  ?? "",
+                    "forceHLS":         payload.forceHLS        ?? false,
+                    "forceDASH":        payload.forceDASH       ?? false,
+                    "forceDirectDownload": payload.forceDirectDownload ?? false,
+                    "browser":          payload.browser         ?? "",
+                    "headers":          finalHeaders,
+                    "extraHeadersFlat": payload.extraHeadersFlat ?? ""
+                ]
+            )
+        }
 }

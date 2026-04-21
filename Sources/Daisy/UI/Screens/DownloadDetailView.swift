@@ -160,20 +160,43 @@ struct DetailView: View {
             Text("Headers & Cookies").font(.headline)
             if let headers = item.headers, !headers.isEmpty {
                 ForEach(headers.sorted(by: { $0.key < $1.key }), id: \.key) { key, value in
-                    pathRow(title: key.capitalized, systemImage: "text.alignleft", path: value, url: nil, isReveal: false)
+                    headerValueRow(label: key.capitalized, systemImage: "text.alignleft", value: value)
                 }
             } else {
                 if let ua = item.userAgent, !ua.isEmpty {
-                    pathRow(title: "User-Agent", systemImage: "text.alignleft", path: ua, url: nil, isReveal: false)
+                    headerValueRow(label: "User-Agent", systemImage: "text.alignleft", value: ua)
                 }
                 if let ref = item.referer, !ref.isEmpty {
-                    pathRow(title: "Referer", systemImage: "link", path: ref, url: nil, isReveal: false)
+                    headerValueRow(label: "Referer", systemImage: "link", value: ref)
                 }
             }
             if let cookies = item.cookies, !cookies.isEmpty {
-                pathRow(title: "Cookies", systemImage: "lock.shield", path: cookies, url: nil, isReveal: false)
+                headerValueRow(label: "Cookies", systemImage: "lock.shield", value: cookies)
             }
         }
+    }
+
+    // Capped, scrollable row for header/cookie values that can be arbitrarily long.
+    private func headerValueRow(label: String, systemImage: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label(label, systemImage: systemImage)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+            ScrollView(.vertical, showsIndicators: true) {
+                Text(value)
+                    .font(.callout)
+                    .foregroundStyle(.primary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(10)
+            }
+            .frame(maxHeight: 80)
+            .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.primary.opacity(0.07), lineWidth: 1))
+        }
+        .padding(14)
+        .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     private func errorCard(message: String) -> some View {
