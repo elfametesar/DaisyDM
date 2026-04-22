@@ -144,8 +144,8 @@ public final class DownloadItem: Identifiable, Codable, Hashable {
     }
     
     public var formattedSpeed: String {
-        if status == .completed { return "–" }
-        guard speed > 0 else { return "–" }
+        if status == .completed { return "0B/s" }
+        guard speed > 0 else { return "0B/s" }
         return formatBytes(Int64(speed)) + "/s"
     }
     

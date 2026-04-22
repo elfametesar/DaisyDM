@@ -67,7 +67,7 @@ struct DetailView: View {
 
             LazyVGrid(columns: metricColumns, spacing: 12) {
                 metricTile(title: "Downloaded", value: item.transferLabel, systemImage: "arrow.down.circle")
-                metricTile(title: "Download Speed", value: item.status == .downloading ? item.formattedSpeed : "–", systemImage: "speedometer")
+                metricTile(title: "Download Speed", value: item.status == .downloading ? item.formattedSpeed : "0B/s", systemImage: "speedometer")
                 metricTile(title: "Connections", value: "\(item.connectionCount) slots", systemImage: "antenna.radiowaves.left.and.right")
                 if let eta = item.formattedETA {
                     metricTile(title: "ETA", value: eta, systemImage: "clock")

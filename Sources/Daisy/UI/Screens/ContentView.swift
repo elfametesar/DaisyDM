@@ -43,6 +43,11 @@ struct DuplicateAddRequest {
     let connections: Int
 }
 
+struct AddDownloadPayload: Identifiable {
+    let id = UUID()
+    let text: String
+}
+
 struct ContentView: View {
     var engine = DownloadEngine.shared
     @State private var selectedFilter: SidebarFilter = .all
@@ -50,8 +55,7 @@ struct ContentView: View {
     @State private var showingSettings = false
     
     // UI Logic Triggers
-    @State private var showingAddDownload = false
-    @State private var initialAddText = ""
+    @State private var addDownloadPayload: AddDownloadPayload? = nil
     
     @State private var searchText = ""
     @State private var isDropTargeted = false
@@ -91,10 +95,9 @@ struct ContentView: View {
 
     var body: some View {
         mainLayout
-            .sheet(isPresented: $showingAddDownload) {
-                AddDownloadSheet(initialURLText: initialAddText, onClose: {
-                    showingAddDownload = false
-                    initialAddText = ""
+            .sheet(item: $addDownloadPayload) { payload in
+                AddDownloadSheet(initialURLText: payload.text, onClose: {
+                    addDownloadPayload = nil
                 })
             }
             .sheet(isPresented: $showingSettings) { SettingsView().interactiveDismissDisabled() }
@@ -137,7 +140,9 @@ struct ContentView: View {
         } detail: {
             detailColumn
         }
-        .onReceive(NotificationCenter.default.publisher(for: .showAddDownload)) { _ in showingAddDownload = true }
+        .onReceive(NotificationCenter.default.publisher(for: .showAddDownload)) { _ in
+            addDownloadPayload = AddDownloadPayload(text: "")
+        }
         .onReceive(NotificationCenter.default.publisher(for: .showSettings)) { _ in showingSettings = true }
         .onReceive(NotificationCenter.default.publisher(for: .openProgressWindow)) { notif in
             if let id = notif.userInfo?["id"] as? UUID { openWindow(value: id) }
@@ -161,7 +166,6 @@ struct ContentView: View {
                 selectedItems.formIntersection(newSet)
             }
         }
-        // Native NSItemProvider loop for reliable Drag & Drop
         .onDrop(of: [.url, .fileURL, .plainText], isTargeted: $isDropTargeted) { providers in
             handleProviders(providers)
             return true
@@ -273,45 +277,50 @@ struct ContentView: View {
     }
     
     // MARK: - Bulletproof Drag & Drop Handling
-    
     private func handleProviders(_ providers: [NSItemProvider]) {
         let group = DispatchGroup()
-        let collectedPaths = NSMutableArray()
+        let lock = NSLock()
+        var collectedPaths: [String] = []
         
         for provider in providers {
             group.enter()
             
-            // 1. Handle File URLs (Torrents/Local files)
             if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
-                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { (data, error) in
-                    if let urlData = data as? Data, let url = URL(dataRepresentation: urlData, relativeTo: nil) {
-                        self.syncProcessFileURL(url, list: collectedPaths)
-                    } else if let url = data as? URL {
-                        self.syncProcessFileURL(url, list: collectedPaths)
+                // Better extraction technique for macOS Finder drop events
+                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+                    var extractedURL: URL? = nil
+                    if let data = item as? Data {
+                        extractedURL = URL(dataRepresentation: data, relativeTo: nil)
+                    } else if let url = item as? URL {
+                        extractedURL = url
+                    }
+                    
+                    if let url = extractedURL, url.pathExtension.lowercased() == "torrent" {
+                        lock.lock()
+                        collectedPaths.append(url.path(percentEncoded: false))
+                        lock.unlock()
                     }
                     group.leave()
                 }
-            }
-            // 2. Handle Web URLs (Direct links/Magnets)
-            else if provider.hasItemConformingToTypeIdentifier(UTType.url.identifier) {
-                provider.loadObject(ofClass: URL.self) { (url, error) in
-                    if let url = url {
-                        if url.scheme?.hasPrefix("http") == true || url.scheme == "magnet" {
-                            collectedPaths.add(url.absoluteString)
-                        }
+            } else if provider.hasItemConformingToTypeIdentifier(UTType.url.identifier) {
+                _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                    if let url = url, (url.scheme?.hasPrefix("http") == true || url.scheme == "magnet") {
+                        lock.lock()
+                        collectedPaths.append(url.absoluteString)
+                        lock.unlock()
                     }
                     group.leave()
                 }
-            }
-            // 3. Handle Plain Text (Pasted/Dragged strings)
-            else if provider.hasItemConformingToTypeIdentifier(UTType.plainText.identifier) {
-                provider.loadObject(ofClass: String.self) { (str, error) in
+            } else if provider.hasItemConformingToTypeIdentifier(UTType.plainText.identifier) {
+                _ = provider.loadObject(ofClass: String.self) { str, _ in
                     if let str = str {
                         let lines = str.components(separatedBy: .newlines)
                         for line in lines {
                             let clean = line.trimmingCharacters(in: .whitespacesAndNewlines)
-                            if let url = URL(string: clean), (url.scheme?.hasPrefix("http") == true || url.scheme == "magnet") {
-                                collectedPaths.add(clean)
+                            if let textUrl = URL(string: clean), (textUrl.scheme?.hasPrefix("http") == true || textUrl.scheme == "magnet") {
+                                lock.lock()
+                                collectedPaths.append(clean)
+                                lock.unlock()
                             }
                         }
                     }
@@ -323,50 +332,11 @@ struct ContentView: View {
         }
         
         group.notify(queue: .main) {
-            let finalArray = collectedPaths.compactMap { $0 as? String }
-            if !finalArray.isEmpty {
-                self.initialAddText = finalArray.joined(separator: "\n")
-                // Small delay ensures the "Drop" animation completes before the Sheet tries to slide up
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    self.showingAddDownload = true
-                }
+            if !collectedPaths.isEmpty {
+                // Pass exact data payload, entirely avoiding the async capture bug
+                self.addDownloadPayload = AddDownloadPayload(text: collectedPaths.joined(separator: "\n"))
             }
         }
-    }
-
-    private func syncProcessFileURL(_ url: URL, list: NSMutableArray) {
-        let isInternal = engine.items.contains { $0.url == url || $0.destinationURL == url }
-        if isInternal { return }
-        
-        if url.isFileURL && url.pathExtension.lowercased() == "torrent" {
-            let accessing = url.startAccessingSecurityScopedResource()
-            defer { if accessing { url.stopAccessingSecurityScopedResource() } }
-            
-            if let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
-                let dir = support.appendingPathComponent("Dispatch/Torrents", isDirectory: true)
-                try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-                let dest = dir.appendingPathComponent(UUID().uuidString + "_" + url.lastPathComponent)
-                
-                do {
-                    try FileManager.default.copyItem(at: url, to: dest)
-                    list.add(dest.path(percentEncoded: false))
-                } catch {
-                    print("DaisyDM Drop Error: \(error)")
-                }
-            }
-        }
-    }
-
-    private func activeDragHasValidExternalItems() -> Bool {
-        let pb = NSPasteboard(name: .drag)
-        if let urls = pb.readObjects(forClasses: [NSURL.self], options: nil) as? [URL] {
-            return urls.contains { url in
-                let isTorrent = url.isFileURL && url.pathExtension.lowercased() == "torrent"
-                let isLink = url.scheme?.hasPrefix("http") == true || url.scheme == "magnet"
-                return isTorrent || isLink
-            }
-        }
-        return false
     }
 
     private func requestRemove(items: [DownloadItem]) {
@@ -380,27 +350,28 @@ struct ContentView: View {
 
     private func handlePaste() {
         let pb = NSPasteboard.general
+        var collectedPaths: [String] = []
+        
         if let urls = pb.readObjects(forClasses: [NSURL.self], options: nil) as? [URL] {
-            let collectedPaths = NSMutableArray()
-            for u in urls { syncProcessFileURL(u, list: collectedPaths) }
-            let finalArray = collectedPaths.compactMap { $0 as? String }
-            if !finalArray.isEmpty {
-                self.initialAddText = finalArray.joined(separator: "\n")
-                self.showingAddDownload = true
+            for url in urls {
+                if url.isFileURL && url.pathExtension.lowercased() == "torrent" {
+                    collectedPaths.append(url.path(percentEncoded: false))
+                } else if url.scheme?.hasPrefix("http") == true || url.scheme == "magnet" {
+                    collectedPaths.append(url.absoluteString)
+                }
             }
         } else if let str = pb.string(forType: .string) {
             let lines = str.components(separatedBy: .newlines)
-            var found = [String]()
             for line in lines {
                 let clean = line.trimmingCharacters(in: .whitespacesAndNewlines)
                 if let url = URL(string: clean), (url.scheme?.hasPrefix("http") == true || url.scheme == "magnet") {
-                    found.append(clean)
+                    collectedPaths.append(clean)
                 }
             }
-            if !found.isEmpty {
-                self.initialAddText = found.joined(separator: "\n")
-                self.showingAddDownload = true
-            }
+        }
+        
+        if !collectedPaths.isEmpty {
+            self.addDownloadPayload = AddDownloadPayload(text: collectedPaths.joined(separator: "\n"))
         }
     }
 }

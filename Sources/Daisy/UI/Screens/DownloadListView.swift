@@ -58,6 +58,13 @@ enum ListRowItem: Identifiable {
         case .sub(_, let file, _): return file.id
         }
     }
+    
+    var dynamicID: String {
+        switch self {
+        case .main(let item): return "\(item.id)-\(item.status.rawValue)"
+        case .sub(_, let file, _): return "\(file.id)-\(file.isStopped)"
+        }
+    }
 }
 
 enum ArrowDirection { case up, down, left, right }
@@ -182,7 +189,7 @@ struct DownloadListView: View {
                 ScrollView {
                     VStack(spacing: 0) {
                         LazyVStack(spacing: 4) {
-                            ForEach(Array(flattenedRows.enumerated()), id: \.element.id) { indexedItem in
+                            ForEach(Array(flattenedRows.enumerated()), id: \.element.dynamicID) { indexedItem in
                                 listRow(
                                     rowItem: indexedItem.element,
                                     index: indexedItem.offset,
@@ -344,12 +351,11 @@ struct DownloadListView: View {
                     )
                 )
                 
-            case .sub(let parent, let file, let subIndex):
+            case .sub(let parent, _, let subIndex):
                 SubFileRow(
                     parent: parent,
-                    file: file,
                     index: subIndex,
-                    isSelected: selected.contains(file.id)
+                    isSelected: selected.contains(rowItem.id)
                 )
             }
         }
@@ -371,7 +377,6 @@ struct DownloadListView: View {
             handleRowTap(rowItem: rowItem)
         }
         .contextMenu { rowContextMenu(rowItem) }
-        .id(rowItem.id)
     }
     
     @ViewBuilder
@@ -504,10 +509,11 @@ struct DownloadListView: View {
             var parentsToUpdate: Set<UUID> = []
             
             for (parent, _, index) in subItems {
-                if parent.type == .torrent {
+                if parent.type == .torrent || parent.type == .batch {
                     var updated = parent.subFiles
                     updated[index].isStopped = shouldStop
                     parent.subFiles = updated
+                    engine.items = engine.items // Force UI update
                     parentsToUpdate.insert(parent.id)
                 }
             }
@@ -755,7 +761,9 @@ struct DownloadListView: View {
                 Button("Remove Selected", role: .destructive) { onRequestRemove(targetItems) }
             }
             
-        case .sub(let parent, let file, let index):
+        case .sub(let parent, let staticFile, let index):
+            // Fallback gracefully. In the subfile context menu, access the live file dynamically via parent[index]
+            let file = index < parent.subFiles.count ? parent.subFiles[index] : staticFile
             let isFinished = file.totalBytes > 0 && file.downloadedBytes >= file.totalBytes
             
             if isFinished {
@@ -768,9 +776,12 @@ struct DownloadListView: View {
                     try? FileManager.default.removeItem(at: destPath)
                     
                     var updated = parent.subFiles
-                    updated[index].downloadedBytes = 0
-                    updated[index].isStopped = false
-                    parent.subFiles = updated
+                    if index < updated.count {
+                        updated[index].downloadedBytes = 0
+                        updated[index].isStopped = false
+                        parent.subFiles = updated
+                        engine.items = engine.items // Force UI update
+                    }
                     
                     if parent.status == .completed || parent.status == .stopped || parent.status == .failed {
                         parent.status = .stopped
@@ -779,21 +790,25 @@ struct DownloadListView: View {
                         engine.updateTorrentSelection(for: parent)
                     }
                 }
-            } else if parent.type == .torrent {
+            } else if parent.type == .torrent || parent.type == .batch {
                 let isEffectivelyPaused = parent.status == .stopped || parent.status == .failed || file.isStopped
+                
                 Button(isEffectivelyPaused ? "Resume File" : "Pause File") {
                     var updated = parent.subFiles
-                    updated[index].isStopped.toggle()
-                    parent.subFiles = updated
-                    
-                    if parent.status == .stopped || parent.status == .failed {
-                        if !parent.subFiles[index].isStopped {
-                            engine.resume(parent, resumeSubFiles: false)
+                    if index < updated.count {
+                        updated[index].isStopped.toggle()
+                        parent.subFiles = updated
+                        engine.items = engine.items // Force UI update
+                        
+                        if parent.status == .stopped || parent.status == .failed {
+                            if !parent.subFiles[index].isStopped {
+                                engine.resume(parent, resumeSubFiles: false)
+                            } else {
+                                engine.persist()
+                            }
                         } else {
-                            engine.persist()
+                            engine.updateTorrentSelection(for: parent)
                         }
-                    } else {
-                        engine.updateTorrentSelection(for: parent)
                     }
                 }
             }
@@ -993,7 +1008,7 @@ struct DownloadRow: View {
 
             // 5. SPEED & ETA
             VStack(alignment: .leading, spacing: 3) {
-                Text(item.status == .downloading ? item.formattedSpeed : "–")
+                Text(item.status == .downloading ? item.formattedSpeed : "0B/s")
                     .font(.system(size: 12))
                     .foregroundStyle(isSelected ? dynamicTextColor.opacity(0.85) : .secondary)
                     .lineLimit(1)
@@ -1025,7 +1040,6 @@ struct DownloadRow: View {
 // ── SubFile Row ──────────────────────────────────
 struct SubFileRow: View {
     let parent: DownloadItem
-    let file: SubFile
     let index: Int
     let isSelected: Bool
     var engine = DownloadEngine.shared
@@ -1052,11 +1066,15 @@ struct SubFileRow: View {
         let matchedColor = matchBadgesToAccent ? baseColor.matchingThemeVisualWeight(of: Color(hex: accentColorHex)) : baseColor
         return matchedColor.adaptedForScheme(colorScheme)
     }
-
-    var isEffectivelyPaused: Bool {
-        parent.status == .stopped || parent.status == .failed || file.isStopped
-    }
     
+    // Explicit dynamic computed file ensures we ALWAYs read the freshest array
+    var file: SubFile {
+        if index < parent.subFiles.count {
+            return parent.subFiles[index]
+        }
+        return SubFile(id: UUID(), index: 0, path: "", filename: "", totalBytes: 0, downloadedBytes: 0, isStopped: false)
+    }
+
     var isFinished: Bool {
         file.totalBytes > 0 && file.downloadedBytes >= file.totalBytes
     }
@@ -1075,6 +1093,8 @@ struct SubFileRow: View {
                 .truncationMode(.middle)
                 .frame(maxWidth: .infinity, alignment: .leading)
             
+            let isEffectivelyPaused = parent.status == .stopped || parent.status == .failed || file.isStopped
+            
             Text(formatBytes(file.downloadedBytes) + (file.totalBytes > 0 ? " / " + formatBytes(file.totalBytes) : ""))
                 .font(.system(size: 10))
                 .foregroundStyle(isSelected ? dynamicTextColor.opacity(0.7) : (isEffectivelyPaused && !isFinished ? Color.secondary.opacity(0.5) : Color.secondary))
@@ -1084,21 +1104,24 @@ struct SubFileRow: View {
                 Image(systemName: "checkmark.circle.fill")
                     .font(.system(size: 14))
                     .foregroundStyle(isSelected ? dynamicTextColor : completedColor)
-                    .frame(width: 14, height: 14)
-            } else if parent.type == .torrent {
+                    .frame(width: 44, alignment: .trailing)
+            } else if parent.type == .torrent || parent.type == .batch {
                 Button(action: {
                     var updated = parent.subFiles
-                    updated[index].isStopped.toggle()
-                    parent.subFiles = updated
-                    
-                    if parent.status == .stopped || parent.status == .failed {
-                        if !parent.subFiles[index].isStopped {
-                            engine.resume(parent, resumeSubFiles: false)
+                    if index < updated.count {
+                        updated[index].isStopped.toggle()
+                        parent.subFiles = updated
+                        engine.items = engine.items // Force UI update
+                        
+                        if parent.status == .stopped || parent.status == .failed {
+                            if !parent.subFiles[index].isStopped {
+                                engine.resume(parent, resumeSubFiles: false)
+                            } else {
+                                engine.persist()
+                            }
                         } else {
-                            engine.persist()
+                            engine.updateTorrentSelection(for: parent)
                         }
-                    } else {
-                        engine.updateTorrentSelection(for: parent)
                     }
                 }) {
                     Image(systemName: isEffectivelyPaused ? "play.circle.fill" : "pause.circle.fill")
@@ -1107,8 +1130,9 @@ struct SubFileRow: View {
                 }
                 .buttonStyle(.plain)
                 .help(isEffectivelyPaused ? "Resume File" : "Pause File")
+                .frame(width: 44, alignment: .trailing)
             } else {
-                Spacer().frame(width: 14)
+                Spacer().frame(width: 44)
             }
         }
         .padding(.horizontal, 16)

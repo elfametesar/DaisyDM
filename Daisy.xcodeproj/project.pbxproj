@@ -33,6 +33,7 @@
 		71C1BC472F921442004C7F1A /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = 71C1BC412F921442004C7F1A /* manifest.json */; };
 		71C1BC482F921442004C7F1A /* popup.html in Resources */ = {isa = PBXBuildFile; fileRef = 71C1BC422F921442004C7F1A /* popup.html */; };
 		71C1BC492F921442004C7F1A /* content.js in Resources */ = {isa = PBXBuildFile; fileRef = 71C1BC402F921442004C7F1A /* content.js */; };
+		71E7436B2F98C71100F7A66B /* TrayMenuView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71E7436A2F98C70D00F7A66B /* TrayMenuView.swift */; };
 		8DE4E266805149234A8741FE /* DaisyExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 7A117A8396344D68906886AE /* DaisyExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		94239571324F1E220C2EDA5A /* AddDownloadSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB44EE0F7D6EA3AA72232245 /* AddDownloadSheet.swift */; };
 		A632EED8E7FCE3E2E9321090 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECF7392741EE1B516970CA7B /* SettingsView.swift */; };
@@ -113,6 +114,7 @@
 		71C1BC412F921442004C7F1A /* manifest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = manifest.json; sourceTree = "<group>"; };
 		71C1BC422F921442004C7F1A /* popup.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = popup.html; sourceTree = "<group>"; };
 		71C1BC432F921442004C7F1A /* popup.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = popup.js; sourceTree = "<group>"; };
+		71E7436A2F98C70D00F7A66B /* TrayMenuView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrayMenuView.swift; sourceTree = "<group>"; };
 		7A117A8396344D68906886AE /* DaisyExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = DaisyExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		A0159ADC2E90F823FF4B7A57 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		AA11BB22CC33DD44EE55FF67 /* ConfirmDownloadView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfirmDownloadView.swift; sourceTree = "<group>"; };
@@ -238,6 +240,7 @@
 		CBA556BC1FD09F5332CA266B /* Screens */ = {
 			isa = PBXGroup;
 			children = (
+				71E7436A2F98C70D00F7A66B /* TrayMenuView.swift */,
 				7161C5F22F8D7AAF00FFB581 /* PropertiesSheet.swift */,
 				7161C5F02F8D7A9600FFB581 /* RemoveDialog.swift */,
 				7161C5EE2F8D769600FFB581 /* SharedUIComponents.swift */,
@@ -396,6 +399,7 @@
 				714913902F960A2300167751 /* DownloadEngineDASH.swift in Sources */,
 				7161C5ED2F8D4FB900FFB581 /* FailedDownloadDialog.swift in Sources */,
 				FA21961A36B68ECAA613D7DC /* SidebarView.swift in Sources */,
+				71E7436B2F98C71100F7A66B /* TrayMenuView.swift in Sources */,
 				714913882F96081800167751 /* DownloadEngineUtilities.swift in Sources */,
 				FE3349E82E4588853A8EEABD /* URLSchemeHandler.swift in Sources */,
 				7149138A2F9609D700167751 /* DownloadEngineAria2.swift in Sources */,

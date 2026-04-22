@@ -209,7 +209,6 @@ _api.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return true;
     }
 
-    // Bridge for content.js to fetch and parse manifests via background (bypasses CORS)
     if (message.type === "FETCH_MANIFEST") {
         const reqHeaders = findCapturedDataAggressive(capturedRequestHeaders, message.url);
         fetch(message.url, { headers: reqHeaders })

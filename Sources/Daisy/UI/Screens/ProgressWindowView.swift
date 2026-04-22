@@ -24,14 +24,19 @@ struct ProgressWindowView: View {
     @AppStorage("progressBarColorHex") private var progressBarColorHex = "#34C759"
     @AppStorage("alwaysPinProgressWindows") private var alwaysPinProgressWindows = false
 
+    // MARK: - THE FIX: Always fetch the live data instead of using the frozen snapshot
+    private var liveItem: DownloadItem {
+        engine.items.first(where: { $0.id == item.id }) ?? item
+    }
+
     var elapsed: TimeInterval {
-        if item.status == .completed, let end = item.dateCompleted {
-            return end.timeIntervalSince(item.dateAdded)
+        if liveItem.status == .completed, let end = liveItem.dateCompleted {
+            return end.timeIntervalSince(liveItem.dateAdded)
         }
-        if item.status == .stopped || item.status == .failed {
-            return item.totalActiveDuration
+        if liveItem.status == .stopped || liveItem.status == .failed {
+            return liveItem.totalActiveDuration
         }
-        return now.timeIntervalSince(item.dateAdded)
+        return now.timeIntervalSince(liveItem.dateAdded)
     }
 
     var formattedElapsed: String {
@@ -42,10 +47,10 @@ struct ProgressWindowView: View {
     }
     
     var currentBarColor: Color {
-        if item.status == .failed { return .red }
+        if liveItem.status == .failed { return .red }
         let hexString = matchProgressBarToAccent ? accentColorHex : progressBarColorHex
         let baseColor = Color(hex: hexString)
-        return item.status == .stopped ? baseColor.opacity(0.5) : baseColor
+        return liveItem.status == .stopped ? baseColor.opacity(0.5) : baseColor
     }
 
     var body: some View {
@@ -53,10 +58,13 @@ struct ProgressWindowView: View {
             statusTab.tabItem     { Text("Status") }.tag(0)
             speedLimitTab.tabItem { Text("Speed Limit") }.tag(1)
         }
-        .frame(width: 460, height: item.subFiles.isEmpty ? 380 : 500)
-        .background(VisualEffectView(material: .popover, blendingMode: .behindWindow).ignoresSafeArea())
+        .frame(width: 460)
+        .fixedSize(horizontal: true, vertical: true)
+        .background(VisualEffectView(material: .popover, blendingMode: .behindWindow)
+            .ignoresSafeArea())
         .background(WindowAccessor(window: $window))
         .onAppear {
+            TrayViewModel.shared.removeFromTray(liveItem.id)
             setupWindowSettings()
             setupEventMonitor()
         }
@@ -70,72 +78,115 @@ struct ProgressWindowView: View {
     }
     
     private func setupWindowSettings() {
-        if item.speedLimit > 0 {
+        if liveItem.speedLimit > 0 {
             limitEnabled = true
-            limitInput = "\(item.speedLimit)"
+            limitInput = "\(liveItem.speedLimit)"
         }
         
         if let win = window {
             win.isOpaque = false
             win.backgroundColor = .clear
             win.titlebarAppearsTransparent = true
+            
             win.makeKeyAndOrderFront(nil)
             
             if alwaysPinProgressWindows || isPinned {
                 isPinned = true
                 win.level = .floating
             }
+            
+            injectTrafficLight(into: win)
         }
+    }
+    
+    private func injectTrafficLight(into win: NSWindow) {
+        guard let zoomBtn = win.standardWindowButton(.zoomButton),
+              let titlebar = zoomBtn.superview else { return }
+               
+        let customId = NSUserInterfaceItemIdentifier("CustomMenuTrafficLight")
+        
+        if titlebar.subviews.contains(where: { $0.identifier == customId }) { return }
+        
+        let btnFrame = NSRect(
+            x: zoomBtn.frame.maxX + 8,
+            y: zoomBtn.frame.minY,
+            width: zoomBtn.frame.width,
+            height: zoomBtn.frame.height
+        )
+        
+        let accentNSColor = NSColor(Color(hex: accentColorHex))
+        let btn = HoverTrafficLightButton(frame: btnFrame, itemId: liveItem.id, accentColor: accentNSColor)
+        btn.identifier = customId
+        
+        btn.target = btn
+        btn.action = #selector(HoverTrafficLightButton.performTrayAction)
+        btn.toolTip = "Hide to Menu Bar"
+        
+        titlebar.addSubview(btn)
     }
     
     // MARK: - Global Key Monitor (Space & Escape)
     private func setupEventMonitor() {
         eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            // 1. Handle Escape (Key Code 53)
             if event.keyCode == 53 {
                 dismiss()
                 return nil
             }
-            
-            // 2. Handle Space (Key Code 49)
             if event.keyCode == 49 {
-                // Don't toggle if the user is typing in the speed limit box
                 let responder = window?.firstResponder
                 if !(responder is NSTextView || responder is NSTextField) {
                     toggleDownload()
-                    return nil // Consume event to prevent scrolling
+                    return nil
                 }
             }
-            
             return event
         }
     }
 
     private func toggleDownload() {
-        if item.status == .downloading || item.status == .queued {
-            engine.stop(item)
-        } else if item.status == .stopped || item.status == .failed {
-            engine.resume(item)
+        if liveItem.status == .downloading || liveItem.status == .queued {
+            engine.stop(liveItem)
+        } else if liveItem.status == .stopped || liveItem.status == .failed {
+            engine.resume(liveItem)
+        }
+    }
+
+    // MARK: - Subfile Actions
+    private func toggleSubFile(_ id: UUID) {
+        guard let index = liveItem.subFiles.firstIndex(where: { $0.id == id }) else { return }
+        var updated = liveItem.subFiles
+        updated[index].isStopped.toggle()
+        liveItem.subFiles = updated
+        
+        engine.items = engine.items // Force UI Update
+        
+        if liveItem.status == .stopped || liveItem.status == .failed {
+            if !liveItem.subFiles[index].isStopped {
+                engine.resume(liveItem, resumeSubFiles: false)
+            } else {
+                engine.persist()
+            }
+        } else {
+            engine.updateTorrentSelection(for: liveItem)
         }
     }
 
     // MARK: - Status Tab
-
     var statusTab: some View {
         VStack(spacing: 0) {
             HStack(alignment: .top, spacing: 14) {
-                let ext  = (item.filename as NSString).pathExtension
+                let ext  = (liveItem.filename as NSString).pathExtension
                 let type = UTType(filenameExtension: ext) ?? .data
                 Image(nsImage: NSWorkspace.shared.icon(for: type))
                     .resizable().frame(width: 40, height: 40)
 
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(item.filename)
+                    Text(liveItem.filename)
                         .font(.system(size: 13, weight: .semibold))
                         .lineLimit(1).truncationMode(.middle)
                     HStack(spacing: 6) {
-                        StatusPill(status: item.status, accentColorHex: accentColorHex)
-                        if item.supportsRanges {
+                        StatusPill(status: liveItem.status, accentColorHex: accentColorHex)
+                        if liveItem.supportsRanges {
                             Text("Resumable")
                                 .font(.system(size: 10, weight: .medium))
                                 .foregroundStyle(.green)
@@ -157,18 +208,17 @@ struct ProgressWindowView: View {
                             .frame(height: 8)
                         RoundedRectangle(cornerRadius: 3)
                             .fill(currentBarColor)
-                            .frame(width: max(0, CGFloat(item.progress) * geo.size.width), height: 8)
-                            .animation(.easeInOut(duration: 0.4), value: item.progress)
+                            .frame(width: max(0, CGFloat(liveItem.progress) * geo.size.width), height: 8)
+                            .animation(.easeInOut(duration: 0.4), value: liveItem.progress)
                     }
                 }
                 .frame(height: 8)
 
                 HStack {
-                    Text(item.transferLabel).font(.system(size: 11)).foregroundStyle(.secondary)
+                    Text(liveItem.transferLabel).font(.system(size: 11)).foregroundStyle(.secondary)
                     Spacer()
-                    // Fixed condition to ensure percentage shows for HLS duration tracking
-                    if item.totalBytes > 0 || (item.isHLS && item.hlsTotalSeconds > 0) {
-                        Text(String(format: "%.1f%%", item.progress * 100))
+                    if liveItem.totalBytes > 0 || (liveItem.isHLS && liveItem.hlsTotalSeconds > 0) {
+                        Text(String(format: "%.1f%%", liveItem.progress * 100))
                             .font(.system(size: 11, weight: .semibold)).monospacedDigit()
                     }
                 }
@@ -178,25 +228,25 @@ struct ProgressWindowView: View {
             Divider().padding(.vertical, 10)
 
             HStack(spacing: 8) {
-                ActiveStatCell(label: "Speed",     value: item.status == .downloading ? item.formattedSpeed : "–")
-                ActiveStatCell(label: "ETA",       value: item.formattedETA ?? "–")
+                ActiveStatCell(label: "Speed",     value: liveItem.status == .downloading ? liveItem.formattedSpeed : "0B/s")
+                ActiveStatCell(label: "ETA",       value: liveItem.formattedETA ?? "0s")
                 ActiveStatCell(label: "Elapsed",   value: formattedElapsed)
                 ActiveStatCell(label: "Remaining", value: remainingSize)
             }
             .padding(.horizontal, 16)
 
-            if !item.subFiles.isEmpty {
+            if !liveItem.subFiles.isEmpty {
                 Divider().padding(.vertical, 10)
                 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(item.type == .batch ? "Batch Items" : "Files")
+                    Text(liveItem.type == .batch ? "Batch Items" : "Files")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(.tertiary)
                         .padding(.horizontal, 16)
                     
                     ScrollView(.vertical, showsIndicators: true) {
                         VStack(spacing: 10) {
-                            ForEach(item.subFiles) { file in
+                            ForEach(liveItem.subFiles) { file in
                                 HStack(spacing: 8) {
                                     VStack(alignment: .leading, spacing: 5) {
                                         Text(file.filename)
@@ -219,8 +269,8 @@ struct ProgressWindowView: View {
                                     }
                                     
                                     VStack(alignment: .trailing, spacing: 2) {
-                                        let fileProgress = file.totalBytes > 0 ? (Double(file.downloadedBytes) / Double(file.totalBytes)) * 100 : 0
-                                        Text(String(format: "%.1f%%", fileProgress))
+                                        let filePercentage = file.totalBytes > 0 ? (Double(file.downloadedBytes) / Double(file.totalBytes)) * 100 : 0
+                                        Text(String(format: "%.1f%%", filePercentage))
                                             .font(.system(size: 10, weight: .semibold))
                                             .monospacedDigit()
                                         
@@ -229,7 +279,32 @@ struct ProgressWindowView: View {
                                             .foregroundStyle(.secondary)
                                     }
                                     .frame(width: 80, alignment: .trailing)
+                                    
+                                    // MARK: Subfile Controls
+                                    let isFinished = file.totalBytes > 0 && file.downloadedBytes >= file.totalBytes
+                                    if isFinished {
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .font(.system(size: 14))
+                                            .foregroundStyle(Color(hex: progressBarColorHex))
+                                            .frame(width: 44, alignment: .trailing)
+                                    } else if liveItem.type == .torrent || liveItem.type == .batch {
+                                        let isEffectivelyPaused = liveItem.status == .stopped || liveItem.status == .failed || liveItem.subFiles.first(where: { $0.id == file.id })?.isStopped == true
+                                        
+                                        Button {
+                                            toggleSubFile(file.id)
+                                        } label: {
+                                            Image(systemName: isEffectivelyPaused ? "play.circle.fill" : "pause.circle.fill")
+                                                .font(.system(size: 14))
+                                                .foregroundStyle(isEffectivelyPaused ? .secondary : Color(hex: accentColorHex))
+                                        }
+                                        .buttonStyle(.plain)
+                                        .frame(width: 44, alignment: .trailing)
+                                    } else {
+                                        Spacer().frame(width: 44)
+                                    }
                                 }
+                                // Dynamically injecting the isStopped state ensures SwiftUI immediately refreshes the item instead of caching it
+                                .id("\(file.id)-\(file.downloadedBytes)-\(file.totalBytes)-\(liveItem.subFiles.first(where: { $0.id == file.id })?.isStopped == true)")
                             }
                         }
                         .padding(.horizontal, 16)
@@ -245,16 +320,17 @@ struct ProgressWindowView: View {
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(.tertiary)
                 
+                let lineHeight: CGFloat = 11 * 1.35  // ~14.85pt per line at size 11
                 ScrollView(.vertical, showsIndicators: true) {
-                    Text(item.url.absoluteString)
+                    Text(liveItem.url.absoluteString)
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
-                        .lineLimit(nil)
+                        .lineLimit(4)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .topLeading)
                         .padding(.trailing, 8)
                 }
-                .frame(maxHeight: .infinity)
+                .frame(maxHeight: lineHeight * 4)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 16)
@@ -263,35 +339,35 @@ struct ProgressWindowView: View {
             Divider()
 
             HStack(spacing: 8) {
-                if item.status == .downloading || item.status == .queued {
-                    Button(action: { engine.stop(item) }) {
+                if liveItem.status == .downloading || liveItem.status == .queued {
+                    Button(action: { engine.stop(liveItem) }) {
                         Label("Pause", systemImage: "pause.fill")
                     }
                     .buttonStyle(ActionButtonStyle(prominent: true, hex: accentColorHex))
                     
-                    Button(action: { engine.stop(item); dismiss() }) {
+                    Button(action: { engine.stop(liveItem); dismiss() }) {
                         Label("Stop", systemImage: "stop.fill")
                     }
                     .buttonStyle(ActionButtonStyle(prominent: false, hex: accentColorHex))
                     
-                } else if item.status == .stopped || item.status == .failed {
-                    Button(action: { engine.resume(item) }) {
+                } else if liveItem.status == .stopped || liveItem.status == .failed {
+                    Button(action: { engine.resume(liveItem) }) {
                         Label("Resume", systemImage: "play.fill")
                     }
                     .buttonStyle(ActionButtonStyle(prominent: true, hex: accentColorHex))
                     
-                    Button(action: { engine.stop(item); dismiss() }) {
+                    Button(action: { engine.stop(liveItem); dismiss() }) {
                         Label("Stop", systemImage: "stop.fill")
                     }
                     .buttonStyle(ActionButtonStyle(prominent: false, hex: accentColorHex))
                     
-                } else if item.status == .completed {
-                    Button(action: { NSWorkspace.shared.open(item.destinationURL); dismiss() }) {
+                } else if liveItem.status == .completed {
+                    Button(action: { NSWorkspace.shared.open(liveItem.destinationURL); dismiss() }) {
                         Label("Open File", systemImage: "doc.text.magnifyingglass")
                     }
                     .buttonStyle(ActionButtonStyle(prominent: true, hex: accentColorHex))
                     
-                    Button(action: { NSWorkspace.shared.activateFileViewerSelecting([item.destinationURL]); dismiss() }) {
+                    Button(action: { NSWorkspace.shared.activateFileViewerSelecting([liveItem.destinationURL]); dismiss() }) {
                         Label("Reveal in Finder", systemImage: "folder")
                     }
                     .buttonStyle(ActionButtonStyle(prominent: false, hex: accentColorHex))
@@ -300,7 +376,7 @@ struct ProgressWindowView: View {
                 Spacer()
                 
                 Button(action: { dismiss() }) {
-                    Label(item.status == .completed ? "Close" : "Hide", systemImage: item.status == .completed ? "xmark" : "eye.slash")
+                    Label(liveItem.status == .completed ? "Close" : "Hide", systemImage: liveItem.status == .completed ? "xmark" : "eye.slash")
                 }
                 .buttonStyle(ActionButtonStyle(prominent: false, hex: accentColorHex))
             }
@@ -338,22 +414,20 @@ struct ProgressWindowView: View {
     }
 
     var remainingSize: String {
-        // HLS Tracking: If it's an HLS download and we have duration info, show time remaining
-        if item.isHLS && item.hlsTotalSeconds > 0 {
-            let remSeconds = max(0, item.hlsTotalSeconds - item.hlsDownloadedSeconds)
+        if liveItem.isHLS && liveItem.hlsTotalSeconds > 0 {
+            let remSeconds = max(0, liveItem.hlsTotalSeconds - liveItem.hlsDownloadedSeconds)
             return formatDuration(remSeconds)
         }
         
-        // Standard Tracking: fallback to byte-based remaining size
-        guard item.totalBytes > 0 else { return "–" }
-        let rem = item.totalBytes - item.downloadedBytes
-        guard rem > 0 else { return "–" }
+        guard liveItem.totalBytes > 0 else { return "0MB" }
+        let rem = liveItem.totalBytes - liveItem.downloadedBytes
+        guard rem > 0 else { return "0Mb" }
         return formatBytes(rem)
     }
 
     func applyLimit(enabled: Bool, input: String) {
-        if !enabled { engine.updateSpeedLimit(for: item, limitKB: 0) }
-        else if let val = Int(input), val > 0 { engine.updateSpeedLimit(for: item, limitKB: val) }
+        if !enabled { engine.updateSpeedLimit(for: liveItem, limitKB: 0) }
+        else if let val = Int(input), val > 0 { engine.updateSpeedLimit(for: liveItem, limitKB: val) }
     }
 }
 
@@ -377,5 +451,56 @@ struct ActiveStatCell: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
         .background(Color(NSColor.separatorColor).opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+// MARK: - Native AppKit Button Class
+class HoverTrafficLightButton: NSButton {
+    let itemId: UUID
+    let accentColor: NSColor
+    
+    init(frame frameRect: NSRect, itemId: UUID, accentColor: NSColor) {
+        self.itemId = itemId
+        self.accentColor = accentColor
+        super.init(frame: frameRect)
+        wantsLayer = true
+        isBordered = false
+        title = ""
+        
+        layer?.cornerRadius = frameRect.width / 2
+        layer?.backgroundColor = accentColor.withAlphaComponent(0.6).cgColor
+        layer?.borderWidth = 0.5
+        layer?.borderColor = NSColor.black.withAlphaComponent(0.12).cgColor
+        
+        let config = NSImage.SymbolConfiguration(pointSize: 8, weight: .bold)
+        self.image = NSImage(systemSymbolName: "arrow.down.to.line", accessibilityDescription: nil)?.withSymbolConfiguration(config)
+        self.contentTintColor = .clear
+        self.imagePosition = .imageOnly
+        
+        let tracking = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self, userInfo: nil)
+        addTrackingArea(tracking)
+    }
+    
+    required init?(coder: NSCoder) { fatalError() }
+    
+    @objc func performTrayAction() {
+        TrayViewModel.shared.addToTray(itemId)
+        self.window?.orderOut(nil)
+    }
+    
+    override func mouseEntered(with event: NSEvent) {
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.15
+            self.layer?.backgroundColor = accentColor.cgColor
+            self.animator().contentTintColor = NSColor(Color(nsColor: accentColor).accessibleText)
+        }
+    }
+    
+    override func mouseExited(with event: NSEvent) {
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.15
+            self.animator().contentTintColor = .clear
+            self.layer?.backgroundColor = accentColor.withAlphaComponent(0.6).cgColor
+        }
     }
 }

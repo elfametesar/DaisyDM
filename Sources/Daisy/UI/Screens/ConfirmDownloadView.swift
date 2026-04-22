@@ -61,7 +61,29 @@ struct ConfirmDownloadView: View {
         self.request   = request
         self.onConfirm = onConfirm
         self.onCancel  = onCancel
-        _filename      = State(initialValue: request.filename.isEmpty ? suggestName(request.url) : request.filename)
+        
+        // --- FIXED MAGNET & TORRENT NAME INITIALIZATION ---
+        var initialName = request.filename
+        let isMagnet = request.url.scheme?.lowercased() == "magnet"
+        let isTorrentFile = request.url.pathExtension.lowercased() == "torrent"
+
+        // For magnets: always derive the name from the URL's dn= param — ignore whatever the extension passed
+        if isMagnet {
+            initialName = suggestName(request.url)
+        } else if isTorrentFile {
+            // For .torrent files, fall back to suggestName only if the filename is empty or generic
+            if initialName.isEmpty || initialName == "download" {
+                initialName = suggestName(request.url)
+            }
+            // Strip any incorrectly appended .mp4
+            if initialName.lowercased().hasSuffix(".mp4") {
+                initialName = String(initialName.dropLast(4))
+            }
+        } else if initialName.isEmpty || initialName == "download" || initialName.hasPrefix("?xt=urn:btih") {
+            initialName = suggestName(request.url)
+        }
+        
+        _filename      = State(initialValue: initialName)
         _isDetectedHLS = State(initialValue: request.forceHLS)
         _isDetectedDASH = State(initialValue: request.forceDASH)
         _forceDirectDownload = State(initialValue: request.forceDirectDownload)
@@ -302,32 +324,34 @@ struct ConfirmDownloadView: View {
                     }
                     .buttonStyle(.plain)
 
-                    // 💥 FIX 1: Reverted to standard VStack so it naturally expands the macOS window without collapsing
                     if showDetails {
-                        VStack(alignment: .leading, spacing: 10) {
-                            if let headers = request.headers, !headers.isEmpty {
-                                ForEach(headers.sorted(by: { $0.key < $1.key }), id: \.key) { key, value in
-                                    CappedDetailRow(label: key.capitalized, value: value, labelWidth: 100)
+                        ScrollView(.vertical, showsIndicators: true) {
+                            VStack(alignment: .leading, spacing: 10) {
+                                if let headers = request.headers, !headers.isEmpty {
+                                    ForEach(headers.sorted(by: { $0.key < $1.key }), id: \.key) { key, value in
+                                        CappedDetailRow(label: key.capitalized, value: value, labelWidth: 100)
+                                    }
+                                }
+                                if !request.cookies.isEmpty {
+                                    CappedDetailRow(label: "Cookies", value: request.cookies, labelWidth: 100)
+                                }
+                                if !request.referer.isEmpty && request.headers?["referer"] == nil {
+                                    CappedDetailRow(label: "Referer", value: request.referer, labelWidth: 100)
+                                }
+                                if !request.ua.isEmpty && request.headers?["user-agent"] == nil {
+                                    CappedDetailRow(label: "User-Agent", value: request.ua, labelWidth: 100)
+                                }
+                                if (request.headers?.isEmpty ?? true) && request.referer.isEmpty && request.cookies.isEmpty && request.ua.isEmpty {
+                                    Text("No advanced headers provided.")
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(.secondary)
                                 }
                             }
-                            if !request.cookies.isEmpty {
-                                CappedDetailRow(label: "Cookies", value: request.cookies, labelWidth: 100)
-                            }
-                            if !request.referer.isEmpty && request.headers?["referer"] == nil {
-                                CappedDetailRow(label: "Referer", value: request.referer, labelWidth: 100)
-                            }
-                            if !request.ua.isEmpty && request.headers?["user-agent"] == nil {
-                                CappedDetailRow(label: "User-Agent", value: request.ua, labelWidth: 100)
-                            }
-                            if (request.headers?.isEmpty ?? true) && request.referer.isEmpty && request.cookies.isEmpty && request.ua.isEmpty {
-                                Text("No advanced headers provided.")
-                                    .font(.system(size: 10))
-                                    .foregroundStyle(.secondary)
-                            }
+                            .padding(.top, 8)
+                            .padding(.bottom, 4)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         }
-                        .padding(.top, 8)
-                        .padding(.bottom, 4)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .frame(maxHeight: 180)
                     }
                 }
             }
@@ -379,21 +403,148 @@ struct ConfirmDownloadView: View {
                 win.isOpaque = false
                 win.backgroundColor = .clear
                 win.animationBehavior = .none
+                NSApplication.shared.activate(ignoringOtherApps: true)
+                if win.isMiniaturized { win.deminiaturize(nil) }
+                win.makeKeyAndOrderFront(nil)
             }
         }
     }
     
     // MARK: - Helpers
     
+    private func performBackgroundSniff() async {
+        // --- FIXED: BLOCK SNIFFER FOR MAGNETS AND TORRENTS ---
+        if request.url.scheme?.lowercased() == "magnet" ||
+           request.url.pathExtension.lowercased() == "torrent" ||
+           filename.lowercased().hasSuffix(".torrent") {
+            return
+        }
+
+        guard request.url.scheme?.starts(with: "http") == true else { return }
+        
+        isResolving = true
+        defer { isResolving = false }
+        
+        if isYouTube {
+            await MainActor.run { isFetchingQualities = true }
+            async let titleTask = fetchYouTubeTitle(url: request.url)
+            async let formatsTask = fetchYouTubeFormats(url: request.url)
+            let title = await titleTask
+            let formats = await formatsTask
+            
+            await MainActor.run {
+                if let t = title { self.filename = t }
+                else if self.filename.isEmpty || self.filename == "download" { self.filename = "YouTube_Video.mp4" }
+                if !formats.isEmpty {
+                    self.availableYouTubeQualities = formats
+                    if self.youtubeQuality.isEmpty || !formats.contains(where: { $0.query == self.youtubeQuality }) {
+                        self.youtubeQuality = formats.first?.query ?? ""
+                    }
+                    if let match = formats.first(where: { $0.query == self.youtubeQuality }) {
+                        self.resolvedSize = match.estimatedSize
+                    }
+                }
+                self.isFetchingQualities = false
+            }
+            return
+        }
+        
+        let isHLSUrl = request.forceHLS || request.url.absoluteString.lowercased().contains(".m3u8") || request.filename.lowercased().contains(".m3u8")
+        let isDASHUrl = request.forceDASH || request.url.absoluteString.lowercased().contains(".mpd") || request.filename.lowercased().contains(".mpd")
+        
+        var req = URLRequest(url: request.url)
+        req.httpMethod = "GET"
+        req.setValue("bytes=0-0", forHTTPHeaderField: "Range")
+        
+        if !request.ua.isEmpty { req.setValue(request.ua, forHTTPHeaderField: "User-Agent") }
+        if !request.referer.isEmpty { req.setValue(request.referer, forHTTPHeaderField: "Referer") }
+        if !request.cookies.isEmpty { req.setValue(request.cookies, forHTTPHeaderField: "Cookie") }
+        
+        if let hdrs = request.headers {
+            for (k, v) in hdrs {
+                let lower = k.lowercased()
+                if lower != "host" && lower != "accept-encoding" && lower != "range" {
+                    req.setValue(v, forHTTPHeaderField: k)
+                }
+            }
+        }
+        
+        do {
+            let (asyncBytes, response) = try await URLSession.shared.bytes(for: req)
+            asyncBytes.task.cancel()
+            
+            if let httpResp = response as? HTTPURLResponse {
+                let ct = (httpResp.value(forHTTPHeaderField: "Content-Type") ?? httpResp.value(forHTTPHeaderField: "content-type"))?.lowercased() ?? ""
+                
+                await MainActor.run {
+                    var foundName: String? = nil
+                    if let disposition = httpResp.value(forHTTPHeaderField: "Content-Disposition") ?? httpResp.value(forHTTPHeaderField: "content-disposition") {
+                        if let range = disposition.range(of: "filename=", options: .caseInsensitive) {
+                            var fn = String(disposition[range.upperBound...]).trimmingCharacters(in: .whitespaces)
+                            if fn.hasPrefix("\"") {
+                                fn = String(fn.dropFirst())
+                                if let endQuote = fn.firstIndex(of: "\"") { fn = String(fn[..<endQuote]) }
+                            } else {
+                                if let endSemi = fn.firstIndex(of: ";") { fn = String(fn[..<endSemi]) }
+                            }
+                            if !fn.isEmpty { foundName = fn }
+                        }
+                    }
+                    
+                    if foundName == nil {
+                        let finalURL = httpResp.url ?? request.url
+                        let lastComponent = finalURL.lastPathComponent.removingPercentEncoding ?? finalURL.lastPathComponent
+                        if lastComponent.contains(".") && lastComponent != "/" {
+                            foundName = lastComponent
+                        }
+                    }
+                    
+                    if let fn = foundName, fn != "download", fn != "file" { self.filename = fn }
+                    
+                    let isHLS = isHLSUrl || ct.contains("mpegurl") || ct.contains("m3u8") || ct.contains("apple.mpegurl")
+                    let isDASH = isDASHUrl || ct.contains("dash+xml")
+                    
+                    if isHLS {
+                        self.isDetectedHLS = true
+                        if !self.forceDirectDownload {
+                            if self.filename.lowercased().hasSuffix(".m3u8") {
+                                self.filename = String(self.filename.dropLast(5)) + ".mp4"
+                            } else if !self.filename.lowercased().hasSuffix(".mp4") {
+                                self.filename += ".mp4"
+                            }
+                        }
+                        self.resolvedSize = 0
+                    } else if isDASH {
+                        self.isDetectedDASH = true
+                        if !self.forceDirectDownload {
+                            if self.filename.lowercased().hasSuffix(".mpd") {
+                                self.filename = String(self.filename.dropLast(4)) + ".mp4"
+                            } else if !self.filename.lowercased().hasSuffix(".mp4") {
+                                self.filename += ".mp4"
+                            }
+                        }
+                        self.resolvedSize = 0
+                    } else {
+                        if let contentRange = httpResp.value(forHTTPHeaderField: "Content-Range") ?? httpResp.value(forHTTPHeaderField: "content-range") {
+                            if let totalStr = contentRange.components(separatedBy: "/").last, let total = Int64(totalStr.trimmingCharacters(in: .whitespaces)) {
+                                self.resolvedSize = total
+                            }
+                        } else {
+                            let expected = httpResp.expectedContentLength
+                            if expected > 0 { self.resolvedSize = expected }
+                            else if let clStr = httpResp.value(forHTTPHeaderField: "Content-Length") ?? httpResp.value(forHTTPHeaderField: "content-length"), let cl = Int64(clStr), cl > 0 {
+                                self.resolvedSize = cl
+                            }
+                        }
+                    }
+                }
+            }
+        } catch { }
+    }
+
     private func getInstalledYTDlpPath() -> String? {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
-        let executablePaths = [
-            "/opt/homebrew/bin/yt-dlp",
-            "/usr/local/bin/yt-dlp",
-            "\(home)/.local/bin/yt-dlp",
-            "/usr/bin/yt-dlp",
-            "/bin/yt-dlp"
-        ]
+        let executablePaths = [ "/opt/homebrew/bin/yt-dlp", "/usr/local/bin/yt-dlp", "\(home)/.local/bin/yt-dlp", "/usr/bin/yt-dlp", "/bin/yt-dlp" ]
         return executablePaths.first(where: { FileManager.default.fileExists(atPath: $0) })
     }
     
@@ -401,9 +552,7 @@ struct ConfirmDownloadView: View {
         guard let ytDlpPath = getInstalledYTDlpPath() else { return nil }
         let browsersToTry: [String?] = [nil, "safari", "chrome", "brave", "firefox", "edge", "opera"]
         for browser in browsersToTry {
-            if let title = await runYTDlpTitleFetch(url: url, ytDlpPath: ytDlpPath, browser: browser) {
-                return title
-            }
+            if let title = await runYTDlpTitleFetch(url: url, ytDlpPath: ytDlpPath, browser: browser) { return title }
         }
         return nil
     }
@@ -415,16 +564,13 @@ struct ConfirmDownloadView: View {
             var env = ProcessInfo.processInfo.environment
             env["PATH"] = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:\(FileManager.default.homeDirectoryForCurrentUser.path)/.local/bin"
             proc.environment = env
-            
             var args = ["--print", "title", "--no-warnings", "--no-playlist"]
             if let b = browser { args.append(contentsOf: ["--cookies-from-browser", b]) }
             args.append(url.absoluteString)
             proc.arguments = args
-            
             let pipe = Pipe()
             proc.standardOutput = pipe
             proc.standardError = FileHandle.nullDevice
-            
             do {
                 try proc.run()
                 let data = pipe.fileHandleForReading.readDataToEndOfFile()
@@ -454,49 +600,38 @@ struct ConfirmDownloadView: View {
             var env = ProcessInfo.processInfo.environment
             env["PATH"] = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:\(FileManager.default.homeDirectoryForCurrentUser.path)/.local/bin"
             proc.environment = env
-            
             var args = ["-j", "--no-warnings", "--no-playlist"]
             if let b = browser { args.append(contentsOf: ["--cookies-from-browser", b]) }
             args.append(url.absoluteString)
             proc.arguments = args
-            
             let pipe = Pipe()
             proc.standardOutput = pipe
             proc.standardError = FileHandle.nullDevice
-            
             do {
                 try proc.run()
                 let data = pipe.fileHandleForReading.readDataToEndOfFile()
                 proc.waitUntilExit()
-                
                 if proc.terminationStatus == 0,
                    let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                    let formats = json["formats"] as? [[String: Any]] {
-                    
                     var options: [YouTubeFormatOption] = []
                     let audios = formats.filter { ($0["vcodec"] as? String ?? "none") == "none" && ($0["acodec"] as? String ?? "none") != "none" }
                     let bestAudioSize = audios.compactMap { $0["filesize"] as? Int64 ?? $0["filesize_approx"] as? Int64 }.max() ?? 0
-                    
                     let videos = formats.filter {
                         let vcodec = $0["vcodec"] as? String ?? "none"
                         let height = $0["height"] as? Int ?? 0
                         return vcodec != "none" && height > 0
                     }.sorted { ($0["height"] as? Int ?? 0) > ($1["height"] as? Int ?? 0) }
-                    
                     var seen = Set<String>()
-                    
                     for v in videos {
                         let h = v["height"] as? Int ?? 0
                         let ext = v["ext"] as? String ?? ""
                         let fps = v["fps"] as? Int ?? 0
                         if h == 0 || ext.isEmpty { continue }
-                        
                         let vSize = v["filesize"] as? Int64 ?? v["filesize_approx"] as? Int64 ?? 0
                         let estimatedTotal = (vSize > 0) ? (vSize + bestAudioSize) : 0
-                        
                         let fpsString = (fps > 30) ? "\(fps)" : ""
                         let key = "\(h)\(fpsString)-\(ext)"
-                        
                         if !seen.contains(key) {
                             seen.insert(key)
                             let label = "\(h)p\(fpsString) (\(ext.uppercased()))"
@@ -504,7 +639,6 @@ struct ConfirmDownloadView: View {
                             options.append(YouTubeFormatOption(label: label, query: query, estimatedSize: estimatedTotal))
                         }
                     }
-                    
                     let defaultBestSize = options.first?.estimatedSize ?? 0
                     options.insert(YouTubeFormatOption(label: "Best Quality (Default)", query: "", estimatedSize: defaultBestSize), at: 0)
                     return options
@@ -513,179 +647,34 @@ struct ConfirmDownloadView: View {
             return []
         }.value
     }
-    
-    private func performBackgroundSniff() async {
-        guard request.url.scheme?.starts(with: "http") == true else { return }
-        
-        isResolving = true
-        defer { isResolving = false }
-        
-        if isYouTube {
-            await MainActor.run { isFetchingQualities = true }
-            
-            async let titleTask = fetchYouTubeTitle(url: request.url)
-            async let formatsTask = fetchYouTubeFormats(url: request.url)
-            
-            let title = await titleTask
-            let formats = await formatsTask
-            
-            await MainActor.run {
-                if let t = title { self.filename = t }
-                else if self.filename.isEmpty || self.filename == "download" { self.filename = "YouTube_Video.mp4" }
-                
-                if !formats.isEmpty {
-                    self.availableYouTubeQualities = formats
-                    if self.youtubeQuality.isEmpty || !formats.contains(where: { $0.query == self.youtubeQuality }) {
-                        self.youtubeQuality = formats.first?.query ?? ""
-                    }
-                    if let match = formats.first(where: { $0.query == self.youtubeQuality }) {
-                        self.resolvedSize = match.estimatedSize
-                    }
-                }
-                self.isFetchingQualities = false
-            }
-            return
-        }
-        
-        let isHLSUrl = request.forceHLS || request.url.absoluteString.lowercased().contains(".m3u8") || request.filename.lowercased().contains(".m3u8")
-        let isDASHUrl = request.forceDASH || request.url.absoluteString.lowercased().contains(".mpd") || request.filename.lowercased().contains(".mpd")
-        
-        var req = URLRequest(url: request.url)
-        req.httpMethod = "GET"
-        
-        // 💥 FIX 2: Ask for 1 byte to get the file size without downloading 175MB
-        req.setValue("bytes=0-0", forHTTPHeaderField: "Range")
-        
-        // Inject the spoofed headers so the server doesn't block us with a 403
-        if !request.ua.isEmpty { req.setValue(request.ua, forHTTPHeaderField: "User-Agent") }
-        if !request.referer.isEmpty { req.setValue(request.referer, forHTTPHeaderField: "Referer") }
-        if !request.cookies.isEmpty { req.setValue(request.cookies, forHTTPHeaderField: "Cookie") }
-        
-        if let hdrs = request.headers {
-            for (k, v) in hdrs {
-                let lower = k.lowercased()
-                if lower != "host" && lower != "accept-encoding" && lower != "range" {
-                    req.setValue(v, forHTTPHeaderField: k)
-                }
-            }
-        }
-        
-        do {
-            // 💥 FIX 3: Safe asynchronous bytes reading that gets immediately cancelled to save memory
-            let (asyncBytes, response) = try await URLSession.shared.bytes(for: req)
-            asyncBytes.task.cancel()
-            
-            if let httpResp = response as? HTTPURLResponse {
-                let ct = (httpResp.value(forHTTPHeaderField: "Content-Type") ?? httpResp.value(forHTTPHeaderField: "content-type"))?.lowercased() ?? ""
-                
-                let isHLS = isHLSUrl || ct.contains("mpegurl") || ct.contains("m3u8") || ct.contains("apple.mpegurl")
-                let isDASH = isDASHUrl || ct.contains("dash+xml")
-                
-                await MainActor.run {
-                    var foundName: String? = nil
-                    
-                    if let disposition = httpResp.value(forHTTPHeaderField: "Content-Disposition") ?? httpResp.value(forHTTPHeaderField: "content-disposition") {
-                        if let range = disposition.range(of: "filename=", options: .caseInsensitive) {
-                            var fn = String(disposition[range.upperBound...]).trimmingCharacters(in: .whitespaces)
-                            if fn.hasPrefix("\"") {
-                                fn = String(fn.dropFirst())
-                                if let endQuote = fn.firstIndex(of: "\"") { fn = String(fn[..<endQuote]) }
-                            } else {
-                                if let endSemi = fn.firstIndex(of: ";") { fn = String(fn[..<endSemi]) }
-                            }
-                            if !fn.isEmpty { foundName = fn }
-                        }
-                    }
-                    
-                    if foundName == nil {
-                        let finalURL = httpResp.url ?? request.url
-                        let lastComponent = finalURL.lastPathComponent.removingPercentEncoding ?? finalURL.lastPathComponent
-                        if lastComponent.contains(".") && lastComponent != "/" {
-                            foundName = lastComponent
-                        }
-                    }
-                    
-                    if let fn = foundName, fn != "download", fn != "file" {
-                        self.filename = fn
-                    }
-                    
-                    if isHLS {
-                        self.isDetectedHLS = true
-                        if !self.forceDirectDownload {
-                            if self.filename.lowercased().hasSuffix(".m3u8") {
-                                self.filename = String(self.filename.dropLast(5)) + ".mp4"
-                            } else if !self.filename.lowercased().hasSuffix(".mp4") {
-                                self.filename += ".mp4"
-                            }
-                        }
-                        self.resolvedSize = 0
-                    } else if isDASH {
-                        self.isDetectedDASH = true
-                        if !self.forceDirectDownload {
-                            if self.filename.lowercased().hasSuffix(".mpd") {
-                                self.filename = String(self.filename.dropLast(4)) + ".mp4"
-                            } else if !self.filename.lowercased().hasSuffix(".mp4") {
-                                self.filename += ".mp4"
-                            }
-                        }
-                        self.resolvedSize = 0
-                    } else {
-                        if let contentRange = httpResp.value(forHTTPHeaderField: "Content-Range") ?? httpResp.value(forHTTPHeaderField: "content-range") {
-                            if let totalStr = contentRange.components(separatedBy: "/").last, let total = Int64(totalStr.trimmingCharacters(in: .whitespaces)) {
-                                self.resolvedSize = total
-                            }
-                        } else {
-                            let expected = httpResp.expectedContentLength
-                            if expected > 0 {
-                                self.resolvedSize = expected
-                            } else if let clStr = httpResp.value(forHTTPHeaderField: "Content-Length") ?? httpResp.value(forHTTPHeaderField: "content-length"), let cl = Int64(clStr), cl > 0 {
-                                self.resolvedSize = cl
-                            }
-                        }
-                    }
-                }
-            }
-        } catch { }
-    }
 }
 
+// --- FIXED: FETCH REAL NAME FROM MAGNET PARAMETERS ---
 private func suggestName(_ url: URL) -> String {
+    if url.scheme?.lowercased() == "magnet" {
+        if let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+           let queryItems = components.queryItems,
+           let dn = queryItems.first(where: { $0.name == "dn" })?.value {
+            return dn.replacingOccurrences(of: "+", with: " ")
+        }
+        return "Torrent Download"
+    }
+    
     let last = url.lastPathComponent
     let dec = last.removingPercentEncoding ?? last
     return (!dec.isEmpty && dec != "/") ? dec : "download"
 }
 
-// A label+value row for the Advanced Details section.
-// The value is displayed with 1.5 line spacing and capped at ~72pt (≈4 lines),
-// with a vertical ScrollView so very long strings (cookies, UA) don't blow up the panel.
 struct CappedDetailRow: View {
     let label: String
     let value: String
     let labelWidth: CGFloat
-
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
-            Text(label)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .frame(width: labelWidth, alignment: .leading)
-                .fixedSize(horizontal: true, vertical: false)
-                .padding(.top, 1)
-
+            Text(label).font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary).frame(width: labelWidth, alignment: .leading).fixedSize(horizontal: true, vertical: false).padding(.top, 1)
             ScrollView(.vertical, showsIndicators: true) {
-                Text(value)
-                    .font(.system(size: 10))
-                    .foregroundStyle(.primary)
-                    .lineSpacing(5)          // ~1.5× for 10pt font (10 × 0.5 = 5pt extra)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.vertical, 4)
-                    .padding(.horizontal, 6)
-            }
-            .frame(maxHeight: 72)
-            .background(Color(NSColor.controlBackgroundColor).opacity(0.4), in: RoundedRectangle(cornerRadius: 5))
-            .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color(NSColor.separatorColor).opacity(0.4), lineWidth: 1))
+                Text(value).font(.system(size: 10)).foregroundStyle(.primary).lineSpacing(5).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true).padding(.vertical, 4).padding(.horizontal, 6)
+            }.frame(maxHeight: 72).background(Color(NSColor.controlBackgroundColor).opacity(0.4), in: RoundedRectangle(cornerRadius: 5)).overlay(RoundedRectangle(cornerRadius: 5).stroke(Color(NSColor.separatorColor).opacity(0.4), lineWidth: 1))
         }
     }
 }

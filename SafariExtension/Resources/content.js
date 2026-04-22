@@ -6,6 +6,29 @@ interceptorScript.textContent = `
     (function() {
         const MEDIA_RE = /\\.m3u8|stream\\.mpd|\\.mpd|dash|hls|\\.mp4|\\.webm|\\.mov|\\.ts|manifest/i;
 
+        // Listen for requests to fetch YouTube formats natively from the page context
+        window.addEventListener("message", (e) => {
+            if (e.data && e.data.__daisyReqYtFormats) {
+                let formats = new Set();
+                try {
+                    const player = document.querySelector('#movie_player');
+                    if (player && typeof player.getPlayerResponse === 'function') {
+                        const resp = player.getPlayerResponse();
+                        if (resp && resp.streamingData) {
+                            if (resp.streamingData.formats) resp.streamingData.formats.forEach(f => { if(f.height) formats.add(f.height); });
+                            if (resp.streamingData.adaptiveFormats) resp.streamingData.adaptiveFormats.forEach(f => { if(f.height) formats.add(f.height); });
+                        }
+                    }
+                    if (window.ytInitialPlayerResponse && window.ytInitialPlayerResponse.streamingData) {
+                        const sd = window.ytInitialPlayerResponse.streamingData;
+                        if (sd.formats) sd.formats.forEach(f => { if(f.height) formats.add(f.height); });
+                        if (sd.adaptiveFormats) sd.adaptiveFormats.forEach(f => { if(f.height) formats.add(f.height); });
+                    }
+                } catch(err) {}
+                window.postMessage({ __daisyYtFormatsResp: Array.from(formats) }, "*");
+            }
+        });
+
         const _fetch = window.fetch;
         window.fetch = async function(...args) {
             const req = args[0];
@@ -191,7 +214,7 @@ function normalizeUrl(url) {
     if (!url) return "";
     try {
         const u = new URL(url);
-        ["_", "t", "token", "sig", "signature", "key", "auth", "cb"].forEach(p => u.searchParams.delete(p));
+        ["_", "t", "token", "sig", "signature", "key", "auth", "cb", "expires"].forEach(p => u.searchParams.delete(p));
         return u.toString().toLowerCase().replace(/\/+$/, "");
     } catch { return url.toLowerCase().trim(); }
 }
@@ -281,15 +304,40 @@ function getActualYtFormats() {
     return Array.from(formats).sort((a, b) => b - a);
 }
 
+function getActualYtFormatsAsync() {
+    return new Promise(resolve => {
+        const timeout = setTimeout(() => {
+            window.removeEventListener("message", listener);
+            resolve(getActualYtFormats());
+        }, 800);
+
+        const listener = (e) => {
+            if (e.data && e.data.__daisyYtFormatsResp) {
+                clearTimeout(timeout);
+                window.removeEventListener("message", listener);
+                let formats = new Set(e.data.__daisyYtFormatsResp);
+                getActualYtFormats().forEach(h => formats.add(h));
+                resolve(Array.from(formats).sort((a, b) => b - a));
+            }
+        };
+        window.addEventListener("message", listener);
+        window.postMessage({ __daisyReqYtFormats: true }, "*");
+    });
+}
+
 function sniffScriptUrls(root) {
     const found = [];
     try {
         const scripts = (root || document).querySelectorAll('script');
-        const mediaRe = /https?:\/\/[^\s'"\\]+?(?:\.m3u8|\.mp4|\.webm|\.mov|\.ts|\.mpd|\/m3u8|\/hls\/|\/stream\/|\/m3\/|\/dash\/)[^\s'"\\,;}\]))]*/gi;
+        const mediaRe = /(?:https?:)?\/\/[^\s'"\\]+?(?:\.m3u8|\.mp4|\.webm|\.mov|\.ts|\.mpd|\/m3u8|\/hls\/|\/stream\/|\/m3\/|\/dash\/)[^\s'"\\,;}\]))]*/gi;
         for (let s of scripts) {
             const text = s.textContent || "";
             let match;
-            while ((match = mediaRe.exec(text)) !== null) found.push({url: match[0].replace(/[,;}\]]+$/, ""), type: 'unknown', frameOrigin: window.location.origin});
+            while ((match = mediaRe.exec(text)) !== null) {
+                let url = match[0].replace(/[,;}\]]+$/, "");
+                if (url.startsWith('//')) url = window.location.protocol + url;
+                found.push({url: url, type: 'unknown', frameOrigin: window.location.origin});
+            }
         }
     } catch(e) {}
     return found;
@@ -341,8 +389,6 @@ function runScriptSniffer(root) {
 }
 
 // mail.ru / my.mail.ru video support.
-// The player embeds a metaUrl in an inline script tag; we fetch that API
-// and extract the direct per-quality MP4 URLs it returns.
 async function sniffMailRu(root) {
     try {
         const host = window.location.hostname;
@@ -350,7 +396,6 @@ async function sniffMailRu(root) {
 
         let metaUrl = null;
 
-        // Primary: dedicated page-config script tag
         const cfgScripts = (root || document).querySelectorAll('script.sp-video__page-config, script[class*="page-config"]');
         for (const s of cfgScripts) {
             try {
@@ -360,7 +405,6 @@ async function sniffMailRu(root) {
             } catch (_) {}
         }
 
-        // Fallback: scan all inline scripts for a metaUrl property
         if (!metaUrl) {
             const allScripts = (root || document).querySelectorAll('script:not([src])');
             for (const s of allScripts) {
@@ -382,13 +426,11 @@ async function sniffMailRu(root) {
 
         for (const v of videos) {
             if (!v.url) continue;
-            // Store the quality key (e.g. "720p") on the media entry so the popup can label it
             bubbleMediaToTop({ url: v.url, mediaType: 'mp4', frameOrigin: window.location.origin, mailRuKey: v.key, mailRuTitle: title });
         }
     } catch (_) {}
 }
 
-// Fetch DASH manifest and parse quality variants
 async function fetchDashQualities(mpdUrl) {
     try {
         const res = await new Promise(resolve => _api.runtime.sendMessage({ type: "FETCH_MANIFEST", url: mpdUrl }, resolve));
@@ -408,11 +450,9 @@ async function fetchDashQualities(mpdUrl) {
             const contentType = (adaptSet.getAttribute('contentType') || '').toLowerCase();
             const mimeType    = (adaptSet.getAttribute('mimeType') || '').toLowerCase();
 
-            // Skip non-video adaptation sets
             const combinedType = contentType || mimeType;
             if (combinedType && !combinedType.includes('video')) return;
 
-            // Skip supplemental/caption/subtitle roles
             const role = adaptSet.querySelector('Role');
             if (role) {
                 const roleVal = (role.getAttribute('value') || '').toLowerCase();
@@ -427,10 +467,8 @@ async function fetchDashQualities(mpdUrl) {
                 const bandwidth = parseInt(rep.getAttribute('bandwidth') || '0');
                 const id        = rep.getAttribute('id') || '';
 
-                // Skip entries that are clearly audio (no height, no bandwidth)
                 if (height === 0 && bandwidth === 0) return;
 
-                // Use height-based key to avoid duplicates; fall back to bandwidth
                 const key = height > 0 ? `h${height}` : `bw${bandwidth}`;
                 if (seen.has(key)) return;
                 seen.add(key);
@@ -454,7 +492,6 @@ async function fetchDashQualities(mpdUrl) {
     }
 }
 
-// HLS Manifest Parsing
 async function fetchHlsQualities(masterUrl) {
     try {
         const res = await new Promise(resolve => _api.runtime.sendMessage({ type: "FETCH_MANIFEST", url: masterUrl }, resolve));
@@ -664,8 +701,21 @@ document.createElement = function(tag, ...args) {
             }
         }
         const subObs = new MutationObserver(() => { watchSubframeVideos(document); });
-        if (document.body) { subObs.observe(document.body, { childList: true, subtree: true }); watchSubframeVideos(document); }
-        else { document.addEventListener('DOMContentLoaded', () => { subObs.observe(document.body, { childList: true, subtree: true }); watchSubframeVideos(document); }); }
+        
+        // Ensure script sniffers actively run inside subframes (crucial for Reddit embeds)
+        if (document.body) {
+            subObs.observe(document.body, { childList: true, subtree: true });
+            watchSubframeVideos(document);
+            runScriptSniffer(document);
+            setInterval(() => runScriptSniffer(document), 2000);
+        } else {
+            document.addEventListener('DOMContentLoaded', () => {
+                subObs.observe(document.body, { childList: true, subtree: true });
+                watchSubframeVideos(document);
+                runScriptSniffer(document);
+                setInterval(() => runScriptSniffer(document), 2000);
+            });
+        }
         return;
     }
 
@@ -774,18 +824,20 @@ document.createElement = function(tag, ...args) {
             globalOverlay.querySelector('.daisydm-overlay-header').onclick = (e) => {
                 if (e.target.closest('.daisydm-close-btn')) return;
                 e.stopPropagation();
-                globalOverlay.classList.toggle('expanded');
-                if (globalOverlay.classList.contains('expanded') && currentTarget) {
-                    populateDropdown(currentTarget, dropdown);
-                }
+                // We keep the click event to prevent bubbling, but expansion is now handled by hover
             };
 
-            globalOverlay.addEventListener('mouseenter', () => clearTimeout(hideTimeout));
-            globalOverlay.addEventListener('mouseleave', () => {
+            globalOverlay.addEventListener('mouseenter', () => {
+                clearTimeout(hideTimeout);
                 if (!globalOverlay.classList.contains('expanded')) {
-                    clearTimeout(hideTimeout);
-                    hideTimeout = setTimeout(() => { globalOverlay.classList.remove('visible'); }, 350);
+                    globalOverlay.classList.add('expanded');
+                    if (currentTarget) populateDropdown(currentTarget, dropdown);
                 }
+            });
+            
+            globalOverlay.addEventListener('mouseleave', () => {
+                clearTimeout(hideTimeout);
+                hideTimeout = setTimeout(() => { globalOverlay.classList.remove('visible', 'expanded'); }, 350);
             });
         }
 
@@ -801,7 +853,6 @@ document.createElement = function(tag, ...args) {
         function hasDownloadableMedia(el) {
             const pageUrl = window.location.href;
             if (pageUrl.includes('youtube.com')) { return window.location.pathname.startsWith('/watch') || window.location.pathname.startsWith('/shorts'); }
-            if (pageUrl.includes('drive.google.com')) { return true; }
             if (sniffedMediaUrls.length > 0) return true;
             let found = false;
             const check = (url) => { if (url && !url.startsWith('blob:') && !url.startsWith('data:')) found = true; };
@@ -823,9 +874,9 @@ document.createElement = function(tag, ...args) {
                 positionOverlay(el); globalOverlay.classList.add('visible');
             });
             el.addEventListener('mouseleave', () => {
-                if (globalOverlay && !globalOverlay.classList.contains('expanded')) {
+                if (globalOverlay) {
                     clearTimeout(hideTimeout);
-                    hideTimeout = setTimeout(() => { globalOverlay.classList.remove('visible'); }, 350);
+                    hideTimeout = setTimeout(() => { globalOverlay.classList.remove('visible', 'expanded'); }, 350);
                 }
             });
         }
@@ -851,7 +902,7 @@ document.createElement = function(tag, ...args) {
                     dropdownEl.innerHTML = '<div class="daisydm-overlay-option" style="color:rgba(40,50,90,0.50);justify-content:center;font-size:12px">No video on this page</div>';
                     return;
                 }
-                const trueHeights = getActualYtFormats();
+                const trueHeights = await getActualYtFormatsAsync();
                 dropdownEl.innerHTML = '';
                 if (trueHeights.length > 0) {
                     trueHeights.map(h => ({ id: `bestvideo[height<=${h}]+bestaudio/best`, vidName: vidName, quality: `${h}p`, ext: ".mp4" }))
@@ -876,8 +927,13 @@ document.createElement = function(tag, ...args) {
                 }
             });
 
-            if (urlTypeMap.size === 0 && sniffedMediaUrls.length > 0) {
-                sniffedMediaUrls.forEach(m => urlTypeMap.set(m.url, m.mediaType || 'unknown'));
+            // Ensure we always merge heavily sniffed network files, don't let a dummy blob override
+            if (sniffedMediaUrls.length > 0) {
+                sniffedMediaUrls.forEach(m => {
+                    if (!urlTypeMap.has(m.url)) {
+                        urlTypeMap.set(m.url, m.mediaType || 'unknown');
+                    }
+                });
             }
 
             const options = [];
@@ -887,17 +943,14 @@ document.createElement = function(tag, ...args) {
                 let lower = rawUrl.toLowerCase();
                 let finalType = type;
                 
-                // Look up extra metadata stored by site-specific sniffers (e.g. mail.ru)
                 const sniffedEntry = sniffedMediaUrls.find(m => m.url === rawUrl || normalizeUrl(m.url) === normalizeUrl(rawUrl));
 
-                // Aggressive type detection — check URL patterns broadly, not just exact extensions
                 if (finalType === 'unknown' || finalType === 'hls' || finalType === 'dash') {
                     if (lower.includes('.m3u8') || lower.includes('/m3/') || lower.includes('/hls/') || lower.includes('playlist.m3u8') || lower.includes('master.m3u8')) finalType = 'hls';
                     else if (lower.includes('.mpd') || lower.includes('/dash/') || lower.includes('/manifest') || lower.includes('dash.xml') || lower.includes('dashplaylist') || lower.includes('video.ism')) finalType = 'dash';
                     else if (lower.includes('.mp4')) finalType = 'mp4';
                 }
 
-                // Trust sniffedMediaUrls type if URL matches and type is still unknown
                 if (finalType === 'unknown' && sniffedEntry && sniffedEntry.mediaType && sniffedEntry.mediaType !== 'unknown') {
                     finalType = sniffedEntry.mediaType;
                 }
@@ -912,7 +965,6 @@ document.createElement = function(tag, ...args) {
                     if (fakeExts.some(e => lower.includes(e))) continue;
                 }
                 
-                // Use site-specific quality label and title if available (e.g. mail.ru "720p", "360p")
                 const siteQuality = sniffedEntry && sniffedEntry.mailRuKey ? sniffedEntry.mailRuKey : null;
                 const siteTitle   = sniffedEntry && sniffedEntry.mailRuTitle ? sniffedEntry.mailRuTitle : null;
                 
@@ -1008,9 +1060,11 @@ document.createElement = function(tag, ...args) {
             });
 
             document.querySelectorAll('iframe').forEach(el => {
-                const src = el.src || '', r = el.getBoundingClientRect();
-                if (r.width > 200 && r.height > 120) attachToElement(el);
-                else if (/youtube|vimeo|twitch|reddit|dailymotion|facebook|tiktok|streamable|drive\.google/i.test(src)) attachToElement(el);
+                const r = el.getBoundingClientRect();
+                // We no longer restrict by src for iframes.
+                // If it's big enough to be a player, we attach to it.
+                // \`hasDownloadableMedia\` will verify if it contains sniffed URLs.
+                if (r.width > 150 && r.height > 100) attachToElement(el);
             });
         }
 
@@ -1019,5 +1073,23 @@ document.createElement = function(tag, ...args) {
         setInterval(() => { scanForMedia(); }, 2000);
         scanForMedia();
     }
+    // --- MAGNET LINK INTERCEPTOR ---
+    document.addEventListener('click', (e) => {
+        // Find the closest anchor tag that was clicked
+        const a = e.target.closest('a');
+        
+        // Check if it's a magnet link
+        if (a && a.href && a.href.toLowerCase().startsWith('magnet:')) {
+            // Obey user's bypass key (e.g., holding Alt to skip extension)
+            if (shouldBypass()) return;
+            
+            // Stop Safari/Chrome from trying to open the native OS prompt
+            e.preventDefault();
+            e.stopPropagation();
+            
+            // Send directly to DaisyDM
+            sendToDispatch(a.href, "Torrent Download");
+        }
+    }, { capture: true });
     init();
 })();

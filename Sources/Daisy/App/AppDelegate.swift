@@ -52,6 +52,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var confirmObserver: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Initialize the native AppKit Tray Controller
+        TrayController.shared.setup()
+        
         LocalServer.shared.start()
         
         NSAppleEventManager.shared().setEventHandler(

@@ -1,4 +1,4 @@
-// background.js - Daisy Safari Extension
+// background.js - Daisy Chrome Extension
 
 const _api = typeof browser !== "undefined" ? browser : chrome;
 
@@ -24,7 +24,6 @@ function storeWithTTL(map, key, value) {
     }
 }
 
-// Aggressively match captured headers by hostname/path, ignoring minor URL differences (range params, etc.)
 function findCapturedDataAggressive(map, targetUrl) {
     let merged = {};
     if (!targetUrl) return merged;
@@ -81,12 +80,19 @@ _api.storage.onChanged.addListener((changes, area) => {
 });
 
 _api.runtime.onInstalled.addListener(() => {
-    _api.contextMenus.create({ id: "dispatch-download", title: "Download with Daisy", contexts: ["link"] });
+    _api.contextMenus.create({
+        id: "dispatch-download",
+        title: "Download with Daisy",
+        contexts: ["link", "selection", "video", "audio"]
+    });
 });
 
 _api.contextMenus.onClicked.addListener((info, tab) => {
-    if (info.menuItemId === "dispatch-download" && info.linkUrl) {
-        triggerDownload(info.linkUrl, extractFilename(info.linkUrl), tab?.url || "");
+    if (info.menuItemId === "dispatch-download") {
+        const targetUrl = info.linkUrl || info.srcUrl || info.selectionText;
+        if (targetUrl) {
+            triggerDownload(targetUrl, extractFilename(targetUrl), tab?.url || "");
+        }
     }
 });
 
@@ -189,6 +195,20 @@ _api.webRequest.onHeadersReceived.addListener(
     resExtraInfo
 );
 
+// --- NATIVE CHROME DOWNLOAD INTERCEPTOR ---
+if (typeof chrome !== 'undefined' && chrome.downloads) {
+    chrome.downloads.onCreated.addListener((item) => {
+        if (!dispatchEnabled) return;
+        
+        if (item.url.startsWith("blob:") || item.url.startsWith("data:")) return;
+
+        chrome.downloads.cancel(item.id, () => {
+            chrome.downloads.erase({id: item.id}, () => {});
+            triggerDownload(item.url, item.filename, item.referrer || "", null, null, false, false, {});
+        });
+    });
+}
+
 _api.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     if (message.type === "PUSH_MEDIA_HEADERS") {
@@ -209,7 +229,6 @@ _api.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return true;
     }
 
-    // Bridge for content.js to fetch and parse manifests via background (bypasses CORS)
     if (message.type === "FETCH_MANIFEST") {
         const reqHeaders = findCapturedDataAggressive(capturedRequestHeaders, message.url);
         fetch(message.url, { headers: reqHeaders })
@@ -239,32 +258,6 @@ _api.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 });
 
-// Intercept standard browser downloads and pipe to Dispatch
-if (_api.downloads) {
-    _api.downloads.onCreated.addListener((downloadItem) => {
-        if (!dispatchEnabled) return;
-        if (downloadItem.state !== "in_progress") return;
-        if (downloadItem.url.startsWith("blob:") || downloadItem.url.startsWith("data:")) return;
-        
-        // Let our native fallbacks through so we don't get stuck in an infinite cancellation loop
-        if (downloadItem.url.includes("daisy_bypass=true")) return;
-
-        // Cancel the native browser download UI
-        _api.downloads.cancel(downloadItem.id, () => {
-            triggerDownload(
-                downloadItem.url,
-                downloadItem.filename || extractFilename(downloadItem.url),
-                downloadItem.referrer || "",
-                "", // Cookies will be fetched inside triggerDownload
-                null,
-                false,
-                false,
-                {}
-            );
-        });
-    });
-}
-
 async function triggerDownload(url, filename, referer, cookies, youtubeQuality, forceHLS, forceDASH, pageHeaders) {
     let finalCookies = cookies;
     if (!finalCookies) finalCookies = findCapturedCookieAggressive(url) || await fetchBaseDomainCookies(referer || url);
@@ -278,7 +271,7 @@ async function triggerDownload(url, filename, referer, cookies, youtubeQuality, 
 
     const payload = JSON.stringify({
         url, filename: filename || "download", cookies: finalCookies || "", referer: referer || "",
-        ua: (typeof navigator !== "undefined" ? navigator.userAgent : ""), browser: "chrome", youtubeQuality, forceHLS, forceDASH,
+        ua: navigator.userAgent, browser: "chrome", youtubeQuality, forceHLS, forceDASH,
         headers: mergedHeaders,
         requestHeaders: mergedHeaders,
         responseHeaders: respHeaders,

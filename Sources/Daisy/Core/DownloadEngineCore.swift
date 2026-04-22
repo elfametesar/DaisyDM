@@ -209,7 +209,7 @@ public final class DownloadEngine {
         persist()
         if item.status == .downloading {
             stop(item, stopSubFiles: false)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self.resume(item, resumeSubFiles: false) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { self.resume(item, resumeSubFiles: false) }
         }
     }
 

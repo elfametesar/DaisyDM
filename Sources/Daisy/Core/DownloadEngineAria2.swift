@@ -130,14 +130,53 @@ extension DownloadEngine {
         
         if type == .batch {
             let listPath = tempDir.appendingPathComponent("batch_list.txt")
-            let listContent = (await MainActor.run { item.batchURLs })?.joined(separator: "\n") ?? ""
+            let (listContent, allFinished) = await MainActor.run {
+                guard let urls = item.batchURLs else { return ("", false) }
+                var active: [String] = []
+                var fullyDownloadedCount = 0
+                for (i, url) in urls.enumerated() {
+                    if i < item.subFiles.count {
+                        let f = item.subFiles[i]
+                        let isFinished = f.totalBytes > 0 && f.downloadedBytes >= f.totalBytes
+                        if isFinished {
+                            fullyDownloadedCount += 1
+                        } else if !f.isStopped {
+                            active.append("\(url)\n  out=\(f.path)")
+                        }
+                    }
+                }
+                return (active.joined(separator: "\n"), fullyDownloadedCount == urls.count)
+            }
+            
+            if allFinished {
+                await MainActor.run {
+                    item.status = .completed; item.dateCompleted = Date(); self.notifyCompletion(for: item)
+                    persist(); scheduleNext()
+                }
+                return
+            } else if listContent.isEmpty {
+                await MainActor.run { stop(item, stopSubFiles: false) }
+                return
+            }
+            
             try? listContent.write(to: listPath, atomically: true, encoding: .utf8)
             args.append("-i"); args.append(listPath.path)
             args.append("-j1")
         } else if type == .torrent {
-            let activeIndices = await MainActor.run { item.subFiles.filter { !$0.isStopped }.map { String($0.index) }.joined(separator: ",") }
-            if !activeIndices.isEmpty { args.append("--select-file=\(activeIndices)") }
-            else if !(await MainActor.run { item.subFiles.isEmpty }) { await MainActor.run { stop(item, stopSubFiles: false) }; return }
+            let activeIndices = await MainActor.run {
+                item.subFiles.filter { !$0.isStopped && ($0.totalBytes == 0 || $0.downloadedBytes < $0.totalBytes) }.map { String($0.index) }.joined(separator: ",")
+            }
+            if !activeIndices.isEmpty {
+                args.append("--select-file=\(activeIndices)")
+            } else {
+                let allFinished = await MainActor.run { !item.subFiles.isEmpty && item.subFiles.allSatisfy { $0.totalBytes > 0 && $0.downloadedBytes >= $0.totalBytes } }
+                if allFinished {
+                    await MainActor.run { item.status = .completed; item.dateCompleted = Date(); self.notifyCompletion(for: item); persist(); scheduleNext() }
+                } else {
+                    await MainActor.run { stop(item, stopSubFiles: false) }
+                }
+                return
+            }
             args.append(url.isFileURL ? url.path : url.absoluteString)
         } else {
             args.append(url.isFileURL ? url.path : url.absoluteString)
@@ -148,6 +187,17 @@ extension DownloadEngine {
         
         let sizeSnifferTask = Task { [weak item] in
             guard let item else { return }
+            
+            let itemType = await MainActor.run { item.type }
+            var currentBatchGID: String? = nil
+            var activeBatchIndex: Int = 0
+            
+            if itemType == .batch {
+                activeBatchIndex = await MainActor.run {
+                    item.subFiles.firstIndex(where: { !$0.isStopped && ($0.totalBytes == 0 || $0.downloadedBytes < $0.totalBytes) }) ?? 0
+                }
+            }
+            
             for try await line in stdoutPipe.fileHandleForReading.bytes.lines {
                 if line.contains("Length: ") {
                     if let range = line.range(of: "Length: ") {
@@ -160,6 +210,30 @@ extension DownloadEngine {
                 }
                 
                 if line.contains("[#") && line.contains("DL:") {
+                    var currentGID: String? = nil
+                    if let gidRange = line.range(of: #"\[#([a-zA-Z0-9]+)"#, options: .regularExpression) {
+                        currentGID = String(line[gidRange].dropFirst(2))
+                    }
+
+                    if itemType == .batch, let gid = currentGID {
+                        if currentBatchGID == nil {
+                            currentBatchGID = gid
+                        } else if currentBatchGID != gid {
+                            currentBatchGID = gid
+                            await MainActor.run {
+                                activeBatchIndex += 1
+                                while activeBatchIndex < item.subFiles.count {
+                                    let f = item.subFiles[activeBatchIndex]
+                                    if f.isStopped || (f.totalBytes > 0 && f.downloadedBytes >= f.totalBytes) {
+                                        activeBatchIndex += 1
+                                    } else {
+                                        break
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     if let dlRange = line.range(of: "DL:"),
                        let endRange = line[dlRange.upperBound...].firstIndex(where: { $0 == " " || $0 == "]" }) {
                         let speedStr = String(line[dlRange.upperBound..<endRange])
@@ -173,31 +247,103 @@ extension DownloadEngine {
                         if parts.count == 2 {
                             let downloaded = self.parseAriaSize(String(parts[0]))
                             let total      = self.parseAriaSize(String(parts[1]))
+                            
+                            let indexToUpdate = activeBatchIndex
                             await MainActor.run {
-                                if downloaded > 0 { item.downloadedBytes = downloaded }
-                                if total > 0 && item.totalBytes == 0 { item.totalBytes = total }
+                                if itemType == .batch {
+                                    var updated = item.subFiles
+                                    if indexToUpdate < updated.count {
+                                        if !updated[indexToUpdate].isStopped {
+                                            var changed = false
+                                            if downloaded >= 0 && updated[indexToUpdate].downloadedBytes != downloaded { updated[indexToUpdate].downloadedBytes = downloaded; changed = true }
+                                            if total > 0 && updated[indexToUpdate].totalBytes != total { updated[indexToUpdate].totalBytes = total; changed = true }
+                                            
+                                            if changed {
+                                                item.subFiles = updated
+                                                item.downloadedBytes = updated.reduce(0) { $0 + $1.downloadedBytes }
+                                                let newTotal = updated.reduce(0) { $0 + $1.totalBytes }
+                                                if newTotal > 0 { item.totalBytes = newTotal }
+                                                self.items = self.items // Trigger UI Refresh instantly
+                                            }
+                                        }
+                                    }
+                                } else if itemType == .torrent {
+                                    var updated = item.subFiles
+                                    var changed = false
+                                    
+                                    if updated.count == 1 {
+                                        if downloaded >= 0 && updated[0].downloadedBytes != downloaded { updated[0].downloadedBytes = downloaded; changed = true }
+                                        if total > 0 && updated[0].totalBytes != total { updated[0].totalBytes = total; changed = true }
+                                    } else if updated.count > 1 {
+                                        // Smart Delta Distribution for Multi-File Torrents
+                                        let previousTotal = updated.reduce(0) { $0 + $1.downloadedBytes }
+                                        let delta = downloaded - previousTotal
+                                        
+                                        if delta > 0 {
+                                            var remainingDelta = delta
+                                            for i in 0..<updated.count {
+                                                // Only route newly downloaded bytes to active, uncompleted files
+                                                if !updated[i].isStopped && updated[i].totalBytes > 0 && updated[i].downloadedBytes < updated[i].totalBytes {
+                                                    let space = updated[i].totalBytes - updated[i].downloadedBytes
+                                                    let take = min(remainingDelta, space)
+                                                    updated[i].downloadedBytes += take
+                                                    remainingDelta -= take
+                                                    changed = true
+                                                    if remainingDelta <= 0 { break }
+                                                }
+                                            }
+                                        }
+                                        if total > 0 && item.totalBytes != total { item.totalBytes = total; changed = true }
+                                    }
+                                    
+                                    if changed {
+                                        item.subFiles = updated
+                                        item.downloadedBytes = updated.reduce(0) { $0 + $1.downloadedBytes }
+                                        self.items = self.items // Trigger UI Refresh instantly
+                                    }
+                                } else {
+                                    if downloaded > 0 { item.downloadedBytes = downloaded }
+                                    if total > 0 && item.totalBytes == 0 { item.totalBytes = total }
+                                }
                             }
                         }
                     }
 
-                    if item.type == .batch || item.type == .torrent {
-                        let filePattern = #"\((\d+)\)"#
-                        if let range = line.range(of: filePattern, options: .regularExpression) {
-                            let idxStr = line[range].dropFirst().dropLast()
-                            if let idx = Int(idxStr) {
-                                let sizeParts = line.components(separatedBy: "/")
-                                if sizeParts.count >= 2 {
-                                    let dl  = self.parseAriaSize(sizeParts[0].components(separatedBy: " ").last ?? "")
-                                    let tot = self.parseAriaSize(sizeParts[1].components(separatedBy: " ").first ?? "")
-                                    if dl > 0 || tot > 0 {
-                                        await MainActor.run {
-                                            var updated = item.subFiles
-                                            if let i = updated.firstIndex(where: { $0.index == idx }) {
-                                                if dl  > 0 { updated[i].downloadedBytes = dl }
-                                                if tot > 0 { updated[i].totalBytes = tot }
-                                                item.subFiles = updated
+                    // Strict, bulletproof regex for fetching ALL active file progressions in a multi-file torrent (if console width allows)
+                    if itemType == .torrent {
+                        let filePattern = #"\(\s*(\d+)\s*\)\s*([\d\.]+[A-Za-z]*)/([\d\.]+[A-Za-z]*)"#
+                        if let regex = try? NSRegularExpression(pattern: filePattern) {
+                            let nsRange = NSRange(line.startIndex..<line.endIndex, in: line)
+                            let matches = regex.matches(in: line, range: nsRange)
+                            
+                            if !matches.isEmpty {
+                                await MainActor.run {
+                                    var updated = item.subFiles
+                                    var changed = false
+                                    
+                                    for match in matches {
+                                        if match.numberOfRanges == 4,
+                                           let idxRange = Range(match.range(at: 1), in: line),
+                                           let dlRange = Range(match.range(at: 2), in: line),
+                                           let totRange = Range(match.range(at: 3), in: line) {
+                                            
+                                            if let idx = Int(String(line[idxRange])) {
+                                                let dl = self.parseAriaSize(String(line[dlRange]))
+                                                let tot = self.parseAriaSize(String(line[totRange]))
+                                                
+                                                if let i = updated.firstIndex(where: { $0.index == idx }) {
+                                                    if !updated[i].isStopped {
+                                                        if dl >= 0 && updated[i].downloadedBytes != dl { updated[i].downloadedBytes = dl; changed = true }
+                                                        if tot > 0 && updated[i].totalBytes != tot { updated[i].totalBytes = tot; changed = true }
+                                                    }
+                                                }
                                             }
                                         }
+                                    }
+                                    if changed {
+                                        item.subFiles = updated
+                                        item.downloadedBytes = updated.reduce(0) { $0 + $1.downloadedBytes }
+                                        self.items = self.items // Trigger UI Refresh instantly
                                     }
                                 }
                             }
@@ -267,14 +413,20 @@ extension DownloadEngine {
                 }
             }
             try? FileManager.default.removeItem(at: tempDir)
+            
             await MainActor.run {
                 if item.totalBytes == 0 { item.totalBytes = item.downloadedBytes }
-                if item.type == .torrent && item.downloadedBytes < item.totalBytes && !item.subFiles.isEmpty {
+                
+                let isBatchOrTorrent = item.type == .torrent || item.type == .batch
+                let hasIncompleteSubFiles = item.subFiles.contains(where: { $0.totalBytes == 0 || $0.downloadedBytes < $0.totalBytes })
+                
+                if isBatchOrTorrent && hasIncompleteSubFiles && !item.subFiles.isEmpty {
                     item.status = .stopped
                 } else {
                     if item.totalBytes > 0 { item.downloadedBytes = item.totalBytes }
                     item.status = .completed; item.dateCompleted = Date(); self.notifyCompletion(for: item)
                 }
+                
                 item.speed = 0; item._lastTickDate = nil; persist(); scheduleNext()
             }
         } else if status == .downloading && isStillTracked {

@@ -120,6 +120,20 @@ struct AddDownloadSheet: View {
                             }
                             .disabled(isResolving)
                         }
+                        .onDrop(of: [UTType.fileURL], isTargeted: nil) { providers in
+                            for provider in providers {
+                                _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                                    if let url = url, url.pathExtension.lowercased() == "torrent" {
+                                        DispatchQueue.main.async {
+                                            let path = url.path(percentEncoded: false)
+                                            if urlText.isEmpty { urlText = path }
+                                            else { urlText += "\n" + path }
+                                        }
+                                    }
+                                }
+                            }
+                            return true
+                        }
                         
                         if !urlText.isEmpty {
                             Button { urlText = "" } label: {
