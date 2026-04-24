@@ -13,7 +13,7 @@ extension DownloadEngine {
         var targetPath = await MainActor.run { item.url.isFileURL ? item.url.path : item.url.absoluteString }
         let isMagnet = await MainActor.run { item.url.scheme == "magnet" }
 
-        // NEW: In-Memory Sandbox Workaround & HTML Validation
+        // macOS Sandbox TCC Workaround & HTML Validation
         let isFileURL = await MainActor.run { item.url.isFileURL }
         if isFileURL {
             let url = await MainActor.run { item.url }
@@ -23,7 +23,6 @@ extension DownloadEngine {
                 do {
                     let data = try Data(contentsOf: url)
                     
-                    // Validate that the file is not 0 bytes or a Cloudflare HTML block page
                     if data.count < 50 {
                         throw NSError(domain: "Daisy", code: 1, userInfo: [NSLocalizedDescriptionKey: "File is completely empty or too small to be a torrent."])
                     }
@@ -42,11 +41,9 @@ extension DownloadEngine {
             }
         }
 
-        // Check if we need to resolve a Magnet link to a local .torrent file silently
         if isMagnet {
             let tempFiles = (try? FileManager.default.contentsOfDirectory(atPath: tempDir.path)) ?? []
             
-            // FIX: Ensure the leftover .torrent file is actually valid and not a 0-byte ghost file from a previous failed run
             let validTorrent = tempFiles.first { file in
                 guard file.hasSuffix(".torrent") else { return false }
                 let attr = try? FileManager.default.attributesOfItem(atPath: tempDir.appendingPathComponent(file).path)
@@ -111,37 +108,15 @@ extension DownloadEngine {
         let destDir = await MainActor.run { item.tempDirURL.path }
         let fileName = await MainActor.run { item.filename }
         
+        // FIX: Replaced custom rasterization with direct native icon referencing to prevent the 1024x1024 memory layout crash
         await MainActor.run {
             if item.type == .directLink {
                 let bundleURL = item.destinationURL.appendingPathExtension("dysy")
                 try? FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
                 
-                let documentIcon = NSWorkspace.shared.icon(for: UTType.data)
-                documentIcon.size = NSSize(width: 512, height: 512)
-                let compositeIcon = NSImage(size: documentIcon.size)
-                
-                compositeIcon.lockFocus()
-                documentIcon.draw(in: NSRect(origin: .zero, size: documentIcon.size))
-                
-                if let customIcon = NSImage(named: "daisy") ?? NSImage(named: "FolderIcon") ?? NSImage(named: NSImage.applicationIconName) {
-                    let ratio: CGFloat = 0.65
-                    let w = documentIcon.size.width * ratio
-                    let h = documentIcon.size.height * ratio
-                    let x = (documentIcon.size.width - w) / 2.0
-                    let y = (documentIcon.size.height - h) / 2.0 - 15.0
-                    
-                    NSGraphicsContext.current?.saveGraphicsState()
-                    let shadow = NSShadow()
-                    shadow.shadowColor = NSColor.black.withAlphaComponent(0.35)
-                    shadow.shadowOffset = NSSize(width: 0, height: -6)
-                    shadow.shadowBlurRadius = 12.0
-                    shadow.set()
-                    
-                    customIcon.draw(in: NSRect(x: x, y: y, width: w, height: h), from: .zero, operation: .sourceOver, fraction: 1.0)
-                    NSGraphicsContext.current?.restoreGraphicsState()
+                if let folderIcon = NSImage(named: "FolderIcon") ?? NSImage(named: NSImage.applicationIconName) {
+                    NSWorkspace.shared.setIcon(folderIcon, forFile: bundleURL.path, options: [])
                 }
-                compositeIcon.unlockFocus()
-                NSWorkspace.shared.setIcon(compositeIcon, forFile: bundleURL.path, options: [])
             }
         }
         

@@ -543,7 +543,12 @@ struct DownloadListView: View {
         if !mainItems.isEmpty {
             let shouldStop = mainItems.contains { $0.status == .downloading || $0.status == .queued }
             for item in mainItems {
-                if shouldStop { engine.stop(item) } else { engine.resume(item) }
+                if shouldStop {
+                    engine.stop(item)
+                    TrayViewModel.shared.removeFromTray(item.id) // <--- ADDED TRAY REMOVAL HERE
+                } else {
+                    engine.resume(item)
+                }
             }
         }
         
@@ -735,7 +740,10 @@ struct DownloadListView: View {
 
             if targetItems.contains(where: { $0.status == .downloading || $0.status == .queued }) {
                 Button("Stop") {
-                    targetItems.forEach { engine.stop($0) }
+                    targetItems.forEach {
+                        engine.stop($0)
+                        TrayViewModel.shared.removeFromTray($0.id) // <--- ADDED TRAY REMOVAL HERE
+                    }
                 }
             }
             

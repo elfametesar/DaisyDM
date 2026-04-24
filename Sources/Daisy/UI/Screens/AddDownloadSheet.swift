@@ -227,7 +227,7 @@ struct AddDownloadSheet: View {
                     resolveTask?.cancel()
                     onClose()
                 }) {
-                    Label("Cancel", systemImage: "xmark.circle")
+                    Label("Cancel", systemImage: "xmark")
                 }
                 .buttonStyle(ActionButtonStyle(prominent: false, hex: accentColorHex))
                 
@@ -236,7 +236,7 @@ struct AddDownloadSheet: View {
                 Button(action: {
                     submit()
                 }) {
-                    Label("Add Download", systemImage: "plus.circle.fill")
+                    Label("Add Download", systemImage: "plus")
                 }
                 .buttonStyle(ActionButtonStyle(prominent: true, hex: accentColorHex))
                 .disabled(!isValid || urlText.isEmpty)

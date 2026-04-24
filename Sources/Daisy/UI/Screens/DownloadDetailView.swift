@@ -96,10 +96,13 @@ struct DetailView: View {
 
             LazyVGrid(columns: metricColumns, spacing: 12) {
                 metricTile(title: "Downloaded", value: item.transferLabel, systemImage: "arrow.down.circle")
+                
                 metricTile(title: "Download Speed", value: item.status == .downloading ? item.formattedSpeed : "0B/s", systemImage: "speedometer")
+                
                 metricTile(title: "Connections", value: "\(item.connectionCount) slots", systemImage: "antenna.radiowaves.left.and.right")
-                if let eta = item.formattedETA {
-                    metricTile(title: "ETA", value: eta, systemImage: "clock")
+                
+                if item.status == .downloading || item.status == .queued {
+                    metricTile(title: "ETA", value: item.formattedETA ?? "–", systemImage: "clock")
                 }
             }
 
@@ -251,14 +254,22 @@ struct DetailView: View {
     private func actionBar(for item: DownloadItem) -> some View {
         HStack(spacing: 10) {
             if item.status == .downloading || item.status == .queued {
-                Button(action: { engine.stop(item) }) { Label("Pause", systemImage: "pause.fill") }.buttonStyle(ActionButtonStyle(prominent: true, hex: accentColorHex))
+                Button(action: {
+                    engine.stop(item)
+                    TrayViewModel.shared.removeFromTray(item.id)
+                }) {
+                    Label("Pause", systemImage: "pause.fill")
+                }
+                .buttonStyle(ActionButtonStyle(prominent: true, hex: accentColorHex))
             } else if item.status == .stopped {
                 Button(action: { engine.resume(item) }) { Label("Resume", systemImage: "play.fill") }.buttonStyle(ActionButtonStyle(prominent: true, hex: accentColorHex))
+            
+                Button(action: { engine.retry(item) }) { Label("Restart", systemImage: "arrow.clockwise") }.buttonStyle(ActionButtonStyle(prominent: false, hex: accentColorHex))
             } else if item.status == .completed {
                 Button(action: { engine.retry(item) }) { Label("Restart", systemImage: "arrow.clockwise") }.buttonStyle(ActionButtonStyle(prominent: true, hex: accentColorHex))
             }
-            if item.status == .failed || item.status == .stopped {
-                Button(action: { engine.retry(item) }) { Label("Restart", systemImage: "arrow.clockwise") }.buttonStyle(ActionButtonStyle(prominent: item.status == .failed ? true : false, hex: accentColorHex))
+            if item.status == .failed {
+                Button(action: { engine.retry(item) }) { Label("Retry", systemImage: "arrow.clockwise") }.buttonStyle(ActionButtonStyle(prominent: item.status == .failed ? true : false, hex: accentColorHex))
             } else if item.status == .completed {
                 Button(action: { robustOpen(item.destinationURL) }) { Label("Open File", systemImage: "doc.text.magnifyingglass") }.buttonStyle(ActionButtonStyle(prominent: false, hex: accentColorHex))
             }

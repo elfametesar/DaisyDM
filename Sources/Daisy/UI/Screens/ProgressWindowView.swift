@@ -24,6 +24,7 @@ struct ProgressWindowView: View {
     @AppStorage("progressBarColorHex") private var progressBarColorHex = "#34C759"
     @AppStorage("alwaysPinProgressWindows") private var alwaysPinProgressWindows = false
 
+    // MARK: - THE FIX: Always fetch the live data instead of using the frozen snapshot
     private var liveItem: DownloadItem {
         engine.items.first(where: { $0.id == item.id }) ?? item
     }
@@ -74,6 +75,12 @@ struct ProgressWindowView: View {
         }
         .onReceive(timer) { _ in now = Date() }
         .onChange(of: window) { _, _ in setupWindowSettings() }
+        // NEW: Triggers every single time the window is focused/reopened, even if it was just hidden
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notif in
+            if let obj = notif.object as? NSWindow, obj == window {
+                TrayViewModel.shared.removeFromTray(liveItem.id)
+            }
+        }
     }
     
     private func setupWindowSettings() {
@@ -124,6 +131,7 @@ struct ProgressWindowView: View {
         titlebar.addSubview(btn)
     }
     
+    // MARK: - Global Key Monitor (Space & Escape)
     private func setupEventMonitor() {
         eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             if event.keyCode == 53 {
@@ -149,13 +157,14 @@ struct ProgressWindowView: View {
         }
     }
 
+    // MARK: - Subfile Actions
     private func toggleSubFile(_ id: UUID) {
         guard let index = liveItem.subFiles.firstIndex(where: { $0.id == id }) else { return }
         var updated = liveItem.subFiles
         updated[index].isStopped.toggle()
         liveItem.subFiles = updated
         
-        engine.items = engine.items
+        engine.items = engine.items // Force UI Update
         
         if liveItem.status == .stopped || liveItem.status == .failed {
             if !liveItem.subFiles[index].isStopped {
@@ -168,6 +177,7 @@ struct ProgressWindowView: View {
         }
     }
 
+    // MARK: - Status Tab
     var statusTab: some View {
         VStack(spacing: 0) {
             HStack(alignment: .top, spacing: 14) {
@@ -276,6 +286,7 @@ struct ProgressWindowView: View {
                                     }
                                     .frame(width: 80, alignment: .trailing)
                                     
+                                    // MARK: Subfile Controls
                                     let isFinished = file.totalBytes > 0 && file.downloadedBytes >= file.totalBytes
                                     if isFinished {
                                         Image(systemName: "checkmark.circle.fill")
@@ -298,6 +309,7 @@ struct ProgressWindowView: View {
                                         Spacer().frame(width: 44)
                                     }
                                 }
+                                // Dynamically injecting the isStopped state ensures SwiftUI immediately refreshes the item instead of caching it
                                 .id("\(file.id)-\(file.downloadedBytes)-\(file.totalBytes)-\(liveItem.subFiles.first(where: { $0.id == file.id })?.isStopped == true)")
                             }
                         }
@@ -484,7 +496,7 @@ struct DragOutBoxView: View {
         }
         .padding(12)
         .background(Color.primary.opacity(0.03))
-        .contentShape(Rectangle()) // Ensures the entire boundary catches touches perfectly
+        .contentShape(Rectangle())
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(
             RoundedRectangle(cornerRadius: 8)
@@ -517,7 +529,6 @@ class DragSourceNSView: NSView, NSDraggingSource {
         return bounds.contains(point) ? self : nil
     }
     
-    // Visually confirms to the user that the entire area is a drag trigger
     override func resetCursorRects() {
         super.resetCursorRects()
         addCursorRect(bounds, cursor: .openHand)
