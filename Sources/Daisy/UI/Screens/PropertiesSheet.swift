@@ -279,13 +279,24 @@ struct PropRow: View {
                 .frame(width: 120, alignment: .trailing)
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(value)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.primary)
-                    .textSelection(.enabled)
-                    .lineLimit(expandable && !expanded ? 1 : nil)
-                    .truncationMode(.tail)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                
+                // CONDITIONAL TEXT SELECTION FIX:
+                // Prevents macOS native pop-out text expansion on click
+                if expandable && !expanded {
+                    Text(value)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    Text(value)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.primary)
+                        .textSelection(.enabled)
+                        .lineLimit(nil)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
 
                 if expandable {
                     Button(expanded ? "Show less" : "Show more") { expanded.toggle() }

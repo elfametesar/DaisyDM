@@ -258,7 +258,7 @@ struct DetailView: View {
                 Button(action: { engine.retry(item) }) { Label("Restart", systemImage: "arrow.clockwise") }.buttonStyle(ActionButtonStyle(prominent: true, hex: accentColorHex))
             }
             if item.status == .failed || item.status == .stopped {
-                Button(action: { engine.retry(item) }) { Label("Retry", systemImage: "arrow.clockwise") }.buttonStyle(ActionButtonStyle(prominent: item.status == .failed ? true : false, hex: accentColorHex))
+                Button(action: { engine.retry(item) }) { Label("Restart", systemImage: "arrow.clockwise") }.buttonStyle(ActionButtonStyle(prominent: item.status == .failed ? true : false, hex: accentColorHex))
             } else if item.status == .completed {
                 Button(action: { robustOpen(item.destinationURL) }) { Label("Open File", systemImage: "doc.text.magnifyingglass") }.buttonStyle(ActionButtonStyle(prominent: false, hex: accentColorHex))
             }

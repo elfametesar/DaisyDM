@@ -24,7 +24,6 @@ struct ProgressWindowView: View {
     @AppStorage("progressBarColorHex") private var progressBarColorHex = "#34C759"
     @AppStorage("alwaysPinProgressWindows") private var alwaysPinProgressWindows = false
 
-    // MARK: - THE FIX: Always fetch the live data instead of using the frozen snapshot
     private var liveItem: DownloadItem {
         engine.items.first(where: { $0.id == item.id }) ?? item
     }
@@ -125,7 +124,6 @@ struct ProgressWindowView: View {
         titlebar.addSubview(btn)
     }
     
-    // MARK: - Global Key Monitor (Space & Escape)
     private func setupEventMonitor() {
         eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             if event.keyCode == 53 {
@@ -151,14 +149,13 @@ struct ProgressWindowView: View {
         }
     }
 
-    // MARK: - Subfile Actions
     private func toggleSubFile(_ id: UUID) {
         guard let index = liveItem.subFiles.firstIndex(where: { $0.id == id }) else { return }
         var updated = liveItem.subFiles
         updated[index].isStopped.toggle()
         liveItem.subFiles = updated
         
-        engine.items = engine.items // Force UI Update
+        engine.items = engine.items
         
         if liveItem.status == .stopped || liveItem.status == .failed {
             if !liveItem.subFiles[index].isStopped {
@@ -171,7 +168,6 @@ struct ProgressWindowView: View {
         }
     }
 
-    // MARK: - Status Tab
     var statusTab: some View {
         VStack(spacing: 0) {
             HStack(alignment: .top, spacing: 14) {
@@ -280,7 +276,6 @@ struct ProgressWindowView: View {
                                     }
                                     .frame(width: 80, alignment: .trailing)
                                     
-                                    // MARK: Subfile Controls
                                     let isFinished = file.totalBytes > 0 && file.downloadedBytes >= file.totalBytes
                                     if isFinished {
                                         Image(systemName: "checkmark.circle.fill")
@@ -303,7 +298,6 @@ struct ProgressWindowView: View {
                                         Spacer().frame(width: 44)
                                     }
                                 }
-                                // Dynamically injecting the isStopped state ensures SwiftUI immediately refreshes the item instead of caching it
                                 .id("\(file.id)-\(file.downloadedBytes)-\(file.totalBytes)-\(liveItem.subFiles.first(where: { $0.id == file.id })?.isStopped == true)")
                             }
                         }
@@ -313,6 +307,12 @@ struct ProgressWindowView: View {
                 }
             }
 
+            if liveItem.status == .completed {
+                Divider().padding(.vertical, 10)
+                DragOutBoxView(fileURL: liveItem.destinationURL, accentColorHex: accentColorHex)
+                    .padding(.horizontal, 16)
+            }
+
             Divider().padding(.vertical, 10)
 
             VStack(alignment: .leading, spacing: 4) {
@@ -320,7 +320,7 @@ struct ProgressWindowView: View {
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(.tertiary)
                 
-                let lineHeight: CGFloat = 11 * 1.35  // ~14.85pt per line at size 11
+                let lineHeight: CGFloat = 11 * 1.35
                 ScrollView(.vertical, showsIndicators: true) {
                     Text(liveItem.url.absoluteString)
                         .font(.system(size: 11))
@@ -431,6 +431,8 @@ struct ProgressWindowView: View {
     }
 }
 
+// MARK: - Subcomponents
+
 struct ActiveStatCell: View {
     let label: String
     let value: String
@@ -454,7 +456,106 @@ struct ActiveStatCell: View {
     }
 }
 
+// MARK: - Custom Move Drag Box
+
+struct DragOutBoxView: View {
+    let fileURL: URL
+    let accentColorHex: String
+
+    var body: some View {
+        HStack(spacing: 16) {
+            ZStack {
+                Circle()
+                    .fill(Color(hex: accentColorHex).opacity(0.1))
+                    .frame(width: 36, height: 36)
+                Image(systemName: "hand.draw.fill")
+                    .font(.system(size: 16))
+                    .foregroundColor(Color(hex: accentColorHex))
+            }
+            
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Drag to Move File")
+                    .font(.system(size: 12, weight: .semibold))
+                Text("Drop into Finder or another application")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+        .padding(12)
+        .background(Color.primary.opacity(0.03))
+        .contentShape(Rectangle()) // Ensures the entire boundary catches touches perfectly
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [4]))
+                .foregroundColor(Color(hex: accentColorHex).opacity(0.4))
+        )
+        .overlay(MoveDragSourceView(fileURL: fileURL))
+    }
+}
+
+struct MoveDragSourceView: NSViewRepresentable {
+    let fileURL: URL
+    
+    func makeNSView(context: Context) -> DragSourceNSView {
+        let view = DragSourceNSView()
+        view.fileURL = fileURL
+        return view
+    }
+    
+    func updateNSView(_ nsView: DragSourceNSView, context: Context) {
+        nsView.fileURL = fileURL
+    }
+}
+
+class DragSourceNSView: NSView, NSDraggingSource {
+    var fileURL: URL?
+    var isDragging = false
+    
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        return bounds.contains(point) ? self : nil
+    }
+    
+    // Visually confirms to the user that the entire area is a drag trigger
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        addCursorRect(bounds, cursor: .openHand)
+    }
+    
+    override func mouseDown(with event: NSEvent) {
+        // AppKit requires catching mouseDown to route mouseDragged
+    }
+    
+    override func mouseDragged(with event: NSEvent) {
+        guard !isDragging, let fileURL = fileURL else { return }
+        guard FileManager.default.fileExists(atPath: fileURL.path) else { return }
+        isDragging = true
+        
+        let icon = NSWorkspace.shared.icon(forFile: fileURL.path)
+        icon.size = NSSize(width: 48, height: 48)
+        
+        let dragPoint = convert(event.locationInWindow, from: nil)
+        let dragFrame = NSRect(x: dragPoint.x - 24, y: dragPoint.y - 24, width: 48, height: 48)
+        
+        let draggingItem = NSDraggingItem(pasteboardWriter: fileURL as NSURL)
+        draggingItem.setDraggingFrame(dragFrame, contents: icon)
+        
+        let session = beginDraggingSession(with: [draggingItem], event: event, source: self)
+        session.animatesToStartingPositionsOnCancelOrFail = true
+    }
+    
+    func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
+        return .every
+    }
+    
+    func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
+        isDragging = false
+    }
+}
+
 // MARK: - Native AppKit Button Class
+
 class HoverTrafficLightButton: NSButton {
     let itemId: UUID
     let accentColor: NSColor
