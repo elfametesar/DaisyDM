@@ -38,7 +38,7 @@ public final class DownloadEngine {
 
     private init() {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let dir = support.appendingPathComponent("Dispatch", isDirectory: true)
+        let dir = support.appendingPathComponent("Daisy", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         persistenceURL = dir.appendingPathComponent("queue.json")
         loadPersisted()

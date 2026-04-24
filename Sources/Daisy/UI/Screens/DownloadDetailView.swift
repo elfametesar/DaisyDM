@@ -16,6 +16,35 @@ struct DetailView: View {
         GridItem(.adaptive(minimum: 140), spacing: 12)
     ]
 
+    private func currentFileURL(for item: DownloadItem) -> URL {
+        if item.status == .completed { return item.destinationURL }
+        if item.type == .directLink { return item.destinationURL.appendingPathExtension("dysy") }
+        return item.destinationURL
+    }
+
+    private func robustReveal(_ url: URL) {
+        let target = url.standardizedFileURL
+        // Force Finder to highlight the file directly, bypassing FileManager caching
+        NSWorkspace.shared.activateFileViewerSelecting([target])
+        
+        // Fallback: If it genuinely doesn't exist yet, open the closest parent directory
+        if !FileManager.default.fileExists(atPath: target.path) {
+            var parent = target.deletingLastPathComponent()
+            while !FileManager.default.fileExists(atPath: parent.path) && parent.path != "/" {
+                parent = parent.deletingLastPathComponent()
+            }
+            NSWorkspace.shared.open(parent)
+        }
+    }
+
+    private func robustOpen(_ url: URL) {
+        var target = url.standardizedFileURL
+        while !FileManager.default.fileExists(atPath: target.path) && target.path != "/" {
+            target = target.deletingLastPathComponent()
+        }
+        NSWorkspace.shared.open(target)
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
@@ -87,8 +116,8 @@ struct DetailView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(item.filename)
                         .font(.title2.weight(.semibold))
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                         .frame(maxWidth: .infinity, alignment: .leading)
 
                     HStack(spacing: 6) {
@@ -150,33 +179,38 @@ struct DetailView: View {
     private func storageCard(for item: DownloadItem) -> some View {
         inspectorCard {
             Text("Storage").font(.headline)
-            pathRow(title: "Destination", systemImage: "folder", path: item.destinationURL.deletingLastPathComponent().path(percentEncoded: false), url: item.destinationURL.deletingLastPathComponent(), isReveal: false)
-            pathRow(title: "Saved File", systemImage: "doc", path: item.destinationURL.path(percentEncoded: false), url: item.destinationURL, isReveal: true)
+            let fileURL = currentFileURL(for: item)
+            pathRow(title: "Destination", systemImage: "folder", path: fileURL.deletingLastPathComponent().path(percentEncoded: false), url: fileURL.deletingLastPathComponent(), isReveal: false)
+            pathRow(title: "Saved File", systemImage: "doc", path: fileURL.path(percentEncoded: false), url: fileURL, isReveal: true)
         }
     }
     
     private func headersCard(for item: DownloadItem) -> some View {
         inspectorCard {
             Text("Headers & Cookies").font(.headline)
-            if let headers = item.headers, !headers.isEmpty {
-                ForEach(headers.sorted(by: { $0.key < $1.key }), id: \.key) { key, value in
-                    headerValueRow(label: key.capitalized, systemImage: "text.alignleft", value: value)
+            ScrollView {
+                VStack(spacing: 12) {
+                    if let headers = item.headers, !headers.isEmpty {
+                        ForEach(headers.sorted(by: { $0.key < $1.key }), id: \.key) { key, value in
+                            headerValueRow(label: key.capitalized, systemImage: "text.alignleft", value: value)
+                        }
+                    } else {
+                        if let ua = item.userAgent, !ua.isEmpty {
+                            headerValueRow(label: "User-Agent", systemImage: "text.alignleft", value: ua)
+                        }
+                        if let ref = item.referer, !ref.isEmpty {
+                            headerValueRow(label: "Referer", systemImage: "link", value: ref)
+                        }
+                    }
                 }
-            } else {
-                if let ua = item.userAgent, !ua.isEmpty {
-                    headerValueRow(label: "User-Agent", systemImage: "text.alignleft", value: ua)
-                }
-                if let ref = item.referer, !ref.isEmpty {
-                    headerValueRow(label: "Referer", systemImage: "link", value: ref)
-                }
+                .padding(.trailing, 8)
+                .padding(.bottom, 8)
             }
-            if let cookies = item.cookies, !cookies.isEmpty {
-                headerValueRow(label: "Cookies", systemImage: "lock.shield", value: cookies)
-            }
+            .frame(maxHeight: 250)
+            .clipped()
         }
     }
 
-    // Capped, scrollable row for header/cookie values that can be arbitrarily long.
     private func headerValueRow(label: String, systemImage: String, value: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Label(label, systemImage: systemImage)
@@ -226,10 +260,10 @@ struct DetailView: View {
             if item.status == .failed || item.status == .stopped {
                 Button(action: { engine.retry(item) }) { Label("Retry", systemImage: "arrow.clockwise") }.buttonStyle(ActionButtonStyle(prominent: item.status == .failed ? true : false, hex: accentColorHex))
             } else if item.status == .completed {
-                Button(action: { NSWorkspace.shared.open(item.destinationURL) }) { Label("Open File", systemImage: "doc.text.magnifyingglass") }.buttonStyle(ActionButtonStyle(prominent: false, hex: accentColorHex))
+                Button(action: { robustOpen(item.destinationURL) }) { Label("Open File", systemImage: "doc.text.magnifyingglass") }.buttonStyle(ActionButtonStyle(prominent: false, hex: accentColorHex))
             }
             Menu {
-                Button { NSWorkspace.shared.activateFileViewerSelecting([item.destinationURL]) } label: { Label("Reveal in Finder", systemImage: "folder") }
+                Button { robustReveal(currentFileURL(for: item)) } label: { Label("Reveal in Finder", systemImage: "folder") }
                 Button { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(item.url.absoluteString, forType: .string) } label: { Label("Copy Source URL", systemImage: "link") }
                 Divider()
                 Button(role: .destructive) { onRequestRemove(item) } label: { Label("Remove", systemImage: "trash") }
@@ -258,8 +292,8 @@ struct DetailView: View {
             }
             if let targetURL = url {
                 Button {
-                    if isReveal { NSWorkspace.shared.activateFileViewerSelecting([targetURL]) }
-                    else { NSWorkspace.shared.open(targetURL) }
+                    if isReveal { robustReveal(targetURL) }
+                    else { robustOpen(targetURL) }
                 } label: {
                     Image(systemName: "magnifyingglass").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary).padding(6).background(Color.primary.opacity(0.06), in: Circle())
                 }.buttonStyle(.plain).help(isReveal ? "Reveal in Finder" : "Open Folder")

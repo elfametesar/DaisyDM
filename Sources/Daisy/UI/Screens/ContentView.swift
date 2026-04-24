@@ -333,7 +333,6 @@ struct ContentView: View {
         
         group.notify(queue: .main) {
             if !collectedPaths.isEmpty {
-                // Pass exact data payload, entirely avoiding the async capture bug
                 self.addDownloadPayload = AddDownloadPayload(text: collectedPaths.joined(separator: "\n"))
             }
         }
@@ -352,7 +351,9 @@ struct ContentView: View {
         let pb = NSPasteboard.general
         var collectedPaths: [String] = []
         
-        if let urls = pb.readObjects(forClasses: [NSURL.self], options: nil) as? [URL] {
+        // Critical Fix: check that `urls` is actually not empty before entering the loop.
+        // pb.readObjects() will return an empty array if standard text is copied, entirely skipping the text fallback otherwise.
+        if let urls = pb.readObjects(forClasses: [NSURL.self], options: nil) as? [URL], !urls.isEmpty {
             for url in urls {
                 if url.isFileURL && url.pathExtension.lowercased() == "torrent" {
                     collectedPaths.append(url.path(percentEncoded: false))
@@ -361,15 +362,19 @@ struct ContentView: View {
                 }
             }
         } else if let str = pb.string(forType: .string) {
-            let lines = str.components(separatedBy: .newlines)
-            for line in lines {
-                let clean = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            let words = str.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }
+            for clean in words {
                 if let url = URL(string: clean), (url.scheme?.hasPrefix("http") == true || url.scheme == "magnet") {
+                    collectedPaths.append(clean)
+                } else if clean.hasPrefix("magnet:?") {
+                    collectedPaths.append(clean)
+                } else if clean.hasPrefix("/") && clean.lowercased().hasSuffix(".torrent") {
                     collectedPaths.append(clean)
                 }
             }
         }
         
+        // Prevent opening the sheet if no valid URLs were found
         if !collectedPaths.isEmpty {
             self.addDownloadPayload = AddDownloadPayload(text: collectedPaths.joined(separator: "\n"))
         }

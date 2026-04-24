@@ -162,7 +162,8 @@ class LocalServer {
 
             if headers.hasPrefix("POST") {
                 do {
-                    let rawJSON = String(data: bodyData, encoding: .utf8) ?? "Bozuk JSON Verisi"
+                    // FIX 4: Replaced 'let rawJSON = ' with '_'
+                    let _ = String(data: bodyData, encoding: .utf8) ?? "Bozuk JSON Verisi"
 
                     let payload = try JSONDecoder().decode(DownloadPayload.self, from: bodyData)
 

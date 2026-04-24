@@ -109,14 +109,14 @@ extension DownloadEngine {
             await MainActor.run { item.processes.append(vProc); item.processes.append(aProc) }
             
             let vAttr = try? FileManager.default.attributesOfItem(atPath: vFile)
-            var vBytes: Int64 = (vAttr?[.size] as? NSNumber)?.int64Value ?? 0
+            let initialVBytes: Int64 = (vAttr?[.size] as? NSNumber)?.int64Value ?? 0
             
             let aAttr = try? FileManager.default.attributesOfItem(atPath: aFile)
-            var aBytes: Int64 = (aAttr?[.size] as? NSNumber)?.int64Value ?? 0
+            let initialABytes: Int64 = (aAttr?[.size] as? NSNumber)?.int64Value ?? 0
 
-            await MainActor.run { if vBytes + aBytes > 0 { item.downloadedBytes = vBytes + aBytes } }
+            await MainActor.run { if initialVBytes + initialABytes > 0 { item.downloadedBytes = initialVBytes + initialABytes } }
 
-            var vTotal: Int64 = 0, aTotal: Int64 = 0, vSpeed: Double = 0, aSpeed: Double = 0
+            let tracker = YoutubeProgressTracker(vBytes: initialVBytes, aBytes: initialABytes)
 
             func sniff(_ line: String) -> (cur: Int64, tot: Int64, spd: Double)? {
                 let sizePattern = #"(?<cur>[\d\.]+[A-Z]iB)/(?<tot>[\d\.]+[A-Z]iB)"#
@@ -137,10 +137,11 @@ extension DownloadEngine {
             let vTask = Task {
                 for try await line in vPipe.fileHandleForReading.bytes.lines {
                     if let res = sniff(line) {
-                        vBytes = res.cur; vTotal = res.tot; vSpeed = res.spd
+                        let state = await tracker.updateVideo(bytes: res.cur, total: res.tot, speed: res.spd)
                         await MainActor.run {
-                            item.downloadedBytes = vBytes + aBytes; item.speed = vSpeed + aSpeed
-                            if vTotal > 0 && aTotal > 0 { item.totalBytes = vTotal + aTotal }
+                            item.downloadedBytes = state.downloaded
+                            item.speed = state.speed
+                            if state.total > 0 { item.totalBytes = state.total }
                             item._lastTickDate = Date()
                         }
                     }
@@ -150,10 +151,11 @@ extension DownloadEngine {
             let aTask = Task {
                 for try await line in aPipe.fileHandleForReading.bytes.lines {
                     if let res = sniff(line) {
-                        aBytes = res.cur; aTotal = res.tot; aSpeed = res.spd
+                        let state = await tracker.updateAudio(bytes: res.cur, total: res.tot, speed: res.spd)
                         await MainActor.run {
-                            item.downloadedBytes = vBytes + aBytes; item.speed = vSpeed + aSpeed
-                            if vTotal > 0 && aTotal > 0 { item.totalBytes = vTotal + aTotal }
+                            item.downloadedBytes = state.downloaded
+                            item.speed = state.speed
+                            if state.total > 0 { item.totalBytes = state.total }
                             item._lastTickDate = Date()
                         }
                     }
@@ -204,5 +206,33 @@ extension DownloadEngine {
                 await MainActor.run { if item.status == .downloading { item.status = .failed; item.error = error.localizedDescription } }
             }
         }.value
+    }
+}
+
+private actor YoutubeProgressTracker {
+    var vBytes: Int64
+    var aBytes: Int64
+    var vTotal: Int64 = 0
+    var aTotal: Int64 = 0
+    var vSpeed: Double = 0
+    var aSpeed: Double = 0
+
+    init(vBytes: Int64, aBytes: Int64) {
+        self.vBytes = vBytes
+        self.aBytes = aBytes
+    }
+
+    func updateVideo(bytes: Int64, total: Int64, speed: Double) -> (downloaded: Int64, total: Int64, speed: Double) {
+        self.vBytes = bytes
+        self.vTotal = total
+        self.vSpeed = speed
+        return (self.vBytes + self.aBytes, self.vTotal + self.aTotal, self.vSpeed + self.aSpeed)
+    }
+
+    func updateAudio(bytes: Int64, total: Int64, speed: Double) -> (downloaded: Int64, total: Int64, speed: Double) {
+        self.aBytes = bytes
+        self.aTotal = total
+        self.aSpeed = speed
+        return (self.vBytes + self.aBytes, self.vTotal + self.aTotal, self.vSpeed + self.aSpeed)
     }
 }

@@ -11,6 +11,28 @@ struct DaisyApp: App {
         Window("Daisy", id: "main") {
             ContentView()
                 .frame(minWidth: 1300, minHeight: 550)
+                .onOpenURL { url in
+                    // 1. Handle daisy:// links
+                    if url.scheme == URLSchemeHandler.scheme {
+                        URLSchemeHandler.handle(url)
+                    }
+                    // 2. Handle double-clicked .torrent files
+                    else if url.isFileURL && url.pathExtension.lowercased() == "torrent" {
+                        Task { @MainActor in
+                            let engine = DownloadEngine.shared
+                            let defaults = UserDefaults.standard
+                            let defaultPath = defaults.string(forKey: "defaultDownloadPath") ?? engine.downloadsDir().path
+                            let dest = URL(fileURLWithPath: defaultPath)
+                            
+                            engine.addDownload(
+                                urls: [url],
+                                destination: dest,
+                                connections: 16
+                            )
+                            NSApp.activate(ignoringOtherApps: true)
+                        }
+                    }
+                }
         }
         .windowStyle(.hiddenTitleBar)
         .windowToolbarStyle(.unified)
@@ -111,8 +133,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
-        for url in urls where url.scheme == URLSchemeHandler.scheme {
-            URLSchemeHandler.handle(url)
+        for url in urls {
+            if url.scheme == URLSchemeHandler.scheme {
+                URLSchemeHandler.handle(url)
+            } else if url.isFileURL && url.pathExtension.lowercased() == "torrent" {
+                Task { @MainActor in
+                    let engine = DownloadEngine.shared
+                    let defaults = UserDefaults.standard
+                    let defaultPath = defaults.string(forKey: "defaultDownloadPath") ?? engine.downloadsDir().path
+                    let dest = URL(fileURLWithPath: defaultPath)
+                    
+                    engine.addDownload(
+                        urls: [url],
+                        destination: dest,
+                        connections: 16
+                    )
+                    NSApp.activate(ignoringOtherApps: true)
+                }
+            }
         }
     }
 

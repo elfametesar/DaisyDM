@@ -173,12 +173,19 @@ _api.webRequest.onHeadersReceived.addListener(
             storeWithTTL(capturedResponseHeaders, u.origin, respHeaders);
         } catch(_) {}
 
-        const ct = respHeaders["content-type"] || "";
-        const isMedia = ["video/", "audio/", "mpegurl", "m3u8", "video/mp2t", "application/x-mpegurl", "application/vnd.apple.mpegurl", "application/dash+xml", "application/xml", "text/xml"].some(m => ct.includes(m));
+        const ct = (respHeaders["content-type"] || "").toLowerCase();
+        const isMediaContentType = ["video/", "audio/", "mpegurl", "m3u8", "video/mp2t", "application/x-mpegurl", "application/vnd.apple.mpegurl", "application/dash+xml"].some(m => ct.includes(m));
+        
         const urlLower = details.url.toLowerCase();
-        const isMediaByUrl = ['.m3u8', '.ts', '.mp4', '.webm', '.mov', '.mkv', '/hls/', '/m3u8', 'manifest.m3u8', 'master.m3u8', '.mpd', '/dash/', 'dashplaylist', 'dash.xml', '/manifest', 'video.ism', 'application/dash', '/stream/', 'playlist', 'quality=', 'bitrate=', 'resolution='].some(p => urlLower.includes(p));
+        const isMediaByUrl = ['.m3u8', '.ts', '.mp4', '.webm', '.mov', '.mkv', '/hls/', '/m3u8', 'manifest.m3u8', 'master.m3u8', '.mpd', '/dash/', 'dashplaylist', 'dash.xml', '/manifest', 'video.ism', 'application/dash', '/stream/', 'playlist', 'quality=', 'bitrate=', 'resolution=', 'segment', 'frag'].some(p => urlLower.includes(p));
 
-        if ((isMedia || isMediaByUrl) && details.tabId !== -1) {
+        const isMediaElement = details.type === 'media';
+        
+        // Catches activities posing as non-video (i.e. heavy media payload segmented via Range fetching)
+        const cl = parseInt(respHeaders["content-length"] || "0");
+        const isPosingAsVideo = details.statusCode === 206 && cl > 1024 * 1024 && !ct.includes('text') && !ct.includes('image') && !ct.includes('json');
+
+        if ((isMediaContentType || isMediaByUrl || isMediaElement || isPosingAsVideo) && details.tabId !== -1) {
             _api.tabs.sendMessage(details.tabId, { type: 'NEW_MEDIA_FOUND', mediaInfo: { url: details.url, frameId: details.frameId } }, { frameId: 0 }).catch(() => {});
             if (details.frameId !== 0) {
                 _api.tabs.sendMessage(details.tabId, { type: 'NEW_MEDIA_FOUND', mediaInfo: { url: details.url, frameId: details.frameId } }, { frameId: details.frameId }).catch(() => {});

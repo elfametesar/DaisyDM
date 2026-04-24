@@ -106,7 +106,7 @@ public final class DownloadItem: Identifiable, Codable, Hashable {
     
     public var tempDirURL: URL {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        return support.appendingPathComponent("Dispatch/ActiveDownloads").appendingPathComponent(id.uuidString)
+        return support.appendingPathComponent("Daisy/ActiveDownloads").appendingPathComponent(id.uuidString)
     }
 
     public var progress: Double {

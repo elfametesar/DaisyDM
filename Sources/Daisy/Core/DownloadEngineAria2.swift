@@ -1,4 +1,6 @@
 import Foundation
+import AppKit
+import UniformTypeIdentifiers
 
 extension DownloadEngine {
     
@@ -8,28 +10,95 @@ extension DownloadEngine {
         let tempDir = await MainActor.run { item.tempDirURL }
         try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
 
-        if item.type == .torrent && item.subFiles.isEmpty {
-            let files = await fetchTorrentInfo(item: item, executable: executable)
+        var targetPath = await MainActor.run { item.url.isFileURL ? item.url.path : item.url.absoluteString }
+        let isMagnet = await MainActor.run { item.url.scheme == "magnet" }
+
+        // NEW: In-Memory Sandbox Workaround & HTML Validation
+        let isFileURL = await MainActor.run { item.url.isFileURL }
+        if isFileURL {
+            let url = await MainActor.run { item.url }
+            let safeLocalPath = tempDir.appendingPathComponent(url.lastPathComponent)
+            if url.path != safeLocalPath.path {
+                let _ = url.startAccessingSecurityScopedResource()
+                do {
+                    let data = try Data(contentsOf: url)
+                    
+                    // Validate that the file is not 0 bytes or a Cloudflare HTML block page
+                    if data.count < 50 {
+                        throw NSError(domain: "Daisy", code: 1, userInfo: [NSLocalizedDescriptionKey: "File is completely empty or too small to be a torrent."])
+                    }
+                    let prefix = String(decoding: data.prefix(100), as: UTF8.self).lowercased()
+                    if prefix.contains("<!doctype html>") || prefix.contains("<html") {
+                        throw NSError(domain: "Daisy", code: 2, userInfo: [NSLocalizedDescriptionKey: "File is an HTML webpage, not a .torrent file. The tracker site likely blocked the download."])
+                    }
+                    
+                    try data.write(to: safeLocalPath)
+                    targetPath = safeLocalPath.path
+                } catch {
+                    print("SANDBOX COPY FAILED: \(error.localizedDescription)")
+                    await MainActor.run { item.error = "Invalid File: \(error.localizedDescription)" }
+                }
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        // Check if we need to resolve a Magnet link to a local .torrent file silently
+        if isMagnet {
+            let tempFiles = (try? FileManager.default.contentsOfDirectory(atPath: tempDir.path)) ?? []
+            
+            // FIX: Ensure the leftover .torrent file is actually valid and not a 0-byte ghost file from a previous failed run
+            let validTorrent = tempFiles.first { file in
+                guard file.hasSuffix(".torrent") else { return false }
+                let attr = try? FileManager.default.attributesOfItem(atPath: tempDir.appendingPathComponent(file).path)
+                let size = (attr?[.size] as? NSNumber)?.int64Value ?? 0
+                return size > 100
+            }
+            
+            if let torrentFile = validTorrent {
+                targetPath = tempDir.appendingPathComponent(torrentFile).path
+            } else {
+                if let localTorrentURL = await resolveMagnetLink(item: item, executable: executable) {
+                    targetPath = localTorrentURL.path
+                } else {
+                    await MainActor.run {
+                        item.status = .failed; item.error = "Failed to resolve magnet link metadata. No seeders found or network timeout."; item.speed = 0
+                        persist(); scheduleNext()
+                    }
+                    return
+                }
+            }
+        }
+
+        let needsTorrentFetch = await MainActor.run { item.type == .torrent && item.subFiles.isEmpty }
+        if needsTorrentFetch {
+            let result = await fetchTorrentInfo(item: item, executable: executable, targetPath: targetPath)
             await MainActor.run {
-                if !files.isEmpty { item.subFiles = files; item.totalBytes = files.map { $0.totalBytes }.reduce(0, +) }
+                if !result.files.isEmpty { item.subFiles = result.files; item.totalBytes = result.files.map { $0.totalBytes }.reduce(0, +) }
             }
             let stillEmpty = await MainActor.run { item.subFiles.isEmpty }
-            if stillEmpty && item.url.isFileURL {
+            if stillEmpty {
                 await MainActor.run {
-                    item.status = .failed; item.error = "Failed to parse .torrent file metadata."; item.speed = 0
+                    let errSnippet = result.error?.isEmpty == false ? result.error! : "Unknown error occurred."
+                    let customError = item.error ?? "Parse failed: \(errSnippet)"
+                    item.status = .failed; item.error = customError; item.speed = 0
                     persist(); scheduleNext()
                 }
                 return
             }
         }
 
+        // 1. Resolve collision policies and commit to the final destination path
         await MainActor.run {
             if !item.isPrepared {
                 let policy = UserDefaults.standard.string(forKey: "fileCollisionBehavior") ?? "rename"
                 if item.type != .torrent && item.type != .batch {
-                    if policy == "replace" { try? FileManager.default.removeItem(at: item.destinationURL) }
-                    else { item.destinationURL = uniqueURL(item.destinationURL) }
-                    FileManager.default.createFile(atPath: item.destinationURL.path, contents: nil)
+                    if policy == "replace" {
+                        try? FileManager.default.removeItem(at: item.destinationURL)
+                        try? FileManager.default.removeItem(at: item.destinationURL.appendingPathExtension("dysy"))
+                    } else {
+                        item.destinationURL = uniqueURL(item.destinationURL)
+                        item.filename = item.destinationURL.lastPathComponent
+                    }
                 } else if item.type == .batch {
                     item.destinationURL = uniqueURL(item.destinationURL)
                     try? FileManager.default.createDirectory(at: item.destinationURL, withIntermediateDirectories: true)
@@ -38,11 +107,44 @@ extension DownloadEngine {
             }
         }
 
-        let proc = Process(); proc.executableURL = URL(fileURLWithPath: executable)
-        var didLaunch = false
-
-        let destDir      = tempDir.path
-        let fileName     = await MainActor.run { item.filename }
+        // 2. Hide the messy .aria2 AND the 100% sparse file in Application Support
+        let destDir = await MainActor.run { item.tempDirURL.path }
+        let fileName = await MainActor.run { item.filename }
+        
+        await MainActor.run {
+            if item.type == .directLink {
+                let bundleURL = item.destinationURL.appendingPathExtension("dysy")
+                try? FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
+                
+                let documentIcon = NSWorkspace.shared.icon(for: UTType.data)
+                documentIcon.size = NSSize(width: 512, height: 512)
+                let compositeIcon = NSImage(size: documentIcon.size)
+                
+                compositeIcon.lockFocus()
+                documentIcon.draw(in: NSRect(origin: .zero, size: documentIcon.size))
+                
+                if let customIcon = NSImage(named: "daisy") ?? NSImage(named: "FolderIcon") ?? NSImage(named: NSImage.applicationIconName) {
+                    let ratio: CGFloat = 0.65
+                    let w = documentIcon.size.width * ratio
+                    let h = documentIcon.size.height * ratio
+                    let x = (documentIcon.size.width - w) / 2.0
+                    let y = (documentIcon.size.height - h) / 2.0 - 15.0
+                    
+                    NSGraphicsContext.current?.saveGraphicsState()
+                    let shadow = NSShadow()
+                    shadow.shadowColor = NSColor.black.withAlphaComponent(0.35)
+                    shadow.shadowOffset = NSSize(width: 0, height: -6)
+                    shadow.shadowBlurRadius = 12.0
+                    shadow.set()
+                    
+                    customIcon.draw(in: NSRect(x: x, y: y, width: w, height: h), from: .zero, operation: .sourceOver, fraction: 1.0)
+                    NSGraphicsContext.current?.restoreGraphicsState()
+                }
+                compositeIcon.unlockFocus()
+                NSWorkspace.shared.setIcon(compositeIcon, forFile: bundleURL.path, options: [])
+            }
+        }
+        
         let conns        = await MainActor.run { item.connectionCount }
         let type         = await MainActor.run { item.type }
         let url          = await MainActor.run { item.url }
@@ -51,6 +153,9 @@ extension DownloadEngine {
         let userAgent    = await MainActor.run { item.userAgent }
         let referer      = await MainActor.run { item.referer }
         let extraHeaders = await MainActor.run { item.headers }
+
+        let proc = Process(); proc.executableURL = URL(fileURLWithPath: executable)
+        var didLaunch = false
 
         var args = [
             "--dir=\(destDir)", "--continue=true", "--file-allocation=none",
@@ -68,13 +173,12 @@ extension DownloadEngine {
             for (key, value) in headers {
                 let lowerKey = key.lowercased()
                 if skipKeys.contains(lowerKey) { continue }
-                if lowerKey == "cookie" { continue } // Handled below safely
+                if lowerKey == "cookie" { continue }
                 args.append("--header=\(key): \(value)")
                 appliedKeys.insert(lowerKey)
             }
         }
 
-        // Apply cookies
         if let cookies = cookies, !cookies.isEmpty {
             if cookies.hasPrefix("# Netscape") {
                 let cookieFile = tempDir.appendingPathComponent("cookies.txt")
@@ -87,7 +191,6 @@ extension DownloadEngine {
             args.append("--header=Cookie: \(c)")
         }
 
-        // ONLY fallback to defaults if the Safari network stream didn't provide them
         if !appliedKeys.contains("referer"), let ref = referer, !ref.isEmpty {
             args.append("--referer=\(ref)")
         }
@@ -166,10 +269,12 @@ extension DownloadEngine {
             let activeIndices = await MainActor.run {
                 item.subFiles.filter { !$0.isStopped && ($0.totalBytes == 0 || $0.downloadedBytes < $0.totalBytes) }.map { String($0.index) }.joined(separator: ",")
             }
+            let isSubFilesEmpty = await MainActor.run { item.subFiles.isEmpty }
+            
             if !activeIndices.isEmpty {
                 args.append("--select-file=\(activeIndices)")
-            } else {
-                let allFinished = await MainActor.run { !item.subFiles.isEmpty && item.subFiles.allSatisfy { $0.totalBytes > 0 && $0.downloadedBytes >= $0.totalBytes } }
+            } else if !isSubFilesEmpty {
+                let allFinished = await MainActor.run { item.subFiles.allSatisfy { $0.totalBytes > 0 && $0.downloadedBytes >= $0.totalBytes } }
                 if allFinished {
                     await MainActor.run { item.status = .completed; item.dateCompleted = Date(); self.notifyCompletion(for: item); persist(); scheduleNext() }
                 } else {
@@ -177,13 +282,40 @@ extension DownloadEngine {
                 }
                 return
             }
-            args.append(url.isFileURL ? url.path : url.absoluteString)
+            args.append(targetPath)
         } else {
-            args.append(url.isFileURL ? url.path : url.absoluteString)
+            args.append(targetPath)
         }
 
         proc.arguments = args
         let stdoutPipe = Pipe(); proc.standardOutput = stdoutPipe; proc.standardError = FileHandle.nullDevice
+        
+        let dummySizeTask = Task { [weak item] in
+            guard let item = item else { return }
+            let itemType = await MainActor.run { item.type }
+            guard itemType == .directLink else { return }
+            
+            let bundleURL = await MainActor.run { item.destinationURL.appendingPathExtension("dysy") }
+            let dummyFileURL = await MainActor.run { bundleURL.appendingPathComponent(item.filename) }
+            
+            while !Task.isCancelled {
+                if !FileManager.default.fileExists(atPath: dummyFileURL.path) {
+                    try? FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
+                    FileManager.default.createFile(atPath: dummyFileURL.path, contents: nil)
+                }
+                
+                if let fh = try? FileHandle(forWritingTo: dummyFileURL) {
+                    let currentSize = await MainActor.run { item.downloadedBytes }
+                    let actualSize = (try? fh.seekToEnd()) ?? 0
+                    if currentSize > 0 && currentSize != actualSize {
+                        try? fh.truncate(atOffset: UInt64(currentSize))
+                        try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: bundleURL.path)
+                    }
+                    try? fh.close()
+                }
+                try? await Task.sleep(nanoseconds: 500_000_000)
+            }
+        }
         
         let sizeSnifferTask = Task { [weak item] in
             guard let item else { return }
@@ -263,7 +395,7 @@ extension DownloadEngine {
                                                 item.downloadedBytes = updated.reduce(0) { $0 + $1.downloadedBytes }
                                                 let newTotal = updated.reduce(0) { $0 + $1.totalBytes }
                                                 if newTotal > 0 { item.totalBytes = newTotal }
-                                                self.items = self.items // Trigger UI Refresh instantly
+                                                self.items = self.items
                                             }
                                         }
                                     }
@@ -275,14 +407,12 @@ extension DownloadEngine {
                                         if downloaded >= 0 && updated[0].downloadedBytes != downloaded { updated[0].downloadedBytes = downloaded; changed = true }
                                         if total > 0 && updated[0].totalBytes != total { updated[0].totalBytes = total; changed = true }
                                     } else if updated.count > 1 {
-                                        // Smart Delta Distribution for Multi-File Torrents
                                         let previousTotal = updated.reduce(0) { $0 + $1.downloadedBytes }
                                         let delta = downloaded - previousTotal
                                         
                                         if delta > 0 {
                                             var remainingDelta = delta
                                             for i in 0..<updated.count {
-                                                // Only route newly downloaded bytes to active, uncompleted files
                                                 if !updated[i].isStopped && updated[i].totalBytes > 0 && updated[i].downloadedBytes < updated[i].totalBytes {
                                                     let space = updated[i].totalBytes - updated[i].downloadedBytes
                                                     let take = min(remainingDelta, space)
@@ -299,7 +429,7 @@ extension DownloadEngine {
                                     if changed {
                                         item.subFiles = updated
                                         item.downloadedBytes = updated.reduce(0) { $0 + $1.downloadedBytes }
-                                        self.items = self.items // Trigger UI Refresh instantly
+                                        self.items = self.items
                                     }
                                 } else {
                                     if downloaded > 0 { item.downloadedBytes = downloaded }
@@ -309,7 +439,6 @@ extension DownloadEngine {
                         }
                     }
 
-                    // Strict, bulletproof regex for fetching ALL active file progressions in a multi-file torrent (if console width allows)
                     if itemType == .torrent {
                         let filePattern = #"\(\s*(\d+)\s*\)\s*([\d\.]+[A-Za-z]*)/([\d\.]+[A-Za-z]*)"#
                         if let regex = try? NSRegularExpression(pattern: filePattern) {
@@ -343,7 +472,7 @@ extension DownloadEngine {
                                     if changed {
                                         item.subFiles = updated
                                         item.downloadedBytes = updated.reduce(0) { $0 + $1.downloadedBytes }
-                                        self.items = self.items // Trigger UI Refresh instantly
+                                        self.items = self.items
                                     }
                                 }
                             }
@@ -361,6 +490,7 @@ extension DownloadEngine {
         }
 
         sizeSnifferTask.cancel()
+        dummySizeTask.cancel()
 
         let isStillTracked = await MainActor.run {
             let tracked = item.processes.contains(where: { $0 === proc })
@@ -376,12 +506,17 @@ extension DownloadEngine {
             return
         }
 
+        // 4. Extract the final file from Application Support to the user's destination, and delete the .dysy proxy
         if proc.terminationStatus == 0 {
             let destinationURL = await MainActor.run { item.destinationURL }
             if type == .directLink {
+                let bundleURL = destinationURL.appendingPathExtension("dysy")
                 let downloadedFile = tempDir.appendingPathComponent(fileName)
+                
                 _ = try? FileManager.default.removeItem(at: destinationURL)
                 try? FileManager.default.moveItem(at: downloadedFile, to: destinationURL)
+                try? FileManager.default.removeItem(at: bundleURL)
+                
                 if let attr = try? FileManager.default.attributesOfItem(atPath: destinationURL.path), let fileSize = attr[.size] as? NSNumber {
                     await MainActor.run { item.downloadedBytes = fileSize.int64Value; if item.totalBytes == 0 || item.totalBytes < fileSize.int64Value { item.totalBytes = fileSize.int64Value } }
                 }
@@ -441,26 +576,110 @@ extension DownloadEngine {
         }
     }
 
-    func fetchTorrentInfo(item: DownloadItem, executable: String) async -> [SubFile] {
-        let tempDir = await MainActor.run { item.tempDirURL.path }
-        let targetPath = item.url.isFileURL ? item.url.path : item.url.absoluteString
+    func resolveMagnetLink(item: DownloadItem, executable: String) async -> URL? {
+        let tempDir = await MainActor.run { item.tempDirURL }
+        try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
         
-        return await withCheckedContinuation { (cont: CheckedContinuation<[SubFile], Never>) in
-            let proc = Process(); proc.executableURL = URL(fileURLWithPath: executable)
-            proc.arguments = [
-                "--show-files", "--enable-dht=true", "--bt-enable-lpd=true", "--enable-peer-exchange=true", "--dht-listen-port=6881-6999",
-                "--bt-tracker=udp://tracker.opentrackr.org:1337/announce,udp://open.stealth.si:80/announce",
-                "--dir=\(tempDir)", targetPath
-            ]
-            let pipe = Pipe(); proc.standardOutput = pipe; proc.standardError = Pipe()
-            let readTask = Task {
-                var outputData = Data()
-                do { if let data = try pipe.fileHandleForReading.readToEnd() { outputData = data } } catch {}
-                return String(data: outputData, encoding: .utf8) ?? ""
-            }
-            proc.terminationHandler = { _ in Task { let output = await readTask.value; let parsed = self.parseShowFiles(output); cont.resume(returning: parsed) } }
-            do { try proc.run(); Task { try? await Task.sleep(nanoseconds: 120_000_000_000); if proc.isRunning { proc.terminate() } } } catch { cont.resume(returning: []) }
+        let targetPath = await MainActor.run { item.url.absoluteString }
+        
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: executable)
+        proc.arguments = [
+            "--bt-metadata-only=true", "--bt-save-metadata=true", "--console-log-level=notice",
+            "--enable-dht=true", "--bt-enable-lpd=true", "--enable-peer-exchange=true",
+            "--dht-listen-port=6881-6999",
+            "--bt-tracker=udp://tracker.opentrackr.org:1337/announce,udp://open.stealth.si:80/announce",
+            "--dir=\(tempDir.path)", targetPath
+        ]
+        
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = Pipe()
+        
+        do {
+            try proc.run()
+        } catch {
+            return nil
         }
+        
+        let timeoutTask = Task {
+            try? await Task.sleep(nanoseconds: 60_000_000_000)
+            if proc.isRunning { proc.terminate() }
+        }
+        
+        var resolvedURL: URL? = nil
+        do {
+            for try await line in pipe.fileHandleForReading.bytes.lines {
+                if let range = line.range(of: "Saved metadata as ") {
+                    let path = line[range.upperBound...].trimmingCharacters(in: .whitespaces)
+                    resolvedURL = URL(fileURLWithPath: path)
+                }
+            }
+        } catch {}
+        
+        await Task.detached { proc.waitUntilExit() }.value
+        timeoutTask.cancel()
+        
+        if let resolved = resolvedURL {
+            let size = (try? FileManager.default.attributesOfItem(atPath: resolved.path)[.size] as? NSNumber)?.int64Value ?? 0
+            if size > 100 { return resolved }
+        }
+        
+        if let files = try? FileManager.default.contentsOfDirectory(atPath: tempDir.path),
+           let torrentFile = files.first(where: { $0.hasSuffix(".torrent") }) {
+            let fallbackPath = tempDir.appendingPathComponent(torrentFile)
+            let size = (try? FileManager.default.attributesOfItem(atPath: fallbackPath.path)[.size] as? NSNumber)?.int64Value ?? 0
+            if size > 100 { return fallbackPath }
+        }
+        
+        return nil
+    }
+
+    func fetchTorrentInfo(item: DownloadItem, executable: String, targetPath: String) async -> (files: [SubFile], error: String?) {
+        let tempDir = await MainActor.run { item.tempDirURL.path }
+        
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: executable)
+        proc.arguments = [
+            "--show-files", "--enable-dht=true", "--bt-enable-lpd=true", "--enable-peer-exchange=true", "--dht-listen-port=6881-6999",
+            "--bt-tracker=udp://tracker.opentrackr.org:1337/announce,udp://open.stealth.si:80/announce",
+            "--dir=\(tempDir)", targetPath
+        ]
+        
+        let pipe = Pipe()
+        let errPipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = errPipe
+        
+        do {
+            try proc.run()
+        } catch {
+            return ([], "Failed to launch process: \(error.localizedDescription)")
+        }
+        
+        async let outputTask = Task.detached(priority: .userInitiated) {
+            let data = try? pipe.fileHandleForReading.readToEnd()
+            return String(decoding: data ?? Data(), as: UTF8.self)
+        }.value
+        
+        async let errorTask = Task.detached(priority: .userInitiated) {
+            let data = try? errPipe.fileHandleForReading.readToEnd()
+            return String(decoding: data ?? Data(), as: UTF8.self)
+        }.value
+        
+        let (output, stderr) = await (outputTask, errorTask)
+        proc.waitUntilExit()
+        
+        let files = self.parseShowFiles(output)
+        
+        if files.isEmpty {
+            var combinedError = ""
+            if !output.isEmpty { combinedError += "STDOUT: \(output.prefix(300)) " }
+            if !stderr.isEmpty { combinedError += "STDERR: \(stderr.prefix(300))" }
+            return ([], combinedError.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        
+        return (files, stderr.trimmingCharacters(in: .whitespacesAndNewlines))
     }
     
     nonisolated func parseShowFiles(_ output: String) -> [SubFile] {
@@ -475,7 +694,7 @@ extension DownloadEngine {
                 if let idx = Int(left) { currentIndex = idx; currentPath = right }
                 else if let idx = currentIndex, let path = currentPath, left.isEmpty {
                     if let start = right.firstIndex(of: "("), let end = right.lastIndex(of: ")") {
-                        let bytesStr = right[right.index(after: start)...end].dropLast().replacingOccurrences(of: ",", with: "")
+                        let bytesStr = right[right.index(after: start)..<end].replacingOccurrences(of: ",", with: "")
                         if let bytes = Int64(bytesStr) {
                             files.append(SubFile(id: UUID(), index: idx, path: path, filename: URL(fileURLWithPath: path).lastPathComponent, totalBytes: bytes, downloadedBytes: 0, isStopped: false))
                         }

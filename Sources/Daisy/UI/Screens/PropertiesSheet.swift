@@ -12,6 +12,25 @@ struct PropertiesSheet: View {
     @AppStorage("accentColorHex")       private var accentColorHex      = "#0A84FF"
     @AppStorage("enableBackgroundTint") private var enableBackgroundTint = false
 
+    private func currentFileURL(for item: DownloadItem) -> URL {
+        if item.status == .completed { return item.destinationURL }
+        if item.type == .directLink { return item.destinationURL.appendingPathExtension("dysy") }
+        return item.destinationURL
+    }
+
+    private func robustReveal(_ url: URL) {
+        let target = url.standardizedFileURL
+        NSWorkspace.shared.activateFileViewerSelecting([target])
+        
+        if !FileManager.default.fileExists(atPath: target.path) {
+            var parent = target.deletingLastPathComponent()
+            while !FileManager.default.fileExists(atPath: parent.path) && parent.path != "/" {
+                parent = parent.deletingLastPathComponent()
+            }
+            NSWorkspace.shared.open(parent)
+        }
+    }
+
     private var fileSize: String {
         if item.totalBytes > 0    { return formatBytes(item.totalBytes) }
         if item.downloadedBytes > 0 { return formatBytes(item.downloadedBytes) + " (partial)" }
@@ -19,7 +38,7 @@ struct PropertiesSheet: View {
     }
 
     private var diskUsage: String {
-        let url = item.destinationURL
+        let url = currentFileURL(for: item)
         guard FileManager.default.fileExists(atPath: url.path),
               let vals = try? url.resourceValues(forKeys: [.totalFileAllocatedSizeKey]) else { return "–" }
         return formatBytes(Int64(vals.totalFileAllocatedSize ?? 0))
@@ -56,7 +75,7 @@ struct PropertiesSheet: View {
                 VStack(spacing: 0) {
                     PropertiesSection("File") {
                         PropRow("Filename",    item.filename)
-                        PropRow("Destination", item.destinationURL.path)
+                        PropRow("Destination", currentFileURL(for: item).path)
                         PropRow("File Size",   fileSize)
                         PropRow("On Disk",     diskUsage)
                         PropRow("Type",        item.type.rawValue)
@@ -119,7 +138,6 @@ struct PropertiesSheet: View {
                             PropRow("Scheme", URL(string: urlText)?.scheme?.uppercased() ?? item.url.scheme?.uppercased() ?? "–")
                         }
                         
-                        // Output every parsed header right in the Source section.
                         if let headers = item.headers, !headers.isEmpty {
                             ForEach(headers.sorted(by: { $0.key < $1.key }), id: \.key) { key, value in
                                 PropRow(key.capitalized, value, expandable: true)
@@ -155,7 +173,7 @@ struct PropertiesSheet: View {
 
             HStack {
                 Button("Show in Finder") {
-                    NSWorkspace.shared.activateFileViewerSelecting([item.destinationURL])
+                    robustReveal(currentFileURL(for: item))
                 }
                 .buttonStyle(ActionButtonStyle(prominent: false, hex: accentColorHex))
                 

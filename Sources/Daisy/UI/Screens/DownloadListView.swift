@@ -2,6 +2,48 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 
+// MARK: - Global Icon Cache (Prevents Main-Thread Freezes)
+class SharedIconCache {
+    static let shared = SharedIconCache()
+    private var cache: [String: NSImage] = [:]
+    private let lock = NSLock()
+    
+    func icon(for ext: String) -> NSImage {
+        let cleanExt = ext.lowercased()
+        
+        lock.lock()
+        if let img = cache[cleanExt] {
+            lock.unlock()
+            return img
+        }
+        lock.unlock()
+        
+        let img: NSImage
+        if cleanExt.isEmpty {
+            img = NSWorkspace.shared.icon(for: .data)
+        } else if let utType = UTType(filenameExtension: cleanExt) {
+            img = NSWorkspace.shared.icon(for: utType)
+        } else {
+            img = NSWorkspace.shared.icon(for: .data)
+        }
+        
+        // Massive Optimization: Rasterize huge 512x512 .icns blobs down to exactly 24x24.
+        // This prevents SwiftUI from choking the GPU texture memory when rendering long lists.
+        let targetSize = NSSize(width: 24, height: 24)
+        let resizedImg = NSImage(size: targetSize)
+        resizedImg.lockFocus()
+        NSGraphicsContext.current?.imageInterpolation = .high
+        img.draw(in: NSRect(origin: .zero, size: targetSize))
+        resizedImg.unlockFocus()
+        
+        lock.lock()
+        cache[cleanExt] = resizedImg
+        lock.unlock()
+        
+        return resizedImg
+    }
+}
+
 // MARK: - Right Click Handling
 struct RightClickModifier: ViewModifier {
     let action: () -> Void
@@ -48,6 +90,11 @@ extension View {
 }
 
 // MARK: - List Items
+struct RowDynamicID: Hashable {
+    let id: UUID
+    let state: Int
+}
+
 enum ListRowItem: Identifiable {
     case main(DownloadItem)
     case sub(parent: DownloadItem, file: SubFile, index: Int)
@@ -59,10 +106,14 @@ enum ListRowItem: Identifiable {
         }
     }
     
-    var dynamicID: String {
+    // Uses a highly optimized Hashable struct instead of String interpolation to prevent
+    // massive memory allocations and CPU spikes when SwiftUI diffs the list on selection.
+    var dynamicID: RowDynamicID {
         switch self {
-        case .main(let item): return "\(item.id)-\(item.status.rawValue)"
-        case .sub(_, let file, _): return "\(file.id)-\(file.isStopped)"
+        case .main(let item):
+            return RowDynamicID(id: item.id, state: item.status.hashValue)
+        case .sub(let parent, let file, _):
+            return RowDynamicID(id: file.id, state: (file.isStopped ? 1 : 0) ^ parent.status.hashValue)
         }
     }
 }
@@ -93,12 +144,19 @@ struct DownloadListView: View {
     @AppStorage("sortColumn") private var sortColumn: SortColumn = .dateAdded
     @AppStorage("sortAscending") private var sortAscending: Bool = false
 
+    private func currentFileURL(for item: DownloadItem) -> URL {
+        if item.status == .completed { return item.destinationURL }
+        if item.type == .directLink { return item.destinationURL.appendingPathExtension("dysy") }
+        return item.destinationURL
+    }
+
     var sortedItems: [DownloadItem] {
         items.sorted { a, b in
             let isAsc = sortAscending
             switch sortColumn {
             case .name:
-                let cmp = a.filename.localizedStandardCompare(b.filename)
+                // CaseInsensitiveCompare is significantly faster than localizedStandardCompare
+                let cmp = a.filename.caseInsensitiveCompare(b.filename)
                 if cmp == .orderedSame { return a.dateAdded > b.dateAdded }
                 return isAsc ? cmp == .orderedAscending : cmp == .orderedDescending
             case .status:
@@ -238,74 +296,58 @@ struct DownloadListView: View {
         .focusable()
         .focused($isListFocused)
         .focusEffectDisabled()
-        .onKeyPress(.init("a"), phases: .down) { press in
-            guard press.modifiers.contains(.command) else { return .ignored }
-            selected = Set(flattenedRows.map { $0.id })
-            return .handled
-        }
-        .onKeyPress(.delete, phases: .down) { _ in
-            let toDelete = engine.items.filter { selected.contains($0.id) }
-            if toDelete.isEmpty { return .ignored }
-            onRequestRemove(toDelete)
-            return .handled
-        }
-        .onKeyPress(.deleteForward, phases: .down) { _ in
-            let toDelete = engine.items.filter { selected.contains($0.id) }
-            if toDelete.isEmpty { return .ignored }
-            onRequestRemove(toDelete)
-            return .handled
-        }
-        .onKeyPress(.space, phases: .down) { _ in
-            togglePlayPause()
-            return .handled
-        }
-        .onKeyPress(.return, phases: .down) { _ in
-            triggerDefaultAction()
-            return .handled
-        }
-        .onKeyPress(.init("c"), phases: .down) { press in
-            guard press.modifiers.contains(.command) else { return .ignored }
-            copySelectedURLs()
-            return .handled
-        }
-        .onKeyPress(.init("r"), phases: .down) { press in
-            guard press.modifiers.contains(.command) else { return .ignored }
-            revealSelected()
-            return .handled
-        }
-        .onKeyPress(.init("i"), phases: .down) { press in
-            guard press.modifiers.contains(.command) else { return .ignored }
-            showProperties()
-            return .handled
-        }
-        .onKeyPress(.init("p"), phases: .down) { press in
-            guard press.modifiers.contains(.command) else { return .ignored }
-            showProgressWindow()
-            return .handled
-        }
-        .onKeyPress(.init("f"), phases: .down) { press in
-            guard press.modifiers.contains(.command) else { return .ignored }
-            isSearchFocused = true
-            return .handled
-        }
-        // Explicitly handle Arrow Keys with [.down, .repeat] to support holding the key
-        .onKeyPress(.upArrow, phases: [.down, .repeat]) { press in
-            handleArrow(.up, isShift: press.modifiers.contains(.shift))
-            return .handled
-        }
-        .onKeyPress(.downArrow, phases: [.down, .repeat]) { press in
-            handleArrow(.down, isShift: press.modifiers.contains(.shift))
-            return .handled
-        }
-        .onKeyPress(.leftArrow, phases: [.down, .repeat]) { press in
-            handleArrow(.left, isShift: press.modifiers.contains(.shift))
-            return .handled
-        }
-        .onKeyPress(.rightArrow, phases: [.down, .repeat]) { press in
-            handleArrow(.right, isShift: press.modifiers.contains(.shift))
-            return .handled
+        // Single unified block for list interactions prevents ContextMenu shortcut duplication bugs
+        .onKeyPress(phases: [.down, .repeat]) { press in
+            let isCmd = press.modifiers.contains(.command)
+            let isShift = press.modifiers.contains(.shift)
+            
+            switch press.key {
+            case .delete, .deleteForward:
+                let toDelete = engine.items.filter { selected.contains($0.id) }
+                if !toDelete.isEmpty {
+                    onRequestRemove(toDelete)
+                    return .handled
+                }
+            case .upArrow:
+                handleArrow(.up, isShift: isShift); return .handled
+            case .downArrow:
+                handleArrow(.down, isShift: isShift); return .handled
+            case .leftArrow:
+                handleArrow(.left, isShift: isShift); return .handled
+            case .rightArrow:
+                handleArrow(.right, isShift: isShift); return .handled
+            case .space:
+                togglePlayPause(); return .handled
+            case .return:
+                triggerDefaultAction(); return .handled
+            default:
+                break
+            }
+            
+            if isCmd {
+                switch press.characters.lowercased() {
+                case "a": selected = Set(flattenedRows.map { $0.id }); return .handled
+                case "c": copySelectedURLs(); return .handled
+                case "r": revealSelected(); return .handled
+                case "i": showProperties(); return .handled
+                case "p": showProgressWindow(); return .handled
+                case "f": isSearchFocused = true; return .handled
+                default: break
+                }
+            }
+            
+            // Explicit safety fallback to guarantee standard Backspace is captured
+            if press.characters == "\u{7F}" || press.characters == "\u{08}" {
+                let toDelete = engine.items.filter { selected.contains($0.id) }
+                if !toDelete.isEmpty {
+                    onRequestRemove(toDelete)
+                    return .handled
+                }
+            }
+            return .ignored
         }
         .onDeleteCommand {
+            // Allows the native macOS "Edit -> Delete" menu item to function
             let toDelete = engine.items.filter { selected.contains($0.id) }
             guard !toDelete.isEmpty else { return }
             onRequestRemove(toDelete)
@@ -377,6 +419,7 @@ struct DownloadListView: View {
             handleRowTap(rowItem: rowItem)
         }
         .contextMenu { rowContextMenu(rowItem) }
+        .id(rowItem.id) // This explicitly links the view to the UUID so proxy.scrollTo() can find it
     }
     
     @ViewBuilder
@@ -458,7 +501,7 @@ struct DownloadListView: View {
         var fileURLs: [URL] = []
         for row in selectedRows {
             if case .main(let item) = row {
-                fileURLs.append(item.destinationURL)
+                fileURLs.append(currentFileURL(for: item))
             } else if case .sub(let parent, _, _) = row {
                 fileURLs.append(parent.destinationURL)
             }
@@ -709,7 +752,6 @@ struct DownloadListView: View {
                     Button("Show Progress Window") {
                         NotificationCenter.default.post(name: .openProgressWindow, object: nil, userInfo: ["id": single.id])
                     }
-                    .keyboardShortcut("p", modifiers: [.command])
                 }
                 
                 if single.status == .completed {
@@ -733,23 +775,18 @@ struct DownloadListView: View {
                     }
                 }
                 
-                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([single.destinationURL]) }
-                    .keyboardShortcut("r", modifiers: [.command])
-                
+                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([currentFileURL(for: single)]) }
                 Button("Restart Download") { targetItems.forEach { engine.retry($0) } }
 
                 Button("Copy URL") {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(single.url.absoluteString, forType: .string)
                 }
-                .keyboardShortcut("c", modifiers: [.command])
                 
                 Divider()
                 Button("Remove", role: .destructive) { onRequestRemove(targetItems) }
-                    .keyboardShortcut(.delete)
                 Divider()
                 Button("Properties") { propertiesItem = single }
-                    .keyboardShortcut("i", modifiers: [.command])
                 
             } else if targetItems.count > 1 {
                 if targetItems.allSatisfy({ $0.status == .completed }) {
@@ -762,7 +799,6 @@ struct DownloadListView: View {
             }
             
         case .sub(let parent, let staticFile, let index):
-            // Fallback gracefully. In the subfile context menu, access the live file dynamically via parent[index]
             let file = index < parent.subFiles.count ? parent.subFiles[index] : staticFile
             let isFinished = file.totalBytes > 0 && file.downloadedBytes >= file.totalBytes
             
@@ -831,7 +867,7 @@ struct ColumnHeader: View {
                     Text("Name")
                     sortIcon(for: .name)
                 }
-                .frame(minWidth: 200, maxWidth: .infinity, alignment: .leading)
+                .frame(minWidth: 150, maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -851,7 +887,7 @@ struct ColumnHeader: View {
                     Text("Transfer")
                     sortIcon(for: .transfer)
                 }
-                .frame(width: 130, alignment: .leading)
+                .frame(width: 110, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -861,7 +897,7 @@ struct ColumnHeader: View {
                     Text("Type")
                     sortIcon(for: .type)
                 }
-                .frame(width: 80, alignment: .leading)
+                .frame(width: 65, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -878,7 +914,7 @@ struct ColumnHeader: View {
         }
         .font(.system(size: 11, weight: .medium))
         .foregroundStyle(.secondary)
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 16)
         .padding(.vertical, 8)
         .background(enableBackgroundTint ? Color(hex: accentColorHex).opacity(0.04) : Color(NSColor.controlBackgroundColor))
         .overlay(alignment: .bottom) { Divider() }
@@ -920,20 +956,28 @@ struct DownloadRow: View {
     var engine = DownloadEngine.shared
 
     var dragPayload: URL {
-        if item.status == .completed && FileManager.default.fileExists(atPath: item.destinationURL.path) {
-            return item.destinationURL
-        }
-        return item.url
+        return item.status == .completed ? item.destinationURL : item.url
     }
     
     var fileIcon: NSImage {
         let ext = (item.filename as NSString).pathExtension
-        if ext.isEmpty { return NSWorkspace.shared.icon(for: .data) }
-        return NSWorkspace.shared.icon(for: UTType(filenameExtension: ext) ?? .data)
+        return SharedIconCache.shared.icon(for: ext)
     }
 
     var dynamicTextColor: Color {
         isSelected ? Color(hex: accentColorHex).accessibleText : .primary
+    }
+    
+    var displaySubtitle: String {
+        if item.type == .batch { return "\(item.subFiles.count) Sub-files" }
+        let fullStr = item.url.absoluteString
+        
+        let isLong = fullStr.utf8.count > 150
+        
+        if item.type == .torrent || isLong {
+            return isLong ? String(fullStr.prefix(150)) + "..." : fullStr
+        }
+        return item.url.host ?? fullStr
     }
 
     var body: some View {
@@ -944,22 +988,24 @@ struct DownloadRow: View {
     
     var mainRow: some View {
         HStack(spacing: 12) {
-            // 1. NAME
-            HStack(spacing: 8) {
+            HStack(spacing: 6) {
                 if (item.type == .torrent || item.type == .batch) && (!item.subFiles.isEmpty || item.status == .downloading) {
                     Button(action: { isExpanded.toggle() }) {
                         Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                             .font(.system(size: 10, weight: .bold))
                             .foregroundStyle(isSelected ? dynamicTextColor : .secondary)
-                            .frame(width: 16, height: 16)
+                            .frame(width: 12, height: 16)
                     }
                     .buttonStyle(.plain)
-                } else {}
+                } else {
+                    Color.clear.frame(width: 12, height: 16)
+                }
                 
                 Image(nsImage: fileIcon)
                     .resizable()
                     .scaledToFit()
-                    .frame(width: 28, height: 28)
+                    .frame(width: 24, height: 24)
+                    .padding(.leading, item.subFiles.isEmpty ? -20 : 0)
                 
                 VStack(alignment: .leading, spacing: 1) {
                     Text(item.filename)
@@ -967,19 +1013,17 @@ struct DownloadRow: View {
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .foregroundStyle(isSelected ? dynamicTextColor : .primary)
-                    Text(item.type == .batch ? "\(item.subFiles.count) Sub-files" : (item.url.host ?? item.url.absoluteString))
+                    Text(displaySubtitle)
                         .font(.system(size: 11))
                         .foregroundStyle(isSelected ? dynamicTextColor.opacity(0.7) : .secondary)
                         .lineLimit(1)
                 }
             }
-            .frame(minWidth: 200, maxWidth: .infinity, alignment: .leading)
+            .frame(minWidth: 150, maxWidth: .infinity, alignment: .leading)
 
-            // 2. STATUS
             StatusPill(status: item.status, isSelected: isSelected, accentColorHex: accentColorHex)
                 .frame(width: 100, alignment: .leading)
 
-            // 3. TRANSFER
             VStack(alignment: .leading, spacing: 3) {
                 GeometryReader { geo in
                     ZStack(alignment: .leading) {
@@ -997,16 +1041,14 @@ struct DownloadRow: View {
                     .foregroundStyle(isSelected ? dynamicTextColor.opacity(0.8) : .secondary)
                     .lineLimit(1)
             }
-            .frame(width: 130, alignment: .leading)
+            .frame(width: 110, alignment: .leading)
 
-            // 4. TYPE
             Text(item.type.rawValue)
                 .font(.system(size: 12))
                 .foregroundStyle(isSelected ? dynamicTextColor.opacity(0.85) : .primary)
                 .lineLimit(1)
-                .frame(width: 80, alignment: .leading)
+                .frame(width: 65, alignment: .leading)
 
-            // 5. SPEED & ETA
             VStack(alignment: .leading, spacing: 3) {
                 Text(item.status == .downloading ? item.formattedSpeed : "0B/s")
                     .font(.system(size: 12))
@@ -1023,8 +1065,8 @@ struct DownloadRow: View {
             .frame(width: 70, alignment: .leading)
 
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, isCompactList ? 4 : 9)
+        .padding(.horizontal, 8)
+        .padding(.vertical, isCompactList ? 4 : 8)
     }
 
     var progressColor: Color {
@@ -1067,7 +1109,6 @@ struct SubFileRow: View {
         return matchedColor.adaptedForScheme(colorScheme)
     }
     
-    // Explicit dynamic computed file ensures we ALWAYs read the freshest array
     var file: SubFile {
         if index < parent.subFiles.count {
             return parent.subFiles[index]
@@ -1080,11 +1121,11 @@ struct SubFileRow: View {
     }
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 8) {
             Image(systemName: "doc")
                 .font(.system(size: 11))
                 .foregroundStyle(isSelected ? dynamicTextColor.opacity(0.8) : .secondary)
-                .frame(width: 20)
+                .frame(width: 16)
             
             Text(file.filename)
                 .font(.system(size: 12))
@@ -1111,7 +1152,7 @@ struct SubFileRow: View {
                     if index < updated.count {
                         updated[index].isStopped.toggle()
                         parent.subFiles = updated
-                        engine.items = engine.items // Force UI update
+                        engine.items = engine.items
                         
                         if parent.status == .stopped || parent.status == .failed {
                             if !parent.subFiles[index].isStopped {
@@ -1135,9 +1176,9 @@ struct SubFileRow: View {
                 Spacer().frame(width: 44)
             }
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, 8)
         .padding(.vertical, 6)
-        .padding(.leading, 30) // Indented
+        .padding(.leading, 32)
         .background(isSelected ? Color(hex: accentColorHex) : Color.clear)
     }
 }

@@ -2,6 +2,22 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 
+// MARK: - Subclassed NSTextView to intercept pastes
+class PasteFilteringTextView: NSTextView {
+    var pasteFilter: ((String) -> String)?
+
+    override func paste(_ sender: Any?) {
+        if let pasteFilter = pasteFilter, let boardStr = NSPasteboard.general.string(forType: .string) {
+            let filtered = pasteFilter(boardStr)
+            if !filtered.isEmpty {
+                self.insertText(filtered, replacementRange: self.selectedRange())
+            }
+        } else {
+            super.paste(sender)
+        }
+    }
+}
+
 struct AddDownloadSheet: View {
     var initialURLText: String = ""
     var onClose: () -> Void = {}
@@ -105,12 +121,13 @@ struct AddDownloadSheet: View {
                                 Text("https://example.com/file1.zip\nPaste links, magnets, or drag .torrent files here")
                                     .foregroundStyle(.secondary.opacity(0.5))
                                     .font(.system(size: 13))
-                                    .padding(.top, 4)
                                     .allowsHitTesting(false)
                             }
                             
                             SubmitTextEditor(text: $urlText, onSubmit: {
                                 submit()
+                            }, onPasteFilter: { clipboardText in
+                                return extractValidURLStrings(from: clipboardText)
                             })
                             .frame(minHeight: 60, maxHeight: 120)
                             .focused($focusedField, equals: .urlInput)
@@ -235,7 +252,7 @@ struct AddDownloadSheet: View {
     }
 
     private func extractValidURLStrings(from text: String) -> String {
-        return text.components(separatedBy: .newlines)
+        return text.components(separatedBy: .whitespacesAndNewlines)
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
             .filter { str in
@@ -323,18 +340,33 @@ struct AddDownloadSheet: View {
 struct SubmitTextEditor: NSViewRepresentable {
     @Binding var text: String
     var onSubmit: () -> Void
+    var onPasteFilter: ((String) -> String)?
 
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = NSTextView.scrollableTextView()
-        guard let textView = scrollView.documentView as? NSTextView else { return scrollView }
-        textView.delegate = context.coordinator
-        textView.font = .systemFont(ofSize: 13)
-        textView.drawsBackground = false
-        textView.isRichText = false
-        textView.allowsUndo = true
-        textView.backgroundColor = .clear
-        textView.textColor = .labelColor
-        textView.insertionPointColor = .labelColor
+        
+        // Swap out the default NSTextView with our custom one that filters pastes
+        let customTextView = PasteFilteringTextView()
+        customTextView.pasteFilter = onPasteFilter
+        customTextView.delegate = context.coordinator
+        customTextView.font = .systemFont(ofSize: 13)
+        customTextView.drawsBackground = false
+        customTextView.isRichText = false
+        customTextView.allowsUndo = true
+        customTextView.backgroundColor = .clear
+        customTextView.textColor = .labelColor
+        customTextView.insertionPointColor = .labelColor
+        
+        // Exact 0 point inset to align perfectly with ZStack hints
+        customTextView.textContainerInset = NSSize(width: 0, height: 0)
+        customTextView.textContainer?.lineFragmentPadding = 0
+        
+        customTextView.autoresizingMask = [.width]
+        customTextView.isVerticallyResizable = true
+        customTextView.isHorizontallyResizable = false
+        customTextView.textContainer?.widthTracksTextView = true
+        
+        scrollView.documentView = customTextView
         return scrollView
     }
 

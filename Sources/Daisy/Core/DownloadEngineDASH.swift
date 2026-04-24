@@ -316,9 +316,15 @@ extension DownloadEngine {
             }
             aria2Headers.append("Accept: */*"); aria2Headers.append("Accept-Language: en-US,en;q=0.9")
 
+            // FIX 1: Capture as a constant to avoid strict concurrency error
+            let capturedHeaders = aria2Headers
+
             @Sendable func dashDownloadSegments(segments: [(url: String, out: String)], outputDir: URL, label: String, progressOffset: Double, progressShare: Double) async -> Bool {
                 dashLog("Building aria2c input file for \(segments.count) \(label) segments...")
-                let inputContent = buildAria2InputFile(segments: segments, headers: aria2Headers)
+                
+                // Use capturedHeaders
+                let inputContent = buildAria2InputFile(segments: segments, headers: capturedHeaders)
+                
                 let inputFile = tempDir.appendingPathComponent("aria2_\(label).txt")
                 do { try inputContent.write(to: inputFile, atomically: true, encoding: .utf8) } catch { return false }
 
@@ -347,7 +353,6 @@ extension DownloadEngine {
                     return false
                 }
 
-                // CRITICAL FIX: Removed --async-dns=false
                 var args: [String] = [
                     "--input-file=\(inputFile.path)",
                     "--dir=\(outputDir.path)",
@@ -386,8 +391,9 @@ extension DownloadEngine {
 
                 await MainActor.run { item.processes.append(proc) }
 
-                // CRITICAL: Non-blocking ReadabilityHandlers prevent buffer deadlocks
-                var downloadedSegs = 0
+                // FIX 2: Use the newly created DashProgressTracker actor to safely increment the segment count concurrently
+                let tracker = DashProgressTracker()
+                
                 pipe.fileHandleForReading.readabilityHandler = { fh in
                     let data = fh.availableData
                     guard !data.isEmpty, let str = String(data: data, encoding: .utf8) else { return }
@@ -396,12 +402,14 @@ extension DownloadEngine {
                     for line in lines where !line.trimmingCharacters(in: .whitespaces).isEmpty {
                         
                         if line.contains("Download complete:") {
-                            downloadedSegs += 1
-                            let ratio = Double(downloadedSegs) / Double(segments.count)
-                            let dlSec = totalSec * (progressOffset + ratio * progressShare)
-                            Task { @MainActor in
-                                item.hlsDownloadedSeconds = min(dlSec, totalSec)
-                                item._lastTickDate = Date()
+                            Task {
+                                let currentDownloadedSegs = await tracker.increment()
+                                let ratio = Double(currentDownloadedSegs) / Double(segments.count)
+                                let dlSec = totalSec * (progressOffset + ratio * progressShare)
+                                await MainActor.run {
+                                    item.hlsDownloadedSeconds = min(dlSec, totalSec)
+                                    item._lastTickDate = Date()
+                                }
                             }
                         }
                         if line.contains("DL:") {
@@ -461,7 +469,7 @@ extension DownloadEngine {
                 return
             }
 
-            if hasAudio, let audio = audioTrack {
+            if hasAudio { // <-- FIX 3: Removed unused variable declaration 'let audio = audioTrack'
                 dashLog("Phase 2: Downloading Audio Segments...")
                 let audioOK = await dashDownloadSegments(segments: audioSegments, outputDir: audioDir, label: "audio", progressOffset: 0.80, progressShare: 0.20)
                 if await isCancelled() { return }
@@ -568,4 +576,13 @@ extension DownloadEngine {
                 notifyCompletion(for: item); persist(); scheduleNext()
             }
         }
+}
+
+// FIX 2: Added the progress tracker actor for DASH segment safety
+private actor DashProgressTracker {
+    var downloadedSegs: Int = 0
+    func increment() -> Int {
+        downloadedSegs += 1
+        return downloadedSegs
     }
+}

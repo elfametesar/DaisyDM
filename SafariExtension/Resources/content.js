@@ -50,8 +50,14 @@ interceptorScript.textContent = `
                 for (let [k, v] of req.headers.entries()) headers[k] = v;
             }
             
-            // Always fire for media URLs, even if no custom headers
-            if (Object.keys(headers).length > 0 || MEDIA_RE.test(url)) {
+            let hasRange = false;
+            if (headers) {
+                const lowerHeaders = Object.keys(headers).map(k => k.toLowerCase());
+                hasRange = lowerHeaders.includes('range');
+            }
+            
+            // Always fire for media URLs or Range fetching, even if no custom headers
+            if (Object.keys(headers).length > 0 || MEDIA_RE.test(url) || hasRange) {
                 window.postMessage({ __daisyMediaHeaders: { url, headers } }, "*");
             }
             return _fetch.apply(this, args);
@@ -76,12 +82,21 @@ interceptorScript.textContent = `
             if (this._daisyUrl) {
                 try {
                     const absoluteUrl = new URL(this._daisyUrl, document.baseURI).href;
-                    // Always fire for media URLs, even if no custom headers
-                    if (Object.keys(this._daisyHeaders || {}).length > 0 || MEDIA_RE.test(absoluteUrl)) {
+                    let hasRange = false;
+                    if (this._daisyHeaders) {
+                        const lowerHeaders = Object.keys(this._daisyHeaders).map(k => k.toLowerCase());
+                        hasRange = lowerHeaders.includes('range');
+                    }
+                    if (Object.keys(this._daisyHeaders || {}).length > 0 || MEDIA_RE.test(absoluteUrl) || hasRange) {
                         window.postMessage({ __daisyMediaHeaders: { url: absoluteUrl, headers: this._daisyHeaders || {} } }, "*");
                     }
                 } catch(e) {
-                    if (Object.keys(this._daisyHeaders || {}).length > 0 || MEDIA_RE.test(this._daisyUrl)) {
+                    let hasRange = false;
+                    if (this._daisyHeaders) {
+                        const lowerHeaders = Object.keys(this._daisyHeaders).map(k => k.toLowerCase());
+                        hasRange = lowerHeaders.includes('range');
+                    }
+                    if (Object.keys(this._daisyHeaders || {}).length > 0 || MEDIA_RE.test(this._daisyUrl) || hasRange) {
                         window.postMessage({ __daisyMediaHeaders: { url: this._daisyUrl, headers: this._daisyHeaders || {} } }, "*");
                     }
                 }
@@ -238,14 +253,15 @@ function bubbleMediaToTop(data) {
     
     let lower = url.toLowerCase();
     if (mediaType === 'unknown') {
-        if (lower.includes('.m3u8') || lower.includes('/m3/')) mediaType = 'hls';
-        else if (lower.includes('.mpd') || lower.includes('/dash/')) mediaType = 'dash';
-        else if (lower.includes('.mp4')) mediaType = 'mp4';
+        if (lower.includes('.m3u8') || lower.includes('/m3/') || lower.includes('playlist')) mediaType = 'hls';
+        else if (lower.includes('.mpd') || lower.includes('/dash/') || lower.includes('manifest')) mediaType = 'dash';
+        else if (lower.includes('.mp4') || lower.includes('.webm') || lower.includes('.mov') || lower.includes('.ts')) mediaType = 'mp4';
     }
     
     if (IS_TOP_FRAME) {
         const now = Date.now();
-        sniffedMediaUrls = sniffedMediaUrls.filter(m => now - m.timestamp < 35000);
+        // Maintain list memory for a 2-hour sliding window, capped at 200 URLs to solve missing videos that ended fetching.
+        sniffedMediaUrls = sniffedMediaUrls.filter(m => now - m.timestamp < 7200000).slice(-200);
 
         if (!sniffedMediaUrls.some(m => normalizeUrl(m.url) === normalizeUrl(url))) {
             const entry = { url, mediaType, frameOrigin: data.frameOrigin || window.location.origin, timestamp: now };
