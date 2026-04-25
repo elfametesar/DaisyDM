@@ -3,6 +3,7 @@
 const _api = typeof browser !== "undefined" ? browser : chrome;
 
 let dispatchEnabled = true;
+let bypassGraceUntil = 0;
 
 const capturedRequestHeaders  = new Map();
 const capturedResponseHeaders = new Map();
@@ -200,6 +201,12 @@ if (typeof chrome !== 'undefined' && chrome.downloads) {
     chrome.downloads.onCreated.addListener((item) => {
         if (!dispatchEnabled) return;
         
+        if (Date.now() < bypassGraceUntil) {
+            // Consume the token so we don't permanently break standard intercepts for 60s
+            bypassGraceUntil = 0;
+            return; // LET BROWSER HANDLE IT
+        }
+        
         if (item.url.startsWith("blob:") || item.url.startsWith("data:")) return;
 
         chrome.downloads.cancel(item.id, () => {
@@ -210,6 +217,12 @@ if (typeof chrome !== 'undefined' && chrome.downloads) {
 }
 
 _api.runtime.onMessage.addListener((message, sender, sendResponse) => {
+
+    if (message.type === "SET_BYPASS_GRACE") {
+        bypassGraceUntil = Date.now() + 60000; // 60 seconds
+        sendResponse({ ok: true });
+        return true;
+    }
 
     if (message.type === "PUSH_MEDIA_HEADERS") {
         if (message.headers && typeof message.headers === "object") {

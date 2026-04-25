@@ -1,8 +1,9 @@
-// background.js - Daisy Safari Extension
+// background.js - Daisy Chrome Extension
 
 const _api = typeof browser !== "undefined" ? browser : chrome;
 
 let dispatchEnabled = true;
+let bypassGraceUntil = 0;
 
 const capturedRequestHeaders  = new Map();
 const capturedResponseHeaders = new Map();
@@ -24,7 +25,6 @@ function storeWithTTL(map, key, value) {
     }
 }
 
-// Aggressively match captured headers by hostname/path, ignoring minor URL differences (range params, etc.)
 function findCapturedDataAggressive(map, targetUrl) {
     let merged = {};
     if (!targetUrl) return merged;
@@ -81,12 +81,19 @@ _api.storage.onChanged.addListener((changes, area) => {
 });
 
 _api.runtime.onInstalled.addListener(() => {
-    _api.contextMenus.create({ id: "dispatch-download", title: "Download with Daisy", contexts: ["link"] });
+    _api.contextMenus.create({
+        id: "dispatch-download",
+        title: "Download with Daisy",
+        contexts: ["link", "selection", "video", "audio"]
+    });
 });
 
 _api.contextMenus.onClicked.addListener((info, tab) => {
-    if (info.menuItemId === "dispatch-download" && info.linkUrl) {
-        triggerDownload(info.linkUrl, extractFilename(info.linkUrl), tab?.url || "");
+    if (info.menuItemId === "dispatch-download") {
+        const targetUrl = info.linkUrl || info.srcUrl || info.selectionText;
+        if (targetUrl) {
+            triggerDownload(targetUrl, extractFilename(targetUrl), tab?.url || "");
+        }
     }
 });
 
@@ -173,19 +180,12 @@ _api.webRequest.onHeadersReceived.addListener(
             storeWithTTL(capturedResponseHeaders, u.origin, respHeaders);
         } catch(_) {}
 
-        const ct = (respHeaders["content-type"] || "").toLowerCase();
-        const isMediaContentType = ["video/", "audio/", "mpegurl", "m3u8", "video/mp2t", "application/x-mpegurl", "application/vnd.apple.mpegurl", "application/dash+xml"].some(m => ct.includes(m));
-        
+        const ct = respHeaders["content-type"] || "";
+        const isMedia = ["video/", "audio/", "mpegurl", "m3u8", "video/mp2t", "application/x-mpegurl", "application/vnd.apple.mpegurl", "application/dash+xml", "application/xml", "text/xml"].some(m => ct.includes(m));
         const urlLower = details.url.toLowerCase();
-        const isMediaByUrl = ['.m3u8', '.ts', '.mp4', '.webm', '.mov', '.mkv', '/hls/', '/m3u8', 'manifest.m3u8', 'master.m3u8', '.mpd', '/dash/', 'dashplaylist', 'dash.xml', '/manifest', 'video.ism', 'application/dash', '/stream/', 'playlist', 'quality=', 'bitrate=', 'resolution=', 'segment', 'frag'].some(p => urlLower.includes(p));
+        const isMediaByUrl = ['.m3u8', '.ts', '.mp4', '.webm', '.mov', '.mkv', '/hls/', '/m3u8', 'manifest.m3u8', 'master.m3u8', '.mpd', '/dash/', 'dashplaylist', 'dash.xml', '/manifest', 'video.ism', 'application/dash', '/stream/', 'playlist', 'quality=', 'bitrate=', 'resolution='].some(p => urlLower.includes(p));
 
-        const isMediaElement = details.type === 'media';
-        
-        // Catches activities posing as non-video (i.e. heavy media payload segmented via Range fetching)
-        const cl = parseInt(respHeaders["content-length"] || "0");
-        const isPosingAsVideo = details.statusCode === 206 && cl > 1024 * 1024 && !ct.includes('text') && !ct.includes('image') && !ct.includes('json');
-
-        if ((isMediaContentType || isMediaByUrl || isMediaElement || isPosingAsVideo) && details.tabId !== -1) {
+        if ((isMedia || isMediaByUrl) && details.tabId !== -1) {
             _api.tabs.sendMessage(details.tabId, { type: 'NEW_MEDIA_FOUND', mediaInfo: { url: details.url, frameId: details.frameId } }, { frameId: 0 }).catch(() => {});
             if (details.frameId !== 0) {
                 _api.tabs.sendMessage(details.tabId, { type: 'NEW_MEDIA_FOUND', mediaInfo: { url: details.url, frameId: details.frameId } }, { frameId: details.frameId }).catch(() => {});
@@ -196,7 +196,33 @@ _api.webRequest.onHeadersReceived.addListener(
     resExtraInfo
 );
 
+// --- NATIVE CHROME DOWNLOAD INTERCEPTOR ---
+if (typeof chrome !== 'undefined' && chrome.downloads) {
+    chrome.downloads.onCreated.addListener((item) => {
+        if (!dispatchEnabled) return;
+        
+        if (Date.now() < bypassGraceUntil) {
+            // Consume the token so we don't permanently break standard intercepts for 60s
+            bypassGraceUntil = 0;
+            return; // LET BROWSER HANDLE IT
+        }
+        
+        if (item.url.startsWith("blob:") || item.url.startsWith("data:")) return;
+
+        chrome.downloads.cancel(item.id, () => {
+            chrome.downloads.erase({id: item.id}, () => {});
+            triggerDownload(item.url, item.filename, item.referrer || "", null, null, false, false, {});
+        });
+    });
+}
+
 _api.runtime.onMessage.addListener((message, sender, sendResponse) => {
+
+    if (message.type === "SET_BYPASS_GRACE") {
+        bypassGraceUntil = Date.now() + 60000; // 60 seconds
+        sendResponse({ ok: true });
+        return true;
+    }
 
     if (message.type === "PUSH_MEDIA_HEADERS") {
         if (message.headers && typeof message.headers === "object") {
@@ -258,7 +284,7 @@ async function triggerDownload(url, filename, referer, cookies, youtubeQuality, 
 
     const payload = JSON.stringify({
         url, filename: filename || "download", cookies: finalCookies || "", referer: referer || "",
-        ua: navigator.userAgent, browser: "safari", youtubeQuality, forceHLS, forceDASH,
+        ua: navigator.userAgent, browser: "chrome", youtubeQuality, forceHLS, forceDASH,
         headers: mergedHeaders,
         requestHeaders: mergedHeaders,
         responseHeaders: respHeaders,

@@ -113,7 +113,6 @@ struct SettingsView: View {
                         Button(action: { dismiss() }) { Label("Done", systemImage: "checkmark") }.buttonStyle(ActionButtonStyle(prominent: true, hex: accentColorHex))
                         .padding(.horizontal, 24)
                         .padding(.vertical, 10)
-                        .keyboardShortcut(.cancelAction)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)

@@ -1,114 +1,14 @@
 // content.js - Daisy Extension (Chrome & Safari)
 
 // INJECT XHR/FETCH INTERCEPTOR TO CAPTURE AUTH HEADERS SENT BY CLIENT JS
-const interceptorScript = document.createElement('script');
-interceptorScript.textContent = `
-    (function() {
-        const MEDIA_RE = /\\.m3u8|stream\\.mpd|\\.mpd|dash|hls|\\.mp4|\\.webm|\\.mov|\\.ts|manifest/i;
-
-        // Listen for requests to fetch YouTube formats natively from the page context
-        window.addEventListener("message", (e) => {
-            if (e.data && e.data.__daisyReqYtFormats) {
-                let formats = new Set();
-                try {
-                    const player = document.querySelector('#movie_player');
-                    if (player && typeof player.getPlayerResponse === 'function') {
-                        const resp = player.getPlayerResponse();
-                        if (resp && resp.streamingData) {
-                            if (resp.streamingData.formats) resp.streamingData.formats.forEach(f => { if(f.height) formats.add(f.height); });
-                            if (resp.streamingData.adaptiveFormats) resp.streamingData.adaptiveFormats.forEach(f => { if(f.height) formats.add(f.height); });
-                        }
-                    }
-                    if (window.ytInitialPlayerResponse && window.ytInitialPlayerResponse.streamingData) {
-                        const sd = window.ytInitialPlayerResponse.streamingData;
-                        if (sd.formats) sd.formats.forEach(f => { if(f.height) formats.add(f.height); });
-                        if (sd.adaptiveFormats) sd.adaptiveFormats.forEach(f => { if(f.height) formats.add(f.height); });
-                    }
-                } catch(err) {}
-                window.postMessage({ __daisyYtFormatsResp: Array.from(formats) }, "*");
-            }
-        });
-
-        const _fetch = window.fetch;
-        window.fetch = async function(...args) {
-            const req = args[0];
-            const opts = args[1] || {};
-            let url = typeof req === 'string' ? req : (req && req.url ? req.url : '');
-            let headers = {};
-            
-            if (opts.headers) {
-                if (opts.headers instanceof Headers) {
-                    for (let [k, v] of opts.headers.entries()) headers[k] = v;
-                } else if (typeof opts.headers === 'object') {
-                    headers = { ...opts.headers };
-                } else if (Array.isArray(opts.headers)) {
-                    opts.headers.forEach(h => headers[h[0]] = h[1]);
-                }
-            }
-            
-            if (req instanceof Request) {
-                for (let [k, v] of req.headers.entries()) headers[k] = v;
-            }
-            
-            let hasRange = false;
-            if (headers) {
-                const lowerHeaders = Object.keys(headers).map(k => k.toLowerCase());
-                hasRange = lowerHeaders.includes('range');
-            }
-            
-            // Always fire for media URLs or Range fetching, even if no custom headers
-            if (Object.keys(headers).length > 0 || MEDIA_RE.test(url) || hasRange) {
-                window.postMessage({ __daisyMediaHeaders: { url, headers } }, "*");
-            }
-            return _fetch.apply(this, args);
-        };
-
-        const _open = XMLHttpRequest.prototype.open;
-        const _setRequestHeader = XMLHttpRequest.prototype.setRequestHeader;
-        const _send = XMLHttpRequest.prototype.send;
-        
-        XMLHttpRequest.prototype.open = function(method, url, ...rest) {
-            this._daisyUrl = url;
-            this._daisyHeaders = {};
-            return _open.call(this, method, url, ...rest);
-        };
-        
-        XMLHttpRequest.prototype.setRequestHeader = function(header, value) {
-            if (this._daisyHeaders) this._daisyHeaders[header] = value;
-            return _setRequestHeader.call(this, header, value);
-        };
-        
-        XMLHttpRequest.prototype.send = function(...args) {
-            if (this._daisyUrl) {
-                try {
-                    const absoluteUrl = new URL(this._daisyUrl, document.baseURI).href;
-                    let hasRange = false;
-                    if (this._daisyHeaders) {
-                        const lowerHeaders = Object.keys(this._daisyHeaders).map(k => k.toLowerCase());
-                        hasRange = lowerHeaders.includes('range');
-                    }
-                    if (Object.keys(this._daisyHeaders || {}).length > 0 || MEDIA_RE.test(absoluteUrl) || hasRange) {
-                        window.postMessage({ __daisyMediaHeaders: { url: absoluteUrl, headers: this._daisyHeaders || {} } }, "*");
-                    }
-                } catch(e) {
-                    let hasRange = false;
-                    if (this._daisyHeaders) {
-                        const lowerHeaders = Object.keys(this._daisyHeaders).map(k => k.toLowerCase());
-                        hasRange = lowerHeaders.includes('range');
-                    }
-                    if (Object.keys(this._daisyHeaders || {}).length > 0 || MEDIA_RE.test(this._daisyUrl) || hasRange) {
-                        window.postMessage({ __daisyMediaHeaders: { url: this._daisyUrl, headers: this._daisyHeaders || {} } }, "*");
-                    }
-                }
-            }
-            return _send.apply(this, args);
-        };
-    })();
-`;
-if (document.head || document.documentElement) {
+try {
+    const interceptorScript = document.createElement('script');
+    interceptorScript.src = (typeof browser !== "undefined" ? browser : chrome).runtime.getURL('inject.js');
+    interceptorScript.onload = function() {
+        this.remove();
+    };
     (document.head || document.documentElement).prepend(interceptorScript);
-    interceptorScript.remove();
-}
+} catch(e) {}
 
 const _api = typeof browser !== "undefined" ? browser : chrome;
 const IS_TOP_FRAME = window === window.top;
@@ -116,11 +16,11 @@ const IS_TOP_FRAME = window === window.top;
 let bypassKey = "Alt";
 let isExtensionDisabled = false;
 let isKeyCurrentlyHeld = false;
-let isBypassActive = false;
+let lastBypassInteractionTime = 0;
 
 _api.storage.local.get(['bypassKey', 'isExtensionDisabled'], (res) => {
-  if (res.bypassKey) bypassKey = res.bypassKey;
-  if (res.isExtensionDisabled !== undefined) isExtensionDisabled = res.isExtensionDisabled;
+  if (res && res.bypassKey) bypassKey = res.bypassKey;
+  if (res && res.isExtensionDisabled !== undefined) isExtensionDisabled = res.isExtensionDisabled;
 });
 
 _api.storage.onChanged.addListener((changes) => {
@@ -128,19 +28,59 @@ _api.storage.onChanged.addListener((changes) => {
   if (changes.isExtensionDisabled) isExtensionDisabled = changes.isExtensionDisabled.newValue;
 });
 
-function checkKey(e) {
-  if (bypassKey === "Alt") return e.altKey || e.key === "Alt";
-  if (bypassKey === "Shift") return e.shiftKey || e.key === "Shift";
-  if (bypassKey === "Control") return e.ctrlKey || e.key === "Control";
-  if (bypassKey === "Meta") return e.metaKey || e.key === "Meta";
+function isBypassKeyPressed(e) {
+  if (!e) return false;
+  if (bypassKey === "Alt") return !!e.altKey;
+  if (bypassKey === "Shift") return !!e.shiftKey;
+  if (bypassKey === "Control") return !!e.ctrlKey;
+  if (bypassKey === "Meta") return !!e.metaKey;
   return false;
 }
 
-document.addEventListener("keydown", (e) => { if (checkKey(e)) { isKeyCurrentlyHeld = true; isBypassActive = true; } }, { capture: true, passive: true });
-document.addEventListener("keyup", (e) => { if (!checkKey(e)) isKeyCurrentlyHeld = false; }, { capture: true, passive: true });
+function updateBypassState(e) {
+    isKeyCurrentlyHeld = isBypassKeyPressed(e);
+}
+
+document.addEventListener("keydown", (e) => {
+    if (isBypassKeyPressed(e) || e.key === bypassKey || (bypassKey === "Alt" && e.key === "Option")) {
+        isKeyCurrentlyHeld = true;
+    }
+}, { capture: true, passive: true });
+
+document.addEventListener("keyup", (e) => {
+    updateBypassState(e);
+}, { capture: true, passive: true });
+
+document.addEventListener("mousedown", (e) => {
+    updateBypassState(e);
+    if (isKeyCurrentlyHeld) {
+        // Only trigger a grace period token if interacting with page elements
+        const isInteractive = e.target.closest('a, button, [role="button"], input, .btn, video, img');
+        if (isInteractive) {
+            lastBypassInteractionTime = Date.now();
+            try {
+                const p = _api.runtime.sendMessage({ type: "SET_BYPASS_GRACE" });
+                if (p && p.catch) p.catch(()=>{});
+            } catch(err) {}
+        }
+    }
+}, { capture: true, passive: true });
+
 window.addEventListener("blur", () => { isKeyCurrentlyHeld = false; });
 
-function shouldBypass() { return isExtensionDisabled || isBypassActive; }
+function shouldBypass(isProgrammatic = false) {
+    if (isExtensionDisabled) return true;
+    if (isKeyCurrentlyHeld) return true;
+    
+    // 60-second grace period for asynchronous programmatic blob downloads
+    if (isProgrammatic && (Date.now() - lastBypassInteractionTime < 60000)) {
+        // Do NOT consume the background script's token here. The background script
+        // needs that active token so it knows to release the native download.
+        lastBypassInteractionTime = 0; // Consume local token only
+        return true;
+    }
+    return false;
+}
 
 // --- STATE MANAGEMENT ---
 let sniffedMediaUrls = [];
@@ -680,13 +620,15 @@ function getContextualVideoName(el) {
     return null;
 }
 
+// Intercept Dynamically Generated Clicks (Programmatic Downloads)
 const _createElement = document.createElement.bind(document);
 document.createElement = function(tag, ...args) {
   const el = _createElement(tag, ...args);
   if (tag.toLowerCase() === "a") {
     const _click = el.click.bind(el);
     el.click = function() {
-      if (el.hasAttribute('data-daisy-bypass') || shouldBypass() || !el.href) { _click(); return; }
+      // Pass `true` because this is a programmatic JS click
+      if (el.hasAttribute('data-daisy-bypass') || shouldBypass(true) || !el.href) { _click(); return; }
       const isDownloadUrl = ['.mp4', '.mkv', '.avi', '.webm', '.mov', '.wmv', '.flv', '.ts', '.m3u8', '.mpd'].some(ext => { try { return new URL(el.href).pathname.toLowerCase().endsWith(ext); } catch { return false; } });
       if (el.href.startsWith("blob:") || el.hasAttribute("download") || isDownloadUrl) {
           sendToDispatch(el.href, el.getAttribute("download") || extractFilename(el.href, el));
@@ -1077,9 +1019,6 @@ document.createElement = function(tag, ...args) {
 
             document.querySelectorAll('iframe').forEach(el => {
                 const r = el.getBoundingClientRect();
-                // We no longer restrict by src for iframes.
-                // If it's big enough to be a player, we attach to it.
-                // \`hasDownloadableMedia\` will verify if it contains sniffed URLs.
                 if (r.width > 150 && r.height > 100) attachToElement(el);
             });
         }
@@ -1089,22 +1028,29 @@ document.createElement = function(tag, ...args) {
         setInterval(() => { scanForMedia(); }, 2000);
         scanForMedia();
     }
-    // --- MAGNET LINK INTERCEPTOR ---
+
+    // --- STATIC AND MAGNET LINK INTERCEPTOR ---
     document.addEventListener('click', (e) => {
+        updateBypassState(e);
+        
         // Find the closest anchor tag that was clicked
         const a = e.target.closest('a');
-        
-        // Check if it's a magnet link
-        if (a && a.href && a.href.toLowerCase().startsWith('magnet:')) {
-            // Obey user's bypass key (e.g., holding Alt to skip extension)
-            if (shouldBypass()) return;
-            
-            // Stop Safari/Chrome from trying to open the native OS prompt
-            e.preventDefault();
-            e.stopPropagation();
-            
-            // Send directly to DaisyDM
-            sendToDispatch(a.href, "Torrent Download");
+        if (a && a.href) {
+            // 1. Check if it's a magnet link
+            if (a.href.toLowerCase().startsWith('magnet:')) {
+                // Pass false: Direct physical click, don't consume programmatic grace tokens
+                if (shouldBypass(false)) return;
+                e.preventDefault();
+                e.stopPropagation();
+                sendToDispatch(a.href, "Torrent Download");
+            }
+            // 2. Catch standard static download links (Crucial for Safari)
+            else if (a.hasAttribute('download') || ['.mp4', '.mkv', '.webm', '.mov', '.ts', '.m3u8', '.mpd'].some(ext => { try { return new URL(a.href).pathname.toLowerCase().endsWith(ext); } catch { return false; } })) {
+                if (shouldBypass(false)) return;
+                e.preventDefault();
+                e.stopPropagation();
+                sendToDispatch(a.href, a.getAttribute("download") || extractFilename(a.href, a));
+            }
         }
     }, { capture: true });
     init();
