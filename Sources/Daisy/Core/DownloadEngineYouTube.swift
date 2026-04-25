@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 
 extension DownloadEngine {
     
@@ -48,9 +49,19 @@ extension DownloadEngine {
                 let policy = UserDefaults.standard.string(forKey: "fileCollisionBehavior") ?? "rename"
                 var dest = item.destinationURL
                 if dest.pathExtension.lowercased() != "mp4" { dest = dest.deletingPathExtension().appendingPathExtension("mp4") }
-                if policy == "replace" { try? FileManager.default.removeItem(at: dest) }
+                if policy == "replace" {
+                    try? FileManager.default.removeItem(at: dest)
+                    try? FileManager.default.removeItem(at: dest.appendingPathExtension("dysy"))
+                }
                 else { dest = uniqueURL(dest) }
                 item.destinationURL = dest; item.filename = dest.lastPathComponent; item.isPrepared = true; persist()
+            }
+            
+            // Setup the macOS .dysy bundle proxy for the UI
+            let bundleURL = item.destinationURL.appendingPathExtension("dysy")
+            try? FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
+            if let folderIcon = NSImage(named: "FolderIcon") ?? NSImage(named: NSImage.applicationIconName) {
+                NSWorkspace.shared.setIcon(folderIcon, forFile: bundleURL.path, options: [])
             }
         }
 
@@ -97,6 +108,30 @@ extension DownloadEngine {
         let vFile = tempDir.appendingPathComponent("video.tmp").path; let aFile = tempDir.appendingPathComponent("audio.tmp").path
         guard let aria = aria2Path else { await MainActor.run { item.status = .failed; item.error = "aria2c missing" }; return }
         await MainActor.run { item.status = .downloading; persist() }
+
+        let dummySizeTask = Task { [weak item] in
+            guard let item = item else { return }
+            let bundleURL = await MainActor.run { item.destinationURL.appendingPathExtension("dysy") }
+            let dummyFileURL = await MainActor.run { bundleURL.appendingPathComponent(item.filename) }
+            
+            while !Task.isCancelled {
+                if !FileManager.default.fileExists(atPath: dummyFileURL.path) {
+                    try? FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
+                    FileManager.default.createFile(atPath: dummyFileURL.path, contents: nil)
+                }
+                
+                if let fh = try? FileHandle(forWritingTo: dummyFileURL) {
+                    let currentSize = await MainActor.run { item.downloadedBytes }
+                    let actualSize = (try? fh.seekToEnd()) ?? 0
+                    if currentSize > 0 && currentSize != actualSize {
+                        try? fh.truncate(atOffset: UInt64(currentSize))
+                        try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: bundleURL.path)
+                    }
+                    try? fh.close()
+                }
+                try? await Task.sleep(nanoseconds: 500_000_000)
+            }
+        }
 
         await Task.detached(priority: .userInitiated) {
             let commonArgs = ["-x16", "-s16", "-k1M", "--summary-interval=1", "--console-log-level=notice", "--file-allocation=none", "--continue=true", "--auto-file-renaming=false"]
@@ -167,6 +202,8 @@ extension DownloadEngine {
                 vProc.waitUntilExit(); aProc.waitUntilExit()
                 vTask.cancel(); aTask.cancel()
                 
+                dummySizeTask.cancel()
+                
                 let isDownloading = await MainActor.run { item.status == .downloading }
                 let finalVSz = (try? FileManager.default.attributesOfItem(atPath: vFile)[.size] as? NSNumber)?.int64Value ?? 0
                 let finalASz = (try? FileManager.default.attributesOfItem(atPath: aFile)[.size] as? NSNumber)?.int64Value ?? 0
@@ -177,6 +214,7 @@ extension DownloadEngine {
                     await MainActor.run { item.status = .failed; item.error = "Aria2 download failed or returned incomplete files." }
                 }
             } catch {
+                dummySizeTask.cancel()
                 let isDownloading = await MainActor.run { item.status == .downloading }
                 if isDownloading { await MainActor.run { item.status = .failed; item.error = error.localizedDescription } }
             }
@@ -185,11 +223,13 @@ extension DownloadEngine {
 
     func mergeYoutubeParts(_ item: DownloadItem, videoPath: String, audioPath: String) async {
         guard let ffmpeg = ffmpegPath else { await MainActor.run { item.status = .failed; item.error = "FFmpeg missing" }; return }
-        let finalPath = await MainActor.run { item.destinationURL.path }
+        
+        // Merge into temp dir to avoid leaving incomplete files directly in user downloads
+        let tempMergePath = await MainActor.run { item.tempDirURL.appendingPathComponent(item.filename).path }
         
         await Task.detached(priority: .userInitiated) {
             let proc = Process(); proc.executableURL = URL(fileURLWithPath: ffmpeg)
-            proc.arguments = ["-i", videoPath, "-i", audioPath, "-c", "copy", "-map", "0:v:0", "-map", "1:a:0", "-y", finalPath]
+            proc.arguments = ["-i", videoPath, "-i", audioPath, "-c", "copy", "-map", "0:v:0", "-map", "1:a:0", "-y", tempMergePath]
             await MainActor.run { item.processes.append(proc) }
             
             do {
@@ -197,6 +237,13 @@ extension DownloadEngine {
                 await MainActor.run {
                     let isDownloading = item.status == .downloading
                     if proc.terminationStatus == 0 {
+                        let finalDest = item.destinationURL
+                        let bundleURL = finalDest.appendingPathExtension("dysy")
+                        
+                        _ = try? FileManager.default.removeItem(at: finalDest)
+                        try? FileManager.default.moveItem(atPath: tempMergePath, toPath: finalDest.path)
+                        try? FileManager.default.removeItem(at: bundleURL)
+
                         item.status = .completed; item.dateCompleted = Date(); item.speed = 0
                         try? FileManager.default.removeItem(at: item.tempDirURL)
                     } else if isDownloading { item.status = .failed; item.error = "FFmpeg merge failed" }

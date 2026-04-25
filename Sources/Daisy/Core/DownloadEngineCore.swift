@@ -189,9 +189,20 @@ public final class DownloadEngine {
     public func remove(_ item: DownloadItem, trashFile: Bool = false) {
         killProcesses(item)
         try? FileManager.default.removeItem(at: item.tempDirURL)
+        try? FileManager.default.removeItem(at: item.destinationURL.appendingPathExtension("dysy"))
+        
+        if item.url.scheme == "magnet" {
+            print(item.destinationURL.path)
+            try? FileManager.default.removeItem(atPath: item.destinationURL.path)
+        }
+        
         if trashFile || item.status != .completed {
             let fileURL = item.destinationURL
-            if FileManager.default.fileExists(atPath: fileURL.path) { try? FileManager.default.trashItem(at: fileURL, resultingItemURL: nil) }
+            if FileManager.default.fileExists(atPath: fileURL.path) {
+                if (try? FileManager.default.trashItem(at: fileURL, resultingItemURL: nil)) == nil {
+                    try? FileManager.default.removeItem(at: fileURL)
+                }
+            }
         }
         items.removeAll { $0.id == item.id }; persist(); scheduleNext()
     }

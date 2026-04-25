@@ -1,15 +1,18 @@
 import Foundation
+import AppKit
 
 extension DownloadEngine {
     
     func runNativeHLSEngine(_ item: DownloadItem) async {
         let urlStr  = item.url.absoluteString
-        let outPath = item.destinationURL.path
         let itemID  = item.id
         let ffmpegExe = self.ffmpegPath ?? "ffmpeg"
         let tempDirPath = item.tempDirURL.path
         
         try? FileManager.default.createDirectory(at: item.tempDirURL, withIntermediateDirectories: true)
+        
+        let fileName = await MainActor.run { item.filename }
+        let tempOutPath = item.tempDirURL.appendingPathComponent(fileName).path
 
         let ua = item.userAgent ?? ""
         let ref = item.referer ?? ""
@@ -27,6 +30,39 @@ extension DownloadEngine {
         }
 
         await MainActor.run { item.hlsCancelPointer.pointee = 0 }
+
+        // Setup the macOS .dysy bundle proxy for the UI
+        await MainActor.run {
+            let bundleURL = item.destinationURL.appendingPathExtension("dysy")
+            try? FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
+            if let folderIcon = NSImage(named: "FolderIcon") ?? NSImage(named: NSImage.applicationIconName) {
+                NSWorkspace.shared.setIcon(folderIcon, forFile: bundleURL.path, options: [])
+            }
+        }
+
+        let dummySizeTask = Task { [weak item] in
+            guard let item = item else { return }
+            let bundleURL = await MainActor.run { item.destinationURL.appendingPathExtension("dysy") }
+            let dummyFileURL = await MainActor.run { bundleURL.appendingPathComponent(item.filename) }
+            
+            while !Task.isCancelled {
+                if !FileManager.default.fileExists(atPath: dummyFileURL.path) {
+                    try? FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
+                    FileManager.default.createFile(atPath: dummyFileURL.path, contents: nil)
+                }
+                
+                if let fh = try? FileHandle(forWritingTo: dummyFileURL) {
+                    let currentSize = await MainActor.run { item.downloadedBytes }
+                    let actualSize = (try? fh.seekToEnd()) ?? 0
+                    if currentSize > 0 && currentSize != actualSize {
+                        try? fh.truncate(atOffset: UInt64(currentSize))
+                        try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: bundleURL.path)
+                    }
+                    try? fh.close()
+                }
+                try? await Task.sleep(nanoseconds: 500_000_000)
+            }
+        }
 
         HLSBridge.register(id: itemID) { done, total, bytes, speed, dlSecs, totSecs in
             Task { @MainActor in
@@ -67,7 +103,7 @@ extension DownloadEngine {
             }
 
             return urlStr.withCString { cURL in
-                outPath.withCString { cOut in
+                tempOutPath.withCString { cOut in
                     ffmpegExe.withCString { cFFmpeg in
                         tempDirPath.withCString { cTempDir in
                             ua.withCString { cUa in
@@ -85,10 +121,16 @@ extension DownloadEngine {
             }
         }.value
 
+        dummySizeTask.cancel()
         HLSBridge.unregister(id: itemID)
 
         await MainActor.run {
             if result == 0 {
+                let bundleURL = item.destinationURL.appendingPathExtension("dysy")
+                _ = try? FileManager.default.removeItem(at: item.destinationURL)
+                try? FileManager.default.moveItem(atPath: tempOutPath, toPath: item.destinationURL.path)
+                try? FileManager.default.removeItem(at: bundleURL)
+
                 item.status = .completed; item.dateCompleted = Date(); item.speed = 0
                 if item.hlsTotalSeconds > 0 { item.hlsDownloadedSeconds = item.hlsTotalSeconds }
                 self.notifyCompletion(for: item)

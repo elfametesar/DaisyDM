@@ -88,7 +88,23 @@ extension DownloadEngine {
         await MainActor.run {
             if !item.isPrepared {
                 let policy = UserDefaults.standard.string(forKey: "fileCollisionBehavior") ?? "rename"
-                if item.type != .torrent && item.type != .batch {
+                
+                if item.type == .torrent {
+                    var uiName = item.filename
+                    if uiName == "." || uiName.isEmpty || uiName.lowercased().hasPrefix("magnet") {
+                        uiName = item.destinationURL.lastPathComponent
+                    }
+                    item.filename = uiName
+                    
+                } else if item.type == .batch {
+                    if policy == "replace" {
+                        try? FileManager.default.removeItem(at: item.destinationURL)
+                    } else {
+                        item.destinationURL = uniqueURL(item.destinationURL)
+                    }
+                    try? FileManager.default.createDirectory(at: item.destinationURL, withIntermediateDirectories: true)
+                    item.filename = item.destinationURL.lastPathComponent
+                } else {
                     if policy == "replace" {
                         try? FileManager.default.removeItem(at: item.destinationURL)
                         try? FileManager.default.removeItem(at: item.destinationURL.appendingPathExtension("dysy"))
@@ -96,21 +112,28 @@ extension DownloadEngine {
                         item.destinationURL = uniqueURL(item.destinationURL)
                         item.filename = item.destinationURL.lastPathComponent
                     }
-                } else if item.type == .batch {
-                    item.destinationURL = uniqueURL(item.destinationURL)
-                    try? FileManager.default.createDirectory(at: item.destinationURL, withIntermediateDirectories: true)
                 }
+                
                 item.isPrepared = true; persist()
             }
         }
 
-        // 2. Hide the messy .aria2 AND the 100% sparse file in Application Support
-        let destDir = await MainActor.run { item.tempDirURL.path }
-        let fileName = await MainActor.run { item.filename }
+        let type         = await MainActor.run { item.type }
+        let fileName     = await MainActor.run { item.filename }
         
-        // FIX: Replaced custom rasterization with direct native icon referencing to prevent the 1024x1024 memory layout crash
+        var destDir = await MainActor.run {
+            type == .torrent ? item.destinationURL.path : item.tempDirURL.path
+        }
+        
+        if item.url.scheme == "magnet" {
+            item.destinationURL = URL(string: downloadsDir().path() + item.destinationURL.deletingLastPathComponent().lastPathComponent) ?? item.destinationURL
+            destDir = item.destinationURL.path
+            
+        }
+        
+        // 2. Hide the messy .aria2 AND the 100% sparse file in Application Support (Skipped for torrents)
         await MainActor.run {
-            if item.type == .directLink {
+            if item.type != .torrent {
                 let bundleURL = item.destinationURL.appendingPathExtension("dysy")
                 try? FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
                 
@@ -121,7 +144,6 @@ extension DownloadEngine {
         }
         
         let conns        = await MainActor.run { item.connectionCount }
-        let type         = await MainActor.run { item.type }
         let url          = await MainActor.run { item.url }
         let speedLimit   = await MainActor.run { item.speedLimit }
         let cookies      = await MainActor.run { item.cookies }
@@ -141,6 +163,7 @@ extension DownloadEngine {
         if speedLimit > 0 { args.append("--max-overall-download-limit=\(speedLimit)K") }
         if type != .torrent && type != .batch { args.append("--out=\(fileName)") }
         
+
         let skipKeys: Set<String> = ["range", "connection", "accept-encoding", "host", "content-length"]
         var appliedKeys = Set<String>()
 
@@ -268,7 +291,8 @@ extension DownloadEngine {
         let dummySizeTask = Task { [weak item] in
             guard let item = item else { return }
             let itemType = await MainActor.run { item.type }
-            guard itemType == .directLink else { return }
+            
+            if itemType == .torrent { return } // No dummy bundle wrapper needed for torrents
             
             let bundleURL = await MainActor.run { item.destinationURL.appendingPathExtension("dysy") }
             let dummyFileURL = await MainActor.run { bundleURL.appendingPathComponent(item.filename) }
@@ -287,6 +311,22 @@ extension DownloadEngine {
                         try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: bundleURL.path)
                     }
                     try? fh.close()
+                }
+                try? await Task.sleep(nanoseconds: 500_000_000)
+            }
+        }
+        
+        let hideAriaTask = Task { [weak item, destDir] in
+            guard item != nil else { return }
+            
+            while !Task.isCancelled {
+                if let files = try? FileManager.default.contentsOfDirectory(atPath: destDir) {
+                    for file in files where file.hasSuffix(".aria2") {
+                        var fileURL = URL(fileURLWithPath: destDir).appendingPathComponent(file)
+                        var rv = URLResourceValues()
+                        rv.isHidden = true
+                        try? fileURL.setResourceValues(rv)
+                    }
                 }
                 try? await Task.sleep(nanoseconds: 500_000_000)
             }
@@ -466,6 +506,7 @@ extension DownloadEngine {
 
         sizeSnifferTask.cancel()
         dummySizeTask.cancel()
+        hideAriaTask.cancel()
 
         let isStillTracked = await MainActor.run {
             let tracked = item.processes.contains(where: { $0 === proc })
@@ -484,8 +525,11 @@ extension DownloadEngine {
         // 4. Extract the final file from Application Support to the user's destination, and delete the .dysy proxy
         if proc.terminationStatus == 0 {
             let destinationURL = await MainActor.run { item.destinationURL }
-            if type == .directLink {
-                let bundleURL = destinationURL.appendingPathExtension("dysy")
+            let bundleURL = destinationURL.appendingPathExtension("dysy")
+            
+            if type == .torrent {
+                try? FileManager.default.removeItem(at: tempDir)
+            } else if type == .directLink {
                 let downloadedFile = tempDir.appendingPathComponent(fileName)
                 
                 _ = try? FileManager.default.removeItem(at: destinationURL)
@@ -498,31 +542,15 @@ extension DownloadEngine {
             } else {
                 let destDirURL = type == .batch ? destinationURL : destinationURL.deletingLastPathComponent()
                 let subFiles = await MainActor.run { item.subFiles }
-                if subFiles.isEmpty && type == .torrent {
-                    if let enumerator = FileManager.default.enumerator(at: tempDir, includingPropertiesForKeys: nil) {
-                        let prefix = tempDir.path + "/"
-                        let fileURLs = enumerator.allObjects.compactMap { $0 as? URL }
-                        for fileURL in fileURLs {
-                            guard fileURL.path.hasPrefix(prefix) else { continue }
-                            if fileURL.pathExtension == "torrent" || fileURL.pathExtension == "aria2" { continue }
-                            var isDir: ObjCBool = false
-                            if FileManager.default.fileExists(atPath: fileURL.path, isDirectory: &isDir), isDir.boolValue { continue }
-                            let relativePath = String(fileURL.path.dropFirst(prefix.count))
-                            let dst = destDirURL.appendingPathComponent(relativePath)
-                            try? FileManager.default.createDirectory(at: dst.deletingLastPathComponent(), withIntermediateDirectories: true)
-                            _ = try? FileManager.default.removeItem(at: dst); try? FileManager.default.moveItem(at: fileURL, to: dst)
-                        }
-                    }
-                } else {
-                    for file in subFiles {
-                        if file.isStopped { continue }
-                        let src = tempDir.appendingPathComponent(file.path); let dst = destDirURL.appendingPathComponent(file.path)
-                        try? FileManager.default.createDirectory(at: dst.deletingLastPathComponent(), withIntermediateDirectories: true)
-                        _ = try? FileManager.default.removeItem(at: dst); try? FileManager.default.moveItem(at: src, to: dst)
-                    }
+                for file in subFiles {
+                    if file.isStopped { continue }
+                    let src = tempDir.appendingPathComponent(file.path); let dst = destDirURL.appendingPathComponent(file.path)
+                    try? FileManager.default.createDirectory(at: dst.deletingLastPathComponent(), withIntermediateDirectories: true)
+                    _ = try? FileManager.default.removeItem(at: dst); try? FileManager.default.moveItem(at: src, to: dst)
                 }
+                try? FileManager.default.removeItem(at: bundleURL)
+                try? FileManager.default.removeItem(at: tempDir)
             }
-            try? FileManager.default.removeItem(at: tempDir)
             
             await MainActor.run {
                 if item.totalBytes == 0 { item.totalBytes = item.downloadedBytes }

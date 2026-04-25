@@ -316,15 +316,11 @@ extension DownloadEngine {
             }
             aria2Headers.append("Accept: */*"); aria2Headers.append("Accept-Language: en-US,en;q=0.9")
 
-            // FIX 1: Capture as a constant to avoid strict concurrency error
-            let capturedHeaders = aria2Headers
+            let capturedHeaders = aria2Headers // <-- FIX 1: Capture as a constant to avoid strict concurrency error
 
             @Sendable func dashDownloadSegments(segments: [(url: String, out: String)], outputDir: URL, label: String, progressOffset: Double, progressShare: Double) async -> Bool {
                 dashLog("Building aria2c input file for \(segments.count) \(label) segments...")
-                
-                // Use capturedHeaders
-                let inputContent = buildAria2InputFile(segments: segments, headers: capturedHeaders)
-                
+                let inputContent = buildAria2InputFile(segments: segments, headers: capturedHeaders) // Use capturedHeaders
                 let inputFile = tempDir.appendingPathComponent("aria2_\(label).txt")
                 do { try inputContent.write(to: inputFile, atomically: true, encoding: .utf8) } catch { return false }
 
@@ -353,6 +349,7 @@ extension DownloadEngine {
                     return false
                 }
 
+                // CRITICAL FIX: Removed --async-dns=false
                 var args: [String] = [
                     "--input-file=\(inputFile.path)",
                     "--dir=\(outputDir.path)",
@@ -391,9 +388,8 @@ extension DownloadEngine {
 
                 await MainActor.run { item.processes.append(proc) }
 
-                // FIX 2: Use the newly created DashProgressTracker actor to safely increment the segment count concurrently
+                // FIX 2: Use the newly created DashProgressTracker to safely increment the segment count concurrently
                 let tracker = DashProgressTracker()
-                
                 pipe.fileHandleForReading.readabilityHandler = { fh in
                     let data = fh.availableData
                     guard !data.isEmpty, let str = String(data: data, encoding: .utf8) else { return }
