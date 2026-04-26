@@ -13,6 +13,54 @@ try {
 const _api = typeof browser !== "undefined" ? browser : chrome;
 const IS_TOP_FRAME = window === window.top;
 
+const YT_ITAG_INFO = {
+    18:  { kind: "muxed", height: 360,  mime: "video/mp4",  bitrate:  696 },
+    22:  { kind: "muxed", height: 720,  mime: "video/mp4",  bitrate: 2000 },
+    160: { kind: "video", height: 144,  mime: "video/mp4",  bitrate:  108 },
+    133: { kind: "video", height: 240,  mime: "video/mp4",  bitrate:  246 },
+    134: { kind: "video", height: 360,  mime: "video/mp4",  bitrate:  457 },
+    135: { kind: "video", height: 480,  mime: "video/mp4",  bitrate:  929 },
+    136: { kind: "video", height: 720,  mime: "video/mp4",  bitrate: 2400 },
+    137: { kind: "video", height: 1080, mime: "video/mp4",  bitrate: 4400 },
+    264: { kind: "video", height: 1440, mime: "video/mp4",  bitrate: 8200 },
+    266: { kind: "video", height: 2160, mime: "video/mp4",  bitrate: 17000 },
+    298: { kind: "video", height: 720,  mime: "video/mp4",  bitrate: 3000 },
+    299: { kind: "video", height: 1080, mime: "video/mp4",  bitrate: 5500 },
+    304: { kind: "video", height: 1440, mime: "video/mp4",  bitrate: 10000 },
+    305: { kind: "video", height: 2160, mime: "video/mp4",  bitrate: 18000 },
+    278: { kind: "video", height: 144,  mime: "video/webm", bitrate:   95 },
+    242: { kind: "video", height: 240,  mime: "video/webm", bitrate:  220 },
+    243: { kind: "video", height: 360,  mime: "video/webm", bitrate:  400 },
+    244: { kind: "video", height: 480,  mime: "video/webm", bitrate:  750 },
+    247: { kind: "video", height: 720,  mime: "video/webm", bitrate: 1500 },
+    248: { kind: "video", height: 1080, mime: "video/webm", bitrate: 2500 },
+    271: { kind: "video", height: 1440, mime: "video/webm", bitrate: 4500 },
+    313: { kind: "video", height: 2160, mime: "video/webm", bitrate: 9000 },
+    302: { kind: "video", height: 720,  mime: "video/webm", bitrate: 2400 },
+    303: { kind: "video", height: 1080, mime: "video/webm", bitrate: 3500 },
+    308: { kind: "video", height: 1440, mime: "video/webm", bitrate: 7000 },
+    315: { kind: "video", height: 2160, mime: "video/webm", bitrate: 14000 },
+    394: { kind: "video", height: 144,  mime: "video/mp4",  bitrate:   80 },
+    395: { kind: "video", height: 240,  mime: "video/mp4",  bitrate:  160 },
+    396: { kind: "video", height: 360,  mime: "video/mp4",  bitrate:  280 },
+    397: { kind: "video", height: 480,  mime: "video/mp4",  bitrate:  600 },
+    398: { kind: "video", height: 720,  mime: "video/mp4",  bitrate: 1200 },
+    399: { kind: "video", height: 1080, mime: "video/mp4",  bitrate: 2300 },
+    400: { kind: "video", height: 1440, mime: "video/mp4",  bitrate: 4000 },
+    401: { kind: "video", height: 2160, mime: "video/mp4",  bitrate: 8000 },
+    139: { kind: "audio", height: null, mime: "audio/mp4",  bitrate:   48 },
+    140: { kind: "audio", height: null, mime: "audio/mp4",  bitrate:  128 },
+    141: { kind: "audio", height: null, mime: "audio/mp4",  bitrate:  256 },
+    249: { kind: "audio", height: null, mime: "audio/webm", bitrate:   50 },
+    250: { kind: "audio", height: null, mime: "audio/webm", bitrate:   70 },
+    251: { kind: "audio", height: null, mime: "audio/webm", bitrate:  160 }
+};
+
+function ytItagInfo(itag, fromCatalog) {
+    if (fromCatalog && (fromCatalog.kind || fromCatalog.height)) return fromCatalog;
+    return YT_ITAG_INFO[itag] || null;
+}
+
 let bypassKey = "Alt";
 let isExtensionDisabled = false;
 let isKeyCurrentlyHeld = false;
@@ -1113,12 +1161,18 @@ document.addEventListener('mouseover', (e) => {
                         " trueHeights=" + JSON.stringify(trueHeights));
                 } catch (_) {}
 
-                let bestAudio = null;
+                const capturedInfos = [];
                 for (const [itag, c] of capturedByItag.entries()) {
-                    const cat = catalogByItag.get(itag);
-                    if (!cat || cat.kind !== "audio") continue;
-                    if (!bestAudio || (cat.bitrate || 0) > (bestAudio.cat.bitrate || 0)) {
-                        bestAudio = { url: c.url, mime: c.mime || (cat && cat.mime) || null, cat };
+                    const info = ytItagInfo(itag, catalogByItag.get(itag));
+                    if (!info) continue;
+                    capturedInfos.push({ itag, info, captured: c });
+                }
+
+                let bestAudio = null;
+                for (const ci of capturedInfos) {
+                    if (ci.info.kind !== "audio") continue;
+                    if (!bestAudio || (ci.info.bitrate || 0) > (bestAudio.info.bitrate || 0)) {
+                        bestAudio = ci;
                     }
                 }
 
@@ -1126,33 +1180,25 @@ document.addEventListener('mouseover', (e) => {
 
                 const heights = new Set();
                 catalogByItag.forEach(f => { if ((f.kind === "video" || f.kind === "muxed") && f.height) heights.add(f.height); });
+                capturedInfos.forEach(ci => { if ((ci.info.kind === "video" || ci.info.kind === "muxed") && ci.info.height) heights.add(ci.info.height); });
                 trueHeights.forEach(h => heights.add(h));
                 const sortedHeights = Array.from(heights).sort((a, b) => b - a);
 
-                const capturedMuxedHeights = new Set();
-                for (const [itag, c] of capturedByItag.entries()) {
-                    const cat = catalogByItag.get(itag);
-                    if (cat && cat.kind === "muxed" && cat.height) capturedMuxedHeights.add(cat.height);
-                }
-
-                if (sortedHeights.length === 0 && capturedMuxedHeights.size === 0) {
+                if (sortedHeights.length === 0) {
                     renderOption(dropdownEl, { vidName: vidName, quality: "Original", ext: ".mp4", url: pageUrl, ytQuality: "bestvideo+bestaudio/best", type: 'yt' });
                     return;
                 }
 
-                for (const h of sortedHeights) {
-                    let captured = null;
-                    let bestVideoCat = null;
-                    for (const [itag, cat] of catalogByItag.entries()) {
-                        if (cat.kind !== "video" || cat.height !== h) continue;
-                        const c = capturedByItag.get(itag);
-                        if (!c) continue;
-                        if (!bestVideoCat || (cat.bitrate || 0) > (bestVideoCat.bitrate || 0)) {
-                            captured = { url: c.url, mime: c.mime || cat.mime || null, cat };
-                            bestVideoCat = cat;
-                        }
+                const bestCapturedAt = (h, kind) => {
+                    let best = null;
+                    for (const ci of capturedInfos) {
+                        if (ci.info.kind !== kind || ci.info.height !== h) continue;
+                        if (!best || (ci.info.bitrate || 0) > (best.info.bitrate || 0)) best = ci;
                     }
+                    return best;
+                };
 
+                for (const h of sortedHeights) {
                     const opt = {
                         vidName: vidName,
                         quality: `${h}p`,
@@ -1161,39 +1207,28 @@ document.addEventListener('mouseover', (e) => {
                         ytQuality: `bestvideo[height<=${h}]+bestaudio/best`,
                         type: 'yt'
                     };
-                    if (captured && bestAudio) {
+
+                    const muxed = bestCapturedAt(h, "muxed");
+                    const videoOnly = bestCapturedAt(h, "video");
+
+                    if (videoOnly && bestAudio) {
                         opt.ytPreResolved = {
-                            videoUrl: captured.url,
-                            audioUrl: bestAudio.url,
-                            videoMime: captured.mime,
-                            audioMime: bestAudio.mime,
+                            videoUrl: videoOnly.captured.url,
+                            audioUrl: bestAudio.captured.url,
+                            videoMime: videoOnly.captured.mime || videoOnly.info.mime || null,
+                            audioMime: bestAudio.captured.mime || bestAudio.info.mime || null,
                             height: h,
                             title: ytTitle || vidName
                         };
-                    } else if (capturedMuxedHeights.has(h)) {
-                        let muxedCaptured = null;
-                        let bestMuxedCat = null;
-                        for (const [itag, cat] of catalogByItag.entries()) {
-                            if (cat.kind !== "muxed" || cat.height !== h) continue;
-                            const c = capturedByItag.get(itag);
-                            if (!c) continue;
-                            if (!bestMuxedCat || (cat.bitrate || 0) > (bestMuxedCat.bitrate || 0)) {
-                                muxedCaptured = { url: c.url, mime: c.mime || cat.mime || null, cat };
-                                bestMuxedCat = cat;
-                            }
-                        }
-                        if (muxedCaptured) {
-                            opt.ytPreResolved = {
-                                videoUrl: muxedCaptured.url,
-                                audioUrl: null,
-                                videoMime: muxedCaptured.mime,
-                                audioMime: null,
-                                height: h,
-                                title: ytTitle || vidName
-                            };
-                        } else {
-                            opt.ytNeedsSwitch = h;
-                        }
+                    } else if (muxed) {
+                        opt.ytPreResolved = {
+                            videoUrl: muxed.captured.url,
+                            audioUrl: null,
+                            videoMime: muxed.captured.mime || muxed.info.mime || null,
+                            audioMime: null,
+                            height: h,
+                            title: ytTitle || vidName
+                        };
                     } else {
                         opt.ytNeedsSwitch = h;
                     }
