@@ -195,15 +195,36 @@ public final class DownloadEngine {
     }
 
     public func remove(_ item: DownloadItem, trashFile: Bool = false) {
+        cleanupFiles(for: item, trashFile: trashFile)
+        items.removeAll { $0.id == item.id }; persist(); scheduleNext()
+    }
+
+    /// Bulk removal that mutates `items` exactly once. Doing per-item
+    /// `items.removeAll` inside a forEach was triggering a SwiftUI
+    /// `@Observable` update + body re-evaluation between iterations, which
+    /// occasionally short-circuited the caller's loop and only deleted a
+    /// single row from a multi-selection. Collapsing the array mutation to
+    /// one set-based pass avoids that race entirely.
+    public func remove(_ targets: [DownloadItem], trashFile: Bool = false) {
+        guard !targets.isEmpty else { return }
+        let snapshot = Array(targets)
+        print("[Daisy] remove batch count=\(snapshot.count) trash=\(trashFile)")
+        for item in snapshot { cleanupFiles(for: item, trashFile: trashFile) }
+        let ids = Set(snapshot.map { $0.id })
+        items.removeAll { ids.contains($0.id) }
+        persist(); scheduleNext()
+    }
+
+    private func cleanupFiles(for item: DownloadItem, trashFile: Bool) {
         killProcesses(item)
         try? FileManager.default.removeItem(at: item.tempDirURL)
         try? FileManager.default.removeItem(at: item.destinationURL.appendingPathExtension("dysy"))
-        
+
         if item.url.scheme == "magnet" {
             print(item.destinationURL.path)
             try? FileManager.default.removeItem(atPath: item.destinationURL.path)
         }
-        
+
         if trashFile || item.status != .completed {
             let fileURL = item.destinationURL
             if FileManager.default.fileExists(atPath: fileURL.path) {
@@ -212,7 +233,6 @@ public final class DownloadEngine {
                 }
             }
         }
-        items.removeAll { $0.id == item.id }; persist(); scheduleNext()
     }
 
     public func updateSpeedLimit(for item: DownloadItem, limitKB: Int) {
