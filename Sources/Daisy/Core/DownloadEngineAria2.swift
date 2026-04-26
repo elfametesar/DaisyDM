@@ -198,9 +198,16 @@ extension DownloadEngine {
             args.append("--user-agent=\(ua)")
         }
 
+        // googlevideo.com fingerprints requests aggressively. A Safari UA
+        // paired with Chrome-style Sec-Ch-Ua-* headers is a dead
+        // giveaway for a non-browser client and produces 403s. Send the
+        // bare minimum a real <video> element fetch would emit and skip
+        // the navigation/Chrome-specific headers entirely.
+        let isGoogleVideo = (url.host?.contains("googlevideo.com") == true)
+
         if !appliedKeys.contains("accept") { args.append("--header=Accept: */*") }
         if !appliedKeys.contains("accept-language") { args.append("--header=Accept-Language: en-US,en;q=0.9") }
-        if !appliedKeys.contains("sec-ch-ua") {
+        if !isGoogleVideo, !appliedKeys.contains("sec-ch-ua") {
             args.append("--header=Sec-Ch-Ua: \"Google Chrome\";v=\"131\", \"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"")
             args.append("--header=Sec-Ch-Ua-Mobile: ?0")
             args.append("--header=Sec-Ch-Ua-Platform: \"macOS\"")
@@ -214,7 +221,7 @@ extension DownloadEngine {
         if isMedia {
             if !appliedKeys.contains("sec-fetch-dest") { args.append("--header=Sec-Fetch-Dest: video") }
             if !appliedKeys.contains("sec-fetch-mode") { args.append("--header=Sec-Fetch-Mode: no-cors") }
-        } else {
+        } else if !isGoogleVideo {
             if !appliedKeys.contains("sec-fetch-dest") { args.append("--header=Sec-Fetch-Dest: document") }
             if !appliedKeys.contains("sec-fetch-mode") { args.append("--header=Sec-Fetch-Mode: navigate") }
             if !appliedKeys.contains("sec-fetch-user") { args.append("--header=Sec-Fetch-User: ?1") }
