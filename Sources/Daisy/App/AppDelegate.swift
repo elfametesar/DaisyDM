@@ -158,6 +158,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         confirmPanel?.close()
         confirmPanel = nil
 
+        // Make sure the app itself is foregrounded before we even create the
+        // panel — without this, NSPanel.makeKeyAndOrderFront silently fails to
+        // pull focus when triggered from the browser extension while Daisy is
+        // hidden / in the background (notably for YouTube + HLS flows).
+        if NSApp.isHidden { NSApp.unhide(nil) }
+        NSApp.activate(ignoringOtherApps: true)
+
         let panel = NSPanel(
             contentRect:  NSRect(x: 0, y: 0, width: 460, height: 1),
             styleMask:    [.titled, .closable, .fullSizeContentView],
@@ -171,6 +178,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.isReleasedWhenClosed        = false
         panel.backgroundColor             = .clear
         panel.isOpaque                    = false
+        panel.becomesKeyOnlyIfNeeded      = false
+        panel.hidesOnDeactivate           = false
+        panel.collectionBehavior.insert(.moveToActiveSpace)
 
         let confirmView = ConfirmDownloadView(
             request: request,
@@ -208,11 +218,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         )
 
-        panel.contentView = NSHostingView(rootView: confirmView)
-        panel.setContentSize(panel.contentView!.fittingSize)
+        let hostingView = NSHostingView(rootView: confirmView)
+        // Allow the hosting view to push the panel to grow when async content
+        // (e.g. fetched YouTube quality list) lands after the initial layout.
+        if #available(macOS 13.0, *) {
+            hostingView.sizingOptions = [.preferredContentSize]
+        }
+        panel.contentView = hostingView
+        panel.setContentSize(hostingView.fittingSize)
         panel.center()
+        // orderFrontRegardless guarantees the panel is shown above other apps'
+        // windows even if the activation race below loses; makeKeyAndOrderFront
+        // promotes it to key so keyboard input lands here.
+        panel.orderFrontRegardless()
         panel.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+
+        // Re-assert focus on the next runloop tick. AppKit sometimes drops the
+        // first activation request when the call originates from a background
+        // network handler (Local server -> NotificationCenter), which is the
+        // path used by YouTube and HLS downloads.
+        DispatchQueue.main.async { [weak panel] in
+            guard let panel else { return }
+            NSApp.activate(ignoringOtherApps: true)
+            panel.makeKeyAndOrderFront(nil)
+        }
 
         self.confirmPanel = panel
     }

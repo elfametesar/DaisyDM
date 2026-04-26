@@ -235,6 +235,7 @@ struct DownloadListView: View {
     
     private var scrollableList: some View {
         let emptyRowHeight: CGFloat = 28
+        let rowSpacing: CGFloat = 4
         let color1 = Color(NSColor.controlBackgroundColor)
         let color2 = enableBackgroundTint
             ? Color(hex: accentColorHex).opacity(0.06)
@@ -242,11 +243,16 @@ struct DownloadListView: View {
         
         return GeometryReader { geo in
             let exactRowWidth = max(0, geo.size.width - 16)
+            // Generate enough empty rows to always reach the bottom of the
+            // visible viewport, regardless of the number of actual rows.
+            // This makes the alternating row background extend all the way
+            // down instead of cutting off after a fixed 15 rows.
+            let emptySlotCount = max(15, Int(ceil(geo.size.height / (emptyRowHeight + rowSpacing))) + 4)
             
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(spacing: 0) {
-                        LazyVStack(spacing: 4) {
+                        LazyVStack(spacing: rowSpacing) {
                             ForEach(Array(flattenedRows.enumerated()), id: \.element.dynamicID) { indexedItem in
                                 listRow(
                                     rowItem: indexedItem.element,
@@ -257,7 +263,7 @@ struct DownloadListView: View {
                                 )
                             }
                             
-                            ForEach(0..<15, id: \.self) { emptyIndex in
+                            ForEach(0..<emptySlotCount, id: \.self) { emptyIndex in
                                 emptyListRow(
                                     index: flattenedRows.count + emptyIndex,
                                     exactRowWidth: exactRowWidth,
@@ -952,6 +958,8 @@ struct ColumnHeader: View {
 
 // ── Parent Row ──────────────────────────────────
 struct DownloadRow: View {
+    static let progressBarWidth: CGFloat = 110
+
     let item: DownloadItem
     let isSelected: Bool
     @Binding var isExpanded: Bool
@@ -1033,15 +1041,17 @@ struct DownloadRow: View {
                 .frame(width: 100, alignment: .leading)
 
             VStack(alignment: .leading, spacing: 3) {
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        RoundedRectangle(cornerRadius: 2)
-                            .fill(Color.primary.opacity(isSelected ? 0.2 : 0.1))
-                            .frame(height: 6)
-                        RoundedRectangle(cornerRadius: 2)
-                            .fill(progressColor)
-                            .frame(width: max(0, CGFloat(item.progress) * geo.size.width), height: 6)
-                    }
+                // Avoiding GeometryReader here because per-row GeometryReader is a
+                // known cause of scroll lag in SwiftUI Lists — the column's width
+                // is already pinned to 110pt below, so we can drive the progress
+                // bar fill width directly without a layout pass.
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(Color.primary.opacity(isSelected ? 0.2 : 0.1))
+                        .frame(width: DownloadRow.progressBarWidth, height: 6)
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(progressColor)
+                        .frame(width: max(0, CGFloat(item.progress) * DownloadRow.progressBarWidth), height: 6)
                 }
                 .frame(height: 4)
                 Text(item.transferLabel)
@@ -1049,7 +1059,7 @@ struct DownloadRow: View {
                     .foregroundStyle(isSelected ? dynamicTextColor.opacity(0.8) : .secondary)
                     .lineLimit(1)
             }
-            .frame(width: 110, alignment: .leading)
+            .frame(width: DownloadRow.progressBarWidth, alignment: .leading)
 
             Text(item.type.rawValue)
                 .font(.system(size: 12))
