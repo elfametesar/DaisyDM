@@ -96,6 +96,11 @@ extension DownloadEngine {
                 // Pre-muxed (legacy progressive) stream: single URL with
                 // both tracks. No ffmpeg merge needed — just point the
                 // existing single-source pipeline at the resolved URL.
+                //
+                // Critically, googlevideo URLs do *not* want YouTube's
+                // session cookies forwarded — sending SAPISID/HSID to
+                // googlevideo can produce a 403. They want Referer +
+                // Origin = https://www.youtube.com and that's it.
                 await MainActor.run {
                     guard let u = URL(string: v) else {
                         item.status = .failed
@@ -104,6 +109,13 @@ extension DownloadEngine {
                         return
                     }
                     item.url = u
+                    item.cookies = nil
+                    item.referer = "https://www.youtube.com/"
+                    var hdrs = item.headers ?? [:]
+                    hdrs.removeValue(forKey: "cookie")
+                    hdrs.removeValue(forKey: "Cookie")
+                    hdrs["Origin"] = "https://www.youtube.com"
+                    item.headers = hdrs
                     self.continueStartDownload(item)
                 }
             }
@@ -248,8 +260,27 @@ extension DownloadEngine {
             }
         }
 
+        // googlevideo URLs are signed for short-lived cross-origin fetches
+        // from a YouTube watch page. Aria2 must look the part: the right
+        // UA, Origin/Referer pinned to youtube.com, and crucially NO
+        // session cookies — sending SAPISID/HSID to googlevideo can
+        // trigger 403s. The browser's own UA is preferred when it was
+        // captured; we fall back to a recent Safari UA otherwise.
+        let itemUA: String? = await MainActor.run { item.userAgent }
+        let aria2UA = (itemUA?.isEmpty == false ? itemUA! : "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15")
+        let ytArgs: [String] = [
+            "--user-agent=\(aria2UA)",
+            "--referer=https://www.youtube.com/",
+            "--header=Origin: https://www.youtube.com",
+            "--header=Accept: */*",
+            "--header=Accept-Language: en-US,en;q=0.9",
+            "--header=Sec-Fetch-Dest: video",
+            "--header=Sec-Fetch-Mode: no-cors",
+            "--header=Sec-Fetch-Site: cross-site"
+        ]
+
         await Task.detached(priority: .userInitiated) {
-            let commonArgs = ["-x16", "-s16", "-k1M", "--summary-interval=1", "--console-log-level=notice", "--file-allocation=none", "--continue=true", "--auto-file-renaming=false"]
+            let commonArgs = ["-x16", "-s16", "-k1M", "--summary-interval=1", "--console-log-level=notice", "--file-allocation=none", "--continue=true", "--auto-file-renaming=false"] + ytArgs
             let vProc = Process(); vProc.executableURL = URL(fileURLWithPath: aria); vProc.arguments = commonArgs + ["-o", "video.tmp", "--dir=\(tempDir.path)", videoURL]
             let vPipe = Pipe(); vProc.standardOutput = vPipe
             
