@@ -41,6 +41,18 @@ struct SettingsView: View {
 
     @State private var selectedTab: SettingsTab = .general
 
+    // Live ColorPicker state. Kept separately from the persisted hex strings so
+    // that dragging a slider doesn't round-trip through 8-bit hex on every
+    // frame — that round-trip is lossy and was causing the brightness slider
+    // to "jump" / move on its own as the picker observed a slightly different
+    // Color than the one the user just dragged to.
+    @State private var liveAccentColor: Color       = Color(hex: "#0A84FF")
+    @State private var liveProgressBarColor: Color  = Color(hex: "#34C759")
+    @State private var liveCompletedColor: Color    = Color(hex: "#34C759")
+    @State private var liveFailedColor: Color       = Color(hex: "#FF3B30")
+    @State private var liveDownloadingColor: Color  = Color(hex: "#0A84FF")
+    @State private var liveStoppedColor: Color      = Color(hex: "#FF9500")
+
     enum SettingsTab: String, CaseIterable {
         case general = "General"
         case network = "Network & Proxy"
@@ -54,13 +66,6 @@ struct SettingsView: View {
             }
         }
     }
-    
-    private var accentColor: Binding<Color> { Binding(get: { Color(hex: accentColorHex) }, set: { accentColorHex = $0.hex }) }
-    private var progressBarColor: Binding<Color> { Binding(get: { Color(hex: progressBarColorHex) }, set: { progressBarColorHex = $0.hex }) }
-    private var completedColor: Binding<Color> { Binding(get: { Color(hex: completedColorHex) }, set: { completedColorHex = $0.hex }) }
-    private var failedColor: Binding<Color> { Binding(get: { Color(hex: failedColorHex) }, set: { failedColorHex = $0.hex }) }
-    private var downloadingColor: Binding<Color> { Binding(get: { Color(hex: downloadingColorHex) }, set: { downloadingColorHex = $0.hex }) }
-    private var stoppedColor: Binding<Color> { Binding(get: { Color(hex: stoppedColorHex) }, set: { stoppedColorHex = $0.hex }) }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -126,6 +131,33 @@ struct SettingsView: View {
         )
         .tint(Color(hex: accentColorHex)) // Colors standard controls & focus rings
         .interactiveDismissDisabled()
+        .onAppear { syncLiveColorsFromHex(force: true) }
+        .onChange(of: accentColorHex)       { _, _ in syncLiveColorsFromHex() }
+        .onChange(of: progressBarColorHex)  { _, _ in syncLiveColorsFromHex() }
+        .onChange(of: completedColorHex)    { _, _ in syncLiveColorsFromHex() }
+        .onChange(of: failedColorHex)       { _, _ in syncLiveColorsFromHex() }
+        .onChange(of: downloadingColorHex)  { _, _ in syncLiveColorsFromHex() }
+        .onChange(of: stoppedColorHex)      { _, _ in syncLiveColorsFromHex() }
+        .onChange(of: liveAccentColor)      { _, c in let h = c.hex; if accentColorHex      != h { accentColorHex      = h } }
+        .onChange(of: liveProgressBarColor) { _, c in let h = c.hex; if progressBarColorHex != h { progressBarColorHex = h } }
+        .onChange(of: liveCompletedColor)   { _, c in let h = c.hex; if completedColorHex   != h { completedColorHex   = h } }
+        .onChange(of: liveFailedColor)      { _, c in let h = c.hex; if failedColorHex      != h { failedColorHex      = h } }
+        .onChange(of: liveDownloadingColor) { _, c in let h = c.hex; if downloadingColorHex != h { downloadingColorHex = h } }
+        .onChange(of: liveStoppedColor)     { _, c in let h = c.hex; if stoppedColorHex     != h { stoppedColorHex     = h } }
+    }
+
+    /// Pulls the live Color states from persisted hex values. Called on first
+    /// appear and whenever an external write changes a hex (e.g. the "Reset
+    /// Appearance Defaults" button). We never run this in response to a live
+    /// Color change, so the picker's slider position isn't snapped back to a
+    /// rounded 8-bit hex value mid-drag.
+    private func syncLiveColorsFromHex(force: Bool = false) {
+        if force || liveAccentColor.hex      != accentColorHex      { liveAccentColor      = Color(hex: accentColorHex) }
+        if force || liveProgressBarColor.hex != progressBarColorHex { liveProgressBarColor = Color(hex: progressBarColorHex) }
+        if force || liveCompletedColor.hex   != completedColorHex   { liveCompletedColor   = Color(hex: completedColorHex) }
+        if force || liveFailedColor.hex      != failedColorHex      { liveFailedColor      = Color(hex: failedColorHex) }
+        if force || liveDownloadingColor.hex != downloadingColorHex { liveDownloadingColor = Color(hex: downloadingColorHex) }
+        if force || liveStoppedColor.hex     != stoppedColorHex     { liveStoppedColor     = Color(hex: stoppedColorHex) }
     }
     
     // MARK: - Tab Contents
@@ -265,14 +297,14 @@ struct SettingsView: View {
         VStack(spacing: 24) {
             SettingsCard(title: "Theme Customization") {
                 SettingsRow("App Accent Color", addDivider: true) {
-                    ColorPicker("", selection: accentColor, supportsOpacity: false).labelsHidden()
+                    ColorPicker("", selection: $liveAccentColor, supportsOpacity: false).labelsHidden()
                 }
                 SettingsRow("Match Progress Bar to Accent Color", addDivider: !matchProgressBarToAccent) {
                     Toggle("", isOn: $matchProgressBarToAccent).labelsHidden().toggleStyle(.switch)
                 }
                 if !matchProgressBarToAccent {
                     SettingsRow("Progress Bar Color", addDivider: true) {
-                        ColorPicker("", selection: progressBarColor, supportsOpacity: false).labelsHidden()
+                        ColorPicker("", selection: $liveProgressBarColor, supportsOpacity: false).labelsHidden()
                     }
                 }
                 SettingsRow("Tint Background", addDivider: false) {
@@ -286,16 +318,16 @@ struct SettingsView: View {
                 }
                 if !matchBadgesToAccent {
                     SettingsRow("Downloading Status Color", addDivider: true) {
-                        ColorPicker("", selection: downloadingColor, supportsOpacity: false).labelsHidden()
+                        ColorPicker("", selection: $liveDownloadingColor, supportsOpacity: false).labelsHidden()
                     }
                     SettingsRow("Completed Status Color", addDivider: true) {
-                        ColorPicker("", selection: completedColor, supportsOpacity: false).labelsHidden()
+                        ColorPicker("", selection: $liveCompletedColor, supportsOpacity: false).labelsHidden()
                     }
                     SettingsRow("Stopped Status Color", addDivider: true) {
-                        ColorPicker("", selection: stoppedColor, supportsOpacity: false).labelsHidden()
+                        ColorPicker("", selection: $liveStoppedColor, supportsOpacity: false).labelsHidden()
                     }
                     SettingsRow("Failed Status Color", addDivider: false) {
-                        ColorPicker("", selection: failedColor, supportsOpacity: false).labelsHidden()
+                        ColorPicker("", selection: $liveFailedColor, supportsOpacity: false).labelsHidden()
                     }
                 }
             }

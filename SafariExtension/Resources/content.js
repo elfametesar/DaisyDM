@@ -779,13 +779,47 @@ document.addEventListener('mouseover', (e) => {
         let currentTarget = null;
         let hideTimeout = null;
         let scrollTimer = null;
+        let pageDismissed = false;
         const dismissedEls = new WeakSet();
+
+        function scheduleHide(delay = 350) {
+            clearTimeout(hideTimeout);
+            hideTimeout = setTimeout(() => {
+                if (globalOverlay) globalOverlay.classList.remove('visible', 'expanded');
+                hideTimeout = null;
+            }, delay);
+        }
+
+        function isPointerInside(rect, x, y, pad = 0) {
+            return x >= rect.left - pad && x <= rect.right + pad
+                && y >= rect.top  - pad && y <= rect.bottom + pad;
+        }
 
         document.addEventListener('mousedown', (e) => {
             if (globalOverlay && globalOverlay.classList.contains('expanded')) {
                 if (!globalOverlay.contains(e.target)) globalOverlay.classList.remove('visible', 'expanded');
             }
         });
+
+        // Robust auto-hide: if the cursor is outside both the overlay and the
+        // current target for a moment, hide the overlay. Works around browser
+        // quirks where mouseleave on the overlay doesn't fire reliably.
+        document.addEventListener('mousemove', (e) => {
+            if (!globalOverlay || !globalOverlay.classList.contains('visible')) return;
+            const overlayRect = globalOverlay.getBoundingClientRect();
+            if (isPointerInside(overlayRect, e.clientX, e.clientY, 4)) {
+                clearTimeout(hideTimeout);
+                hideTimeout = null;
+                return;
+            }
+            let inTarget = false;
+            if (currentTarget && currentTarget.getBoundingClientRect) {
+                inTarget = isPointerInside(currentTarget.getBoundingClientRect(), e.clientX, e.clientY);
+            }
+            if (!inTarget && hideTimeout === null) {
+                scheduleHide(350);
+            }
+        }, { passive: true });
 
         window.addEventListener('scroll', (e) => {
             if (!globalOverlay || globalOverlay.contains(e.target)) return;
@@ -828,7 +862,11 @@ document.addEventListener('mouseover', (e) => {
 
             globalOverlay.querySelector('.daisydm-close-btn').onclick = (e) => {
                 e.stopPropagation();
+                clearTimeout(hideTimeout);
+                hideTimeout = null;
                 globalOverlay.classList.remove('visible', 'expanded');
+                // Page-level dismissal: stay closed for the rest of this page session.
+                pageDismissed = true;
                 if (currentTarget) dismissedEls.add(currentTarget);
             };
 
@@ -846,8 +884,7 @@ document.addEventListener('mouseover', (e) => {
             });
             
             globalOverlay.addEventListener('mouseleave', () => {
-                clearTimeout(hideTimeout);
-                hideTimeout = setTimeout(() => { globalOverlay.classList.remove('visible', 'expanded'); }, 350);
+                scheduleHide(350);
             });
         }
 
@@ -878,16 +915,15 @@ document.addEventListener('mouseover', (e) => {
             if (el.dataset.daisyBound) return;
             el.dataset.daisyBound = "true";
             el.addEventListener('mouseenter', () => {
-                if (dismissedEls.has(el) || !hasDownloadableMedia(el)) return;
-                initGlobalOverlay(); clearTimeout(hideTimeout);
+                if (pageDismissed || dismissedEls.has(el) || !hasDownloadableMedia(el)) return;
+                initGlobalOverlay();
+                clearTimeout(hideTimeout);
+                hideTimeout = null;
                 if (currentTarget !== el) { currentTarget = el; globalOverlay.classList.remove('expanded'); }
                 positionOverlay(el); globalOverlay.classList.add('visible');
             });
             el.addEventListener('mouseleave', () => {
-                if (globalOverlay) {
-                    clearTimeout(hideTimeout);
-                    hideTimeout = setTimeout(() => { globalOverlay.classList.remove('visible', 'expanded'); }, 350);
-                }
+                if (globalOverlay) scheduleHide(350);
             });
         }
 
