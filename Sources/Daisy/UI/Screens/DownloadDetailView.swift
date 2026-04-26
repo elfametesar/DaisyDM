@@ -205,6 +205,10 @@ struct DetailView: View {
                             headerValueRow(label: "Referer", systemImage: "link", value: ref)
                         }
                     }
+                    if let cookies = item.cookies, !cookies.isEmpty {
+                        let summary = formatCookiesForDisplay(cookies)
+                        headerValueRow(label: "Cookies", systemImage: "doc.text", value: summary)
+                    }
                 }
                 .padding(.trailing, 8)
                 .padding(.bottom, 8)
@@ -212,6 +216,33 @@ struct DetailView: View {
             .frame(maxHeight: 250)
             .clipped()
         }
+    }
+
+    /// Renders the cookie blob in a human-readable way: counts the entries
+    /// and lists their names. Accepts both Netscape jar format (the shape
+    /// chrome.cookies.getAll → formatNetscapeCookies produces) and the
+    /// `name=value; name=value` header form.
+    private func formatCookiesForDisplay(_ raw: String) -> String {
+        var names: [String] = []
+        if raw.hasPrefix("# Netscape") || raw.contains("\tTRUE\t") || raw.contains("\tFALSE\t") {
+            for line in raw.split(separator: "\n") {
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                if trimmed.isEmpty || trimmed.hasPrefix("#") { continue }
+                let cols = trimmed.components(separatedBy: "\t")
+                if cols.count >= 6 { names.append(cols[5]) }
+            }
+        } else {
+            for chunk in raw.split(separator: ";") {
+                let pair = chunk.trimmingCharacters(in: .whitespaces)
+                if let eq = pair.firstIndex(of: "=") {
+                    names.append(String(pair[..<eq]).trimmingCharacters(in: .whitespaces))
+                }
+            }
+        }
+        names = names.filter { !$0.isEmpty }
+        if names.isEmpty { return raw }
+        let summary = "\(names.count) cookie\(names.count == 1 ? "" : "s") — "
+        return summary + names.joined(separator: ", ")
     }
 
     private func headerValueRow(label: String, systemImage: String, value: String) -> some View {

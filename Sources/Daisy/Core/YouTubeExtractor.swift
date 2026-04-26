@@ -244,14 +244,14 @@ actor YouTubeExtractor {
         ),
         ClientContext(
             name: "IOS",
-            version: "20.10.4",
-            userAgent: "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)",
+            version: "19.45.4",
+            userAgent: "com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 18_1_0 like Mac OS X;)",
             xClientName: "5",
-            xClientVersion: "20.10.4",
+            xClientVersion: "19.45.4",
             deviceMake: "Apple",
             deviceModel: "iPhone16,2",
             osName: "iPhone",
-            osVersion: "18.3.2.22D82",
+            osVersion: "18.1.0.22B83",
             androidSdkVersion: nil,
             apiKey: "AIzaSyB-63vPrdThhKuerbB2N_l7Kwwcxj6yUAc"
         )
@@ -346,13 +346,20 @@ actor YouTubeExtractor {
         var seenItags = Set<Int>()
         var seenAdaptiveItags = Set<Int>()
 
+        // Fetch the watch page to harvest a visitorData token. YouTube's bot
+        // detection treats InnerTube requests as suspicious unless the client
+        // context carries a visitor fingerprint, even when the user's cookies
+        // are valid. This single GET costs ~200ms and dramatically improves
+        // success rate against the "Sign in to confirm you're not a bot" gate.
+        let visitorData = await fetchVisitorData(videoId: videoId, credentials: credentials)
+
         let cookieCount = credentials.cookieHeader?.split(separator: ";").count ?? 0
         let hasSapisid = credentials.sapisid != nil
-        print("[Daisy] InnerTube extract videoId=\(videoId) cookies=\(cookieCount) sapisid=\(hasSapisid) ua=\(credentials.userAgent?.prefix(40) ?? "<none>")")
+        print("[Daisy] InnerTube extract videoId=\(videoId) cookies=\(cookieCount) sapisid=\(hasSapisid) visitor=\(visitorData != nil) ua=\(credentials.userAgent?.prefix(40) ?? "<none>")")
 
         for client in clients {
             do {
-                let info = try await fetch(videoId: videoId, client: client, credentials: credentials)
+                let info = try await fetch(videoId: videoId, client: client, credentials: credentials, visitorData: visitorData)
                 if merged == nil {
                     merged = info
                     seenItags = Set(info.formats.map { $0.itag })
@@ -439,7 +446,44 @@ actor YouTubeExtractor {
         return digest.map { String(format: "%02x", $0) }.joined()
     }
 
-    private func fetch(videoId: String, client: ClientContext, credentials: Credentials) async throws -> YouTubeVideoInfo {
+    /// Fetches the watch page and pulls out the `visitorData` token that
+    /// `ytcfg.set({...})` advertises. Returns nil on any failure — the
+    /// caller proceeds without a visitor token, which is fine for many
+    /// videos but raises the chance of hitting the bot gate.
+    private func fetchVisitorData(videoId: String, credentials: Credentials) async -> String? {
+        guard let url = URL(string: "https://www.youtube.com/watch?v=\(videoId)") else { return nil }
+        var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 8)
+        req.setValue(credentials.userAgent ?? "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
+        if let cookieHeader = credentials.cookieHeader {
+            req.setValue(cookieHeader, forHTTPHeaderField: "Cookie")
+        }
+        req.setValue("text/html,application/xhtml+xml", forHTTPHeaderField: "Accept")
+        do {
+            let (data, _) = try await URLSession.shared.data(for: req)
+            guard let html = String(data: data, encoding: .utf8) else { return nil }
+            for pattern in [#""visitorData":"([^"]+)""#, #""VISITOR_DATA":"([^"]+)""#] {
+                guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+                let range = NSRange(html.startIndex..., in: html)
+                if let match = regex.firstMatch(in: html, range: range),
+                   match.numberOfRanges >= 2,
+                   let r = Range(match.range(at: 1), in: html) {
+                    let raw = String(html[r])
+                    // visitorData is unicode-escape-encoded in the HTML
+                    // (\u003D etc.). Replace the common escapes back.
+                    let decoded = raw
+                        .replacingOccurrences(of: "\\u003d", with: "=")
+                        .replacingOccurrences(of: "\\u003D", with: "=")
+                        .replacingOccurrences(of: "\\u0026", with: "&")
+                    return decoded
+                }
+            }
+            return nil
+        } catch {
+            return nil
+        }
+    }
+
+    private func fetch(videoId: String, client: ClientContext, credentials: Credentials, visitorData: String?) async throws -> YouTubeVideoInfo {
         var endpointString = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false"
         if let key = client.apiKey, !key.isEmpty {
             endpointString += "&key=\(key)"
@@ -481,7 +525,16 @@ actor YouTubeExtractor {
                 req.setValue(auth, forHTTPHeaderField: "Authorization")
                 req.setValue("https://www.youtube.com", forHTTPHeaderField: "X-Origin")
                 req.setValue("0", forHTTPHeaderField: "X-Goog-AuthUser")
+                // Real signed-in browsers always set this on player calls.
+                // Helps the request fingerprint match a true logged-in session.
+                req.setValue("true", forHTTPHeaderField: "X-Youtube-Bootstrap-Logged-In")
             }
+        }
+        // Forward visitor identity on every client. Even unauthenticated
+        // requests benefit — YouTube treats requests with a stable visitor
+        // fingerprint as far less suspicious than fully cold ones.
+        if let vd = visitorData, !vd.isEmpty {
+            req.setValue(vd, forHTTPHeaderField: "X-Goog-Visitor-Id")
         }
 
         var clientCtx: [String: Any] = [
@@ -496,6 +549,9 @@ actor YouTubeExtractor {
         if let o = client.osName { clientCtx["osName"] = o }
         if let v = client.osVersion { clientCtx["osVersion"] = v }
         if let s = client.androidSdkVersion { clientCtx["androidSdkVersion"] = s }
+        if let vd = visitorData, !vd.isEmpty {
+            clientCtx["visitorData"] = vd
+        }
 
         let body: [String: Any] = [
             "context": ["client": clientCtx],
