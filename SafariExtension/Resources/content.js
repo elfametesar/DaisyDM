@@ -1,6 +1,6 @@
 // content.js - Daisy Extension (Chrome & Safari)
 
-// INJECT XHR/FETCH INTERCEPTOR TO CAPTURE AUTH HEADERS SENT BY CLIENT JS
+// INJECT XHR/FETCH/NAV INTERCEPTOR
 try {
     const interceptorScript = document.createElement('script');
     interceptorScript.src = (typeof browser !== "undefined" ? browser : chrome).runtime.getURL('inject.js');
@@ -47,14 +47,11 @@ document.addEventListener("keydown", (e) => {
     }
 }, { capture: true, passive: true });
 
-document.addEventListener("keyup", (e) => {
-    updateBypassState(e);
-}, { capture: true, passive: true });
+document.addEventListener("keyup", (e) => { updateBypassState(e); }, { capture: true, passive: true });
 
 document.addEventListener("mousedown", (e) => {
     updateBypassState(e);
     if (isKeyCurrentlyHeld) {
-        // Only trigger a grace period token if interacting with page elements
         const isInteractive = e.target.closest('a, button, [role="button"], input, .btn, video, img');
         if (isInteractive) {
             lastBypassInteractionTime = Date.now();
@@ -72,11 +69,8 @@ function shouldBypass(isProgrammatic = false) {
     if (isExtensionDisabled) return true;
     if (isKeyCurrentlyHeld) return true;
     
-    // 60-second grace period for asynchronous programmatic blob downloads
     if (isProgrammatic && (Date.now() - lastBypassInteractionTime < 60000)) {
-        // Do NOT consume the background script's token here. The background script
-        // needs that active token so it knows to release the native download.
-        lastBypassInteractionTime = 0; // Consume local token only
+        lastBypassInteractionTime = 0;
         return true;
     }
     return false;
@@ -86,7 +80,6 @@ function shouldBypass(isProgrammatic = false) {
 let sniffedMediaUrls = [];
 let _lastSeenUrl = window.location.href;
 const capturedMediaRequestHeaders = new Map();
-
 const playerUrlMap = new WeakMap();
 const iframeSrcMap = new WeakMap();
 
@@ -105,7 +98,6 @@ setInterval(() => {
 
 function getLikelyTargetMediaElements() {
     const elements = Array.from(document.querySelectorAll('video, iframe'));
-    
     const playing = elements.filter(v => v.tagName === 'VIDEO' && !v.paused && v.readyState > 0);
     if (playing.length > 0) return playing;
     
@@ -200,7 +192,6 @@ function bubbleMediaToTop(data) {
     
     if (IS_TOP_FRAME) {
         const now = Date.now();
-        // Maintain list memory for a 2-hour sliding window, capped at 200 URLs to solve missing videos that ended fetching.
         sniffedMediaUrls = sniffedMediaUrls.filter(m => now - m.timestamp < 7200000).slice(-200);
 
         if (!sniffedMediaUrls.some(m => normalizeUrl(m.url) === normalizeUrl(url))) {
@@ -224,7 +215,29 @@ function bubbleMediaToTop(data) {
     }
 }
 
+// Unified URL Check Function
+function isLikelyDownloadUrl(urlStr) {
+    if (!urlStr) return false;
+    const exts = ['.mp4', '.mkv', '.avi', '.webm', '.mov', '.wmv', '.flv', '.ts', '.m3u8', '.mpd', '.zip', '.rar', '.pdf', '.dmg', '.pkg', '.iso', '.bin', '.tar', '.gz'];
+    try {
+        const u = new URL(urlStr, document.baseURI);
+        const path = u.pathname.toLowerCase();
+        const href = u.href.toLowerCase();
+        return exts.some(ext => path.endsWith(ext)) || href.includes('/download/') || href.includes('?download=');
+    } catch {
+        const lower = urlStr.toLowerCase();
+        return exts.some(ext => lower.endsWith(ext)) || lower.includes('/download/') || lower.includes('?download=');
+    }
+}
+
 window.addEventListener("message", (e) => {
+    if (e.data && e.data.__daisyTriggerDownload) {
+        if (shouldBypass(true)) return;
+        const filename = e.data.__daisyFilename || extractFilename(e.data.__daisyTriggerDownload);
+        sendToDispatch(e.data.__daisyTriggerDownload, filename);
+        return;
+    }
+
     if (e.data && e.data.__daisyMedia) bubbleMediaToTop(e.data.__daisyMedia);
     if (e.data && e.data.__daisyMediaHeaders) {
         const { url, headers } = e.data.__daisyMediaHeaders;
@@ -235,7 +248,6 @@ window.addEventListener("message", (e) => {
             try {
                 _api.runtime.sendMessage({ type: "PUSH_MEDIA_HEADERS", headers: { [url]: headers } }).catch(() => {});
             } catch(err) {}
-            // Also register the URL itself as a media candidate
             bubbleMediaToTop({ url, mediaType: 'unknown', frameOrigin: window.location.origin });
         }
     }
@@ -344,7 +356,6 @@ function runScriptSniffer(root) {
     if (IS_TOP_FRAME) sniffMailRu(root);
 }
 
-// mail.ru / my.mail.ru video support.
 async function sniffMailRu(root) {
     try {
         const host = window.location.hostname;
@@ -546,6 +557,13 @@ function getExtFromUrl(url) {
     } catch { return '.mp4'; }
 }
 
+function extractFilename(url, el) {
+    try {
+        const parts = new URL(url).pathname.split("/");
+        return decodeURIComponent(parts[parts.length - 1]) || "download";
+    } catch { return "download"; }
+}
+
 function nativeFallback(url, filename) {
   const a = document.createElement('a'); a.href = url;
   if (filename) a.download = filename;
@@ -620,23 +638,44 @@ function getContextualVideoName(el) {
     return null;
 }
 
-// Intercept Dynamically Generated Clicks (Programmatic Downloads)
+// Intercept Dynamically Generated Clicks
 const _createElement = document.createElement.bind(document);
 document.createElement = function(tag, ...args) {
   const el = _createElement(tag, ...args);
   if (tag.toLowerCase() === "a") {
     const _click = el.click.bind(el);
     el.click = function() {
-      // Pass `true` because this is a programmatic JS click
       if (el.hasAttribute('data-daisy-bypass') || shouldBypass(true) || !el.href) { _click(); return; }
-      const isDownloadUrl = ['.mp4', '.mkv', '.avi', '.webm', '.mov', '.wmv', '.flv', '.ts', '.m3u8', '.mpd'].some(ext => { try { return new URL(el.href).pathname.toLowerCase().endsWith(ext); } catch { return false; } });
-      if (el.href.startsWith("blob:") || el.hasAttribute("download") || isDownloadUrl) {
-          sendToDispatch(el.href, el.getAttribute("download") || extractFilename(el.href, el));
+      
+      if (el.href.startsWith("blob:") || el.hasAttribute("download") || isLikelyDownloadUrl(el.href) || el.dataset.daisyDownload === "true") {
+          sendToDispatch(el.href, el.dataset.daisyFilename || el.getAttribute("download") || extractFilename(el.href, el));
       } else { _click(); }
     };
   }
   return el;
 };
+
+// --- PRE-FLIGHT HOVER INTERCEPTOR ---
+document.addEventListener('mouseover', (e) => {
+    const a = e.target.closest('a');
+    if (!a || !a.href || a.dataset.daisyChecked || a.href.startsWith('javascript:') || a.href.startsWith('blob:') || a.href.startsWith('data:')) return;
+
+    a.dataset.daisyChecked = "true";
+
+    if (isLikelyDownloadUrl(a.href) || a.hasAttribute('download')) {
+         a.dataset.daisyDownload = "true";
+         return;
+    }
+
+    try {
+        _api.runtime.sendMessage({ type: "PREFLIGHT_LINK", url: a.href }).then(response => {
+            if (response && response.isDownload) {
+                a.dataset.daisyDownload = "true";
+                if (response.filename) a.dataset.daisyFilename = response.filename;
+            }
+        }).catch(() => {});
+    } catch (err) {}
+}, { passive: true });
 
 (function() {
     if (!IS_TOP_FRAME) {
@@ -660,7 +699,6 @@ document.createElement = function(tag, ...args) {
         }
         const subObs = new MutationObserver(() => { watchSubframeVideos(document); });
         
-        // Ensure script sniffers actively run inside subframes (crucial for Reddit embeds)
         if (document.body) {
             subObs.observe(document.body, { childList: true, subtree: true });
             watchSubframeVideos(document);
@@ -684,10 +722,25 @@ document.createElement = function(tag, ...args) {
         document.querySelectorAll('.daisydm-overlay-container').forEach(el => el.remove());
         window.__daisydm_video_injected = true;
         startDetection();
+        
+        // --- HIDDEN IFRAME DOWNLOAD SNIFFER ---
+        const iframeObserver = new MutationObserver((mutations) => {
+            mutations.forEach(m => {
+                m.addedNodes.forEach(node => {
+                    if (node.tagName === 'IFRAME' && node.src) {
+                        if (isLikelyDownloadUrl(node.src)) {
+                            const targetSrc = node.src;
+                            node.removeAttribute('src'); // Stop browser from executing native download
+                            sendToDispatch(targetSrc, extractFilename(targetSrc));
+                        }
+                    }
+                });
+            });
+        });
+        iframeObserver.observe(document.documentElement, { childList: true, subtree: true });
     };
 
     function startDetection() {
-
         const style = document.createElement('style');
         style.textContent = `
             @keyframes daisy-shimmer { 0% { background-position: -200% center; } 100% { background-position: 200% center; } }
@@ -782,7 +835,6 @@ document.createElement = function(tag, ...args) {
             globalOverlay.querySelector('.daisydm-overlay-header').onclick = (e) => {
                 if (e.target.closest('.daisydm-close-btn')) return;
                 e.stopPropagation();
-                // We keep the click event to prevent bubbling, but expansion is now handled by hover
             };
 
             globalOverlay.addEventListener('mouseenter', () => {
@@ -846,8 +898,6 @@ document.createElement = function(tag, ...args) {
                 <div class="daisydm-shimmer" style="width:44%;margin-top:5px;margin-bottom:8px"></div>
             `;
             
-            console.log('[Daisy] populateDropdown called. sniffedMediaUrls:', JSON.stringify(sniffedMediaUrls.map(m => ({url: m.url, type: m.mediaType}))));
-            
             const pageUrl = window.location.href;
             let contextualName = getContextualVideoName(targetEl);
             let _pt = document.title.trim();
@@ -885,7 +935,6 @@ document.createElement = function(tag, ...args) {
                 }
             });
 
-            // Ensure we always merge heavily sniffed network files, don't let a dummy blob override
             if (sniffedMediaUrls.length > 0) {
                 sniffedMediaUrls.forEach(m => {
                     if (!urlTypeMap.has(m.url)) {
@@ -1033,23 +1082,19 @@ document.createElement = function(tag, ...args) {
     document.addEventListener('click', (e) => {
         updateBypassState(e);
         
-        // Find the closest anchor tag that was clicked
         const a = e.target.closest('a');
         if (a && a.href) {
-            // 1. Check if it's a magnet link
             if (a.href.toLowerCase().startsWith('magnet:')) {
-                // Pass false: Direct physical click, don't consume programmatic grace tokens
                 if (shouldBypass(false)) return;
                 e.preventDefault();
                 e.stopPropagation();
                 sendToDispatch(a.href, "Torrent Download");
             }
-            // 2. Catch standard static download links (Crucial for Safari)
-            else if (a.hasAttribute('download') || ['.mp4', '.mkv', '.webm', '.mov', '.ts', '.m3u8', '.mpd'].some(ext => { try { return new URL(a.href).pathname.toLowerCase().endsWith(ext); } catch { return false; } })) {
+            else if (a.dataset.daisyDownload === "true" || a.hasAttribute('download') || isLikelyDownloadUrl(a.href)) {
                 if (shouldBypass(false)) return;
                 e.preventDefault();
                 e.stopPropagation();
-                sendToDispatch(a.href, a.getAttribute("download") || extractFilename(a.href, a));
+                sendToDispatch(a.href, a.dataset.daisyFilename || a.getAttribute("download") || extractFilename(a.href, a));
             }
         }
     }, { capture: true });

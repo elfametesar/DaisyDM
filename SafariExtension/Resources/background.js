@@ -1,4 +1,4 @@
-// background.js - Daisy Chrome Extension
+// background.js - Daisy Chrome & Safari Extension
 
 const _api = typeof browser !== "undefined" ? browser : chrome;
 
@@ -196,30 +196,60 @@ _api.webRequest.onHeadersReceived.addListener(
     resExtraInfo
 );
 
-// --- NATIVE CHROME DOWNLOAD INTERCEPTOR ---
-if (typeof chrome !== 'undefined' && chrome.downloads) {
-    chrome.downloads.onCreated.addListener((item) => {
+// --- SAFARI & CHROME NATIVE DOWNLOAD INTERCEPTOR ---
+if (_api.downloads && typeof _api.downloads.onCreated !== 'undefined') {
+    _api.downloads.onCreated.addListener((item) => {
         if (!dispatchEnabled) return;
         
         if (Date.now() < bypassGraceUntil) {
-            // Consume the token so we don't permanently break standard intercepts for 60s
             bypassGraceUntil = 0;
-            return; // LET BROWSER HANDLE IT
+            return;
         }
         
         if (item.url.startsWith("blob:") || item.url.startsWith("data:")) return;
 
-        chrome.downloads.cancel(item.id, () => {
-            chrome.downloads.erase({id: item.id}, () => {});
-            triggerDownload(item.url, item.filename, item.referrer || "", null, null, false, false, {});
-        });
+        try {
+            _api.downloads.cancel(item.id).then(() => {
+                _api.downloads.erase({id: item.id}).catch(()=>{});
+                triggerDownload(item.url, item.filename, item.referrer || "", null, null, false, false, {});
+            }).catch(()=>{});
+        } catch (e) {
+            if (_api.downloads.cancel) {
+                _api.downloads.cancel(item.id, () => {
+                    _api.downloads.erase({id: item.id}, () => {});
+                    triggerDownload(item.url, item.filename, item.referrer || "", null, null, false, false, {});
+                });
+            }
+        }
     });
 }
 
 _api.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
+    if (message.type === "PREFLIGHT_LINK") {
+        fetch(message.url, { method: "HEAD", redirect: "follow" })
+            .then(res => {
+                const cd = res.headers.get('content-disposition') || '';
+                const ct = res.headers.get('content-type') || '';
+                let isDownload = false;
+                let filename = null;
+
+                if (cd.toLowerCase().includes('attachment')) {
+                    isDownload = true;
+                    const match = cd.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
+                    if (match && match[1]) filename = match[1].replace(/['"]/g, '');
+                } else {
+                    const mediaTypes = ['application/octet-stream', 'video/', 'audio/', 'application/pdf', 'application/zip', 'application/x-rar-compressed', 'application/x-apple-diskimage'];
+                    if (mediaTypes.some(t => ct.toLowerCase().includes(t))) isDownload = true;
+                }
+                sendResponse({ isDownload, filename });
+            })
+            .catch(() => sendResponse({ isDownload: false, filename: null }));
+        return true;
+    }
+
     if (message.type === "SET_BYPASS_GRACE") {
-        bypassGraceUntil = Date.now() + 60000; // 60 seconds
+        bypassGraceUntil = Date.now() + 60000;
         sendResponse({ ok: true });
         return true;
     }
@@ -275,7 +305,6 @@ async function triggerDownload(url, filename, referer, cookies, youtubeQuality, 
     let finalCookies = cookies;
     if (!finalCookies) finalCookies = findCapturedCookieAggressive(url) || await fetchBaseDomainCookies(referer || url);
     
-    // Send full merged headers to the download app
     const reqHeaders  = findCapturedDataAggressive(capturedRequestHeaders, url);
     const respHeaders = findCapturedDataAggressive(capturedResponseHeaders, url);
     
@@ -284,7 +313,7 @@ async function triggerDownload(url, filename, referer, cookies, youtubeQuality, 
 
     const payload = JSON.stringify({
         url, filename: filename || "download", cookies: finalCookies || "", referer: referer || "",
-        ua: navigator.userAgent, browser: "chrome", youtubeQuality, forceHLS, forceDASH,
+        ua: navigator.userAgent, browser: "safari/chrome", youtubeQuality, forceHLS, forceDASH,
         headers: mergedHeaders,
         requestHeaders: mergedHeaders,
         responseHeaders: respHeaders,

@@ -1,8 +1,99 @@
 // inject.js
 (function() {
     const MEDIA_RE = /\.m3u8|stream\.mpd|\.mpd|dash|hls|\.mp4|\.webm|\.mov|\.ts|manifest/i;
+    const OBVIOUS_DOWNLOAD_RE = /\.mp4|\.mkv|\.avi|\.webm|\.mov|\.wmv|\.flv|\.ts|\.m3u8|\.mpd|\.zip|\.rar|\.pdf|\.dmg|\.iso|\.pkg|\.tar|\.gz|\.bin/i;
+    const DOWNLOAD_PATH_RE = /\/download\/|\?download=/i;
 
-    // Listen for requests to fetch YouTube formats natively from the page context
+    function isObviousDownload(urlStr) {
+        if (!urlStr) return false;
+        try {
+            const url = new URL(urlStr, document.baseURI);
+            return OBVIOUS_DOWNLOAD_RE.test(url.pathname) || DOWNLOAD_PATH_RE.test(url.href);
+        } catch {
+            return OBVIOUS_DOWNLOAD_RE.test(urlStr) || DOWNLOAD_PATH_RE.test(urlStr);
+        }
+    }
+
+    // 1. Trap Blob Destruction (Prevents sites from deleting the file before we intercept it)
+    const originalRevokeObjectURL = URL.revokeObjectURL;
+    URL.revokeObjectURL = function(url) {
+        setTimeout(() => {
+            try { originalRevokeObjectURL.call(this, url); } catch(e) {}
+        }, 45000); // Force blobs to stay alive for 45 seconds so Daisy can capture them
+    };
+
+    // 2. Trap Native Anchor Clicks
+    const originalAnchorClick = HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click = function() {
+        if (this.hasAttribute('download') || this.href.startsWith('blob:') || isObviousDownload(this.href) || this.dataset.daisyDownload === "true") {
+            window.postMessage({
+                __daisyTriggerDownload: this.href,
+                __daisyFilename: this.getAttribute('download') || this.dataset.daisyFilename || ''
+            }, "*");
+            return;
+        }
+        return originalAnchorClick.call(this);
+    };
+
+    // 3. Trap Synthetic/Dispatched Click Events (React/Vue/Angular invisible links)
+    const originalDispatchEvent = EventTarget.prototype.dispatchEvent;
+    EventTarget.prototype.dispatchEvent = function(event) {
+        if (event && event.type === 'click' && this instanceof HTMLAnchorElement) {
+            if (this.hasAttribute('download') || this.href.startsWith('blob:') || isObviousDownload(this.href) || this.dataset.daisyDownload === "true") {
+                window.postMessage({
+                    __daisyTriggerDownload: this.href,
+                    __daisyFilename: this.getAttribute('download') || this.dataset.daisyFilename || ''
+                }, "*");
+                return false;
+            }
+        }
+        return originalDispatchEvent.apply(this, arguments);
+    };
+
+    // 4. Trap Direct location.href Navigation (The Gofile.io method)
+    const locDesc = Object.getOwnPropertyDescriptor(window.Location.prototype, 'href');
+    if (locDesc && locDesc.set) {
+        Object.defineProperty(window.Location.prototype, 'href', {
+            set: function(val) {
+                if (isObviousDownload(val)) {
+                    window.postMessage({ __daisyTriggerDownload: val, __daisyFilename: '' }, "*");
+                    return;
+                }
+                return locDesc.set.call(this, val);
+            },
+            get: locDesc.get
+        });
+    }
+
+    // 5. Trap Window Open & Reassignments
+    const originalWindowOpen = window.open;
+    window.open = function(url, name, specs) {
+        if (url && typeof url === 'string' && isObviousDownload(url)) {
+            window.postMessage({ __daisyTriggerDownload: url, __daisyFilename: '' }, "*");
+            return null;
+        }
+        return originalWindowOpen.apply(this, arguments);
+    };
+
+    const originalAssign = window.location.assign;
+    window.location.assign = function(url) {
+        if (url && typeof url === 'string' && isObviousDownload(url)) {
+            window.postMessage({ __daisyTriggerDownload: url, __daisyFilename: '' }, "*");
+            return;
+        }
+        return originalAssign.call(window.location, url);
+    };
+
+    const originalReplace = window.location.replace;
+    window.location.replace = function(url) {
+        if (url && typeof url === 'string' && isObviousDownload(url)) {
+            window.postMessage({ __daisyTriggerDownload: url, __daisyFilename: '' }, "*");
+            return;
+        }
+        return originalReplace.call(window.location, url);
+    };
+
+    // YouTube format listener
     window.addEventListener("message", (e) => {
         if (e.data && e.data.__daisyReqYtFormats) {
             let formats = new Set();
@@ -52,7 +143,6 @@
             hasRange = lowerHeaders.includes('range');
         }
         
-        // Always fire for media URLs or Range fetching, even if no custom headers
         if (Object.keys(headers).length > 0 || MEDIA_RE.test(url) || hasRange) {
             window.postMessage({ __daisyMediaHeaders: { url, headers } }, "*");
         }
