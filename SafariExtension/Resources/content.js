@@ -274,25 +274,70 @@ function getActualYtFormats() {
 
 function getActualYtFormatsAsync() {
     return new Promise(resolve => {
-        // Has to outlive inject.js's own retry window (~1500ms) so we don't
-        // time out before the page-context harvester finishes waiting for
-        // YouTube's player to finish initializing after an SPA navigation.
+        const reqId = Math.random().toString(36).slice(2);
+        
         const timeout = setTimeout(() => {
             window.removeEventListener("message", listener);
             resolve(getActualYtFormats());
         }, 2000);
 
         const listener = (e) => {
+            let incoming = null;
             if (e.data && e.data.__daisyYtFormatsResp) {
-                clearTimeout(timeout);
-                window.removeEventListener("message", listener);
-                let formats = new Set(e.data.__daisyYtFormatsResp);
+                incoming = e.data.__daisyYtFormatsResp;
+            } else if (e.data && e.data.__daisyInlineYtResp === reqId) {
+                incoming = e.data.formats || [];
+            }
+            
+            if (incoming !== null) {
+                let formats = new Set(incoming);
                 getActualYtFormats().forEach(h => formats.add(h));
-                resolve(Array.from(formats).sort((a, b) => b - a));
+                
+                // Prevent early resolution with empty arrays caused by stale listeners.
+                // We resolve immediately only if formats are found. Otherwise, let it
+                // wait for the inline script response or the timeout.
+                if (formats.size > 0) {
+                    clearTimeout(timeout);
+                    window.removeEventListener("message", listener);
+                    resolve(Array.from(formats).sort((a, b) => b - a));
+                }
             }
         };
+        
         window.addEventListener("message", listener);
         window.postMessage({ __daisyReqYtFormats: true }, "*");
+
+        // Ephemeral script injection directly queries the active YouTube player
+        // bypassing stale SPA script tags.
+        try {
+            const script = document.createElement('script');
+            script.textContent = `
+                (function() {
+                    let formats = new Set();
+                    try {
+                        let player = document.getElementById('movie_player') || document.querySelector('ytd-player');
+                        let resp = null;
+                        if (player && typeof player.getPlayerResponse === 'function') {
+                            resp = player.getPlayerResponse();
+                        }
+                        if (!resp && window.ytInitialPlayerResponse) {
+                            resp = window.ytInitialPlayerResponse;
+                        }
+                        if (resp && resp.streamingData) {
+                            let allFormats = (resp.streamingData.formats || []).concat(resp.streamingData.adaptiveFormats || []);
+                            allFormats.forEach(f => {
+                                if (f.height && f.height >= 144 && f.height <= 4320) {
+                                    formats.add(f.height);
+                                }
+                            });
+                        }
+                    } catch(e) {}
+                    window.postMessage({ __daisyInlineYtResp: "${reqId}", formats: Array.from(formats) }, "*");
+                })();
+            `;
+            (document.head || document.documentElement).appendChild(script);
+            script.remove();
+        } catch(e) {}
     });
 }
 
@@ -470,7 +515,7 @@ async function fetchHlsQualities(masterUrl) {
 
         let manifestTitle = null;
         const titleMatch = text.match(/#EXT-X-SESSION-DATA:[^\n]*DATA-ID="[^"]*title[^"]*"[^\n]*VALUE="([^"]+)"/i)
-                        || text.match(/#EXT-X-TITLE:([^\n]+)/i);
+                         || text.match(/#EXT-X-TITLE:([^\n]+)/i);
         if (titleMatch) manifestTitle = titleMatch[1].trim();
 
         if (!text.includes('#EXT-X-STREAM-INF')) {
