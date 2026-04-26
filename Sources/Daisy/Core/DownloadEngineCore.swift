@@ -33,7 +33,6 @@ public final class DownloadEngine {
     }
     
     var aria2Path: String? { resolveHomebrewPath(for: "aria2c") }
-    var ytDlpPath: String? { resolveHomebrewPath(for: "yt-dlp") }
     var ffmpegPath: String? { resolveHomebrewPath(for: "ffmpeg") }
 
     private init() {

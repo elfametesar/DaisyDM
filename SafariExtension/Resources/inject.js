@@ -103,8 +103,11 @@
         hd1080: 1080, hd720: 720, large: 480, medium: 360, small: 240, tiny: 144
     };
 
-    function harvestYouTubeHeights() {
+    function harvestYouTube() {
         const heights = new Set();
+        let title = null;
+        let author = null;
+        let videoId = null;
         const addH = (h) => {
             if (typeof h !== 'number' || !isFinite(h)) return;
             if (h >= 144 && h <= 4320) heights.add(h);
@@ -121,6 +124,13 @@
                 if (typeof f.height === 'number') addH(f.height);
                 else if (f.qualityLabel) addFromLabel(f.qualityLabel);
             });
+        };
+        const captureMeta = (resp) => {
+            if (!resp || !resp.videoDetails) return;
+            const d = resp.videoDetails;
+            if (!title && d.title) title = String(d.title);
+            if (!author && d.author) author = String(d.author);
+            if (!videoId && d.videoId) videoId = String(d.videoId);
         };
 
         try {
@@ -147,47 +157,60 @@
                             addFromFormatsArray(resp.streamingData.formats);
                             addFromFormatsArray(resp.streamingData.adaptiveFormats);
                         }
+                        captureMeta(resp);
+                    }
+                } catch (_) {}
+                try {
+                    if (!title && typeof player.getVideoData === 'function') {
+                        const vd = player.getVideoData();
+                        if (vd && vd.title) title = String(vd.title);
+                        if (vd && vd.author && !author) author = String(vd.author);
+                        if (vd && vd.video_id && !videoId) videoId = String(vd.video_id);
                     }
                 } catch (_) {}
             }
         } catch (_) {}
 
-        // Trust ytInitialPlayerResponse unconditionally. It can be stale after
-        // an SPA navigation (still pointing at the previous video), but
-        // yt-dlp gracefully degrades with `bestvideo[height<=N]+bestaudio/best`
-        // when N isn't available — so it's much better to surface *some*
-        // height options than to fall through to a single "Original" entry.
         try {
             const initial = window.ytInitialPlayerResponse;
-            if (initial && initial.streamingData) {
-                addFromFormatsArray(initial.streamingData.formats);
-                addFromFormatsArray(initial.streamingData.adaptiveFormats);
+            if (initial) {
+                if (initial.streamingData) {
+                    addFromFormatsArray(initial.streamingData.formats);
+                    addFromFormatsArray(initial.streamingData.adaptiveFormats);
+                }
+                captureMeta(initial);
             }
         } catch (_) {}
 
-        return heights;
+        return { heights, title, author, videoId };
     }
 
     window.addEventListener("message", (e) => {
         if (!e.data || !e.data.__daisyReqYtFormats) return;
-        // Accumulate heights across short retries so partial early reads
-        // (e.g. only ytInitialPlayerResponse before #movie_player exposes its
-        // API after an SPA navigation) get merged with the full read once
-        // the new player finishes initializing. We ship early once we have
-        // a reasonably complete list to keep the popup snappy, but if we're
-        // stuck at zero we keep trying until the timeout.
         const startedAt = Date.now();
         const maxWaitMs = 1500;
         const intervalMs = 150;
-        const completeEnough = 4; // most YouTube videos expose >=4 distinct heights
+        const completeEnough = 4;
         const cumulative = new Set();
+        let cumulativeTitle = null;
+        let cumulativeAuthor = null;
+        let cumulativeVideoId = null;
 
         const attempt = () => {
-            harvestYouTubeHeights().forEach(h => cumulative.add(h));
+            const { heights, title, author, videoId } = harvestYouTube();
+            heights.forEach(h => cumulative.add(h));
+            if (!cumulativeTitle && title) cumulativeTitle = title;
+            if (!cumulativeAuthor && author) cumulativeAuthor = author;
+            if (!cumulativeVideoId && videoId) cumulativeVideoId = videoId;
             const elapsed = Date.now() - startedAt;
             const done = cumulative.size >= completeEnough || elapsed > maxWaitMs;
             if (done) {
-                window.postMessage({ __daisyYtFormatsResp: Array.from(cumulative) }, "*");
+                window.postMessage({
+                    __daisyYtFormatsResp: Array.from(cumulative),
+                    __daisyYtTitle: cumulativeTitle,
+                    __daisyYtAuthor: cumulativeAuthor,
+                    __daisyYtVideoId: cumulativeVideoId
+                }, "*");
                 return;
             }
             setTimeout(attempt, intervalMs);

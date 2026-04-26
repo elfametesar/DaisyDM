@@ -279,16 +279,21 @@ function getActualYtFormatsAsync() {
         // YouTube's player to finish initializing after an SPA navigation.
         const timeout = setTimeout(() => {
             window.removeEventListener("message", listener);
-            resolve(getActualYtFormats());
+            resolve({ heights: getActualYtFormats(), title: null, author: null, videoId: null });
         }, 2000);
 
         const listener = (e) => {
             if (e.data && e.data.__daisyYtFormatsResp) {
                 clearTimeout(timeout);
                 window.removeEventListener("message", listener);
-                let formats = new Set(e.data.__daisyYtFormatsResp);
-                getActualYtFormats().forEach(h => formats.add(h));
-                resolve(Array.from(formats).sort((a, b) => b - a));
+                let heights = new Set(e.data.__daisyYtFormatsResp);
+                getActualYtFormats().forEach(h => heights.add(h));
+                resolve({
+                    heights: Array.from(heights).sort((a, b) => b - a),
+                    title: e.data.__daisyYtTitle || null,
+                    author: e.data.__daisyYtAuthor || null,
+                    videoId: e.data.__daisyYtVideoId || null
+                });
             }
         };
         window.addEventListener("message", listener);
@@ -623,22 +628,81 @@ function getContextualVideoName(el) {
     if (!el) return null;
     let label = el.getAttribute('aria-label') || el.getAttribute('title');
     if (label && label.length > 2) return label;
-    
+
+    // Site-specific selectors that beat the generic heading walk above for
+    // accuracy. Order matters — most specific first.
+    const siteSpecific = [
+        'article [data-testid="tweetText"]',
+        'shreddit-post [slot="title"]',
+        '[data-test-id="post-content"] h1',
+        'h1[data-adclicklocation="title"]',
+        '[data-e2e="browse-video-desc"]',
+        '[data-e2e="video-desc"]',
+        '.player-title, .vp-title, h1.iris_video-title',
+        'article header h1, article header a[role="link"]',
+        'article > header h1, main > header h1, h1'
+    ];
+    for (const sel of siteSpecific) {
+        try {
+            const node = document.querySelector(sel);
+            if (node && node.innerText) {
+                const clean = node.innerText.trim().split('\n')[0].substring(0, 120);
+                if (clean.length > 2) return clean;
+            }
+        } catch (_) {}
+    }
+
     let curr = el;
     for (let i = 0; i < 12 && curr && curr !== document.body; i++) {
-        let socialCaption = curr.querySelector('[data-ad-comet-preview="message"], [data-ad-preview="message"], [data-testid="post_message"], ._5pbx, ._1mwp, h1');
+        let socialCaption = curr.querySelector('[data-ad-comet-preview="message"], [data-ad-preview="message"], [data-testid="post_message"], [data-testid="tweetText"], ._5pbx, ._1mwp, h1');
         if (socialCaption && socialCaption.innerText) {
-            let clean = socialCaption.innerText.trim().split('\n')[0].substring(0, 60);
+            let clean = socialCaption.innerText.trim().split('\n')[0].substring(0, 120);
             if (clean.length > 2) return clean;
         }
         let heading = curr.querySelector('h2, h3, [role="heading"]');
         if (heading && heading.innerText) {
-            let clean = heading.innerText.trim().split('\n')[0].substring(0, 60);
+            let clean = heading.innerText.trim().split('\n')[0].substring(0, 120);
             if (clean.length > 2) return clean;
         }
         curr = curr.parentElement;
     }
     return null;
+}
+
+// Reads canonical page-level video metadata: og:title, twitter:title, JSON-LD
+// VideoObject, schema.org itemprop. Site-agnostic; used as the secondary
+// fallback after a video-element-anchored heading.
+function getMetaVideoName() {
+    try {
+        const tryMeta = (sel) => {
+            const m = document.querySelector(sel);
+            return m && m.content ? m.content.trim() : null;
+        };
+        const lds = document.querySelectorAll('script[type="application/ld+json"]');
+        for (const s of lds) {
+            try {
+                const data = JSON.parse(s.textContent || '');
+                const items = Array.isArray(data) ? data : [data];
+                for (const item of items) {
+                    if (!item) continue;
+                    const t = (item['@type'] || '').toString().toLowerCase();
+                    if (t.includes('videoobject') && item.name) return String(item.name).trim();
+                    if (item.name && (t === 'video' || t === 'creativework')) return String(item.name).trim();
+                }
+            } catch (_) {}
+        }
+        const microdata = document.querySelector('[itemtype*="VideoObject" i] [itemprop="name"], [itemtype*="VideoObject" i] meta[itemprop="name"]');
+        if (microdata) {
+            const v = microdata.content || microdata.innerText;
+            if (v && v.trim().length > 2) return v.trim();
+        }
+        return tryMeta('meta[property="og:title"]')
+            || tryMeta('meta[name="twitter:title"]')
+            || tryMeta('meta[name="title"]')
+            || null;
+    } catch (_) {
+        return null;
+    }
 }
 
 // Intercept Dynamically Generated Clicks
@@ -938,18 +1002,23 @@ document.addEventListener('mouseover', (e) => {
             `;
             
             const pageUrl = window.location.href;
-            let contextualName = getContextualVideoName(targetEl);
+            const sanitiseName = (s) => (s || '').replace(/[\/:*?"<>|]/g, '').replace(/\s+/g, ' ').trim();
+            let contextualName = sanitiseName(getContextualVideoName(targetEl));
+            let metaName = sanitiseName(getMetaVideoName());
             let _pt = document.title.trim();
             let _ptParts = _pt.split(/\s[-–—|]\s/);
-            let pageTitle = (_ptParts.length > 1 ? _ptParts.slice(0, -1).join(' - ') : _pt).trim();
-            let vidName = (contextualName || pageTitle || "Video").replace(/[\/:*?"<>|]/g, '').trim() || "Video";
+            let pageTitle = sanitiseName(_ptParts.length > 1 ? _ptParts.slice(0, -1).join(' - ') : _pt);
+            let vidName = contextualName || metaName || pageTitle || "Video";
 
-            if (pageUrl.includes('youtube.com')) {
+            if (pageUrl.includes('youtube.com') || pageUrl.includes('youtu.be')) {
                 if (!window.location.pathname.startsWith('/watch') && !window.location.pathname.startsWith('/shorts')) {
                     dropdownEl.innerHTML = '<div class="daisydm-overlay-option" style="color:rgba(40,50,90,0.50);justify-content:center;font-size:12px">No video on this page</div>';
                     return;
                 }
-                const trueHeights = await getActualYtFormatsAsync();
+                const yt = await getActualYtFormatsAsync();
+                const trueHeights = yt && yt.heights ? yt.heights : [];
+                const ytTitle = sanitiseName(yt && yt.title);
+                if (ytTitle) vidName = ytTitle;
                 dropdownEl.innerHTML = '';
                 if (trueHeights.length > 0) {
                     trueHeights.map(h => ({ id: `bestvideo[height<=${h}]+bestaudio/best`, vidName: vidName, quality: `${h}p`, ext: ".mp4" }))

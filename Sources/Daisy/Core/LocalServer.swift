@@ -24,10 +24,6 @@ struct DownloadPayload: Decodable {
         return merged
     }
 
-    var ytDlpHeaderArgs: [String] {
-        mergedHeaders.map { k, v in "--add-header=\(k):\(v)" }
-    }
-
     init(url: String, filename: String?, cookies: String?, referer: String?,
          ua: String?, youtubeQuality: String?, forceHLS: Bool?, forceDASH: Bool?, forceDirectDownload: Bool?, browser: String?,
          headers: [String: String]? = nil,
