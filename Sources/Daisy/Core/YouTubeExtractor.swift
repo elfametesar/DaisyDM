@@ -510,17 +510,13 @@ actor YouTubeExtractor {
         req.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
         req.setValue("https://www.youtube.com", forHTTPHeaderField: "Referer")
 
-        // Forward the user's authenticated cookie session for any client.
-        // The "Sign in to confirm you're not a bot" gate goes away as soon
-        // as YouTube sees a logged-in cookie set on the request.
-        // Note: the extension ships cookies as a Netscape jar — `cookieHeader`
-        // re-packs whichever shape we got into a proper `name=value; …`
-        // header before we hand it off.
-        if let cookieHeader = credentials.cookieHeader {
+        // Auth + cookie state is scoped to the web-family clients. Mobile
+        // / TV InnerTube endpoints don't expect these headers and can 400
+        // when they're sent — the cookies confuse the server because the
+        // identity advertised in the body (e.g. IOS app) doesn't match the
+        // signed-in browser session in the cookies.
+        if webFamily, let cookieHeader = credentials.cookieHeader {
             req.setValue(cookieHeader, forHTTPHeaderField: "Cookie")
-            // SAPISIDHASH is required for signed XHR auth on web-family
-            // clients. Other clients don't strictly need it but accepting
-            // it doesn't hurt and may unlock a few more videos.
             if let sapisid = credentials.sapisid, let auth = Self.sapisidHash(sapisid: sapisid, origin: "https://www.youtube.com") {
                 req.setValue(auth, forHTTPHeaderField: "Authorization")
                 req.setValue("https://www.youtube.com", forHTTPHeaderField: "X-Origin")
@@ -581,6 +577,13 @@ actor YouTubeExtractor {
 
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             let code = (response as? HTTPURLResponse)?.statusCode ?? -1
+            // Surface the response body in the diagnostic log so we can see
+            // what YouTube's complaint is — usually a JSON error explaining
+            // exactly which field is malformed or missing.
+            if let body = String(data: data, encoding: .utf8) {
+                let snippet = body.count > 400 ? String(body.prefix(400)) + "…" : body
+                print("[Daisy] InnerTube \(client.name) HTTP \(code) body=\(snippet)")
+            }
             throw YouTubeExtractorError.allClientsFailed("\(client.name) returned HTTP \(code)")
         }
 
@@ -601,6 +604,7 @@ actor YouTubeExtractor {
            status != "OK",
            (json["streamingData"] as? [String: Any]) == nil {
             let reason = (playability["reason"] as? String) ?? status
+            print("[Daisy] InnerTube \(client.name) unplayable status=\(status) reason=\(reason)")
             throw YouTubeExtractorError.unplayable(reason: reason)
         }
 
