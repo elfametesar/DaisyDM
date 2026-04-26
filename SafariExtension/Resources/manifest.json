@@ -29,6 +29,12 @@
     "<all_urls>"
   ],
   "host_permissions": ["<all_urls>"],
+  "web_accessible_resources": [
+    {
+      "resources": ["inject.js"],
+      "matches": ["<all_urls>"]
+    }
+  ],
   "browser_specific_settings": {
     "safari": {
       "strict_min_version": "15.4"
