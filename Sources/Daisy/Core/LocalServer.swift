@@ -62,14 +62,52 @@ struct DownloadPayload: Decodable {
         forceDASH = try c.decodeIfPresent(Bool.self, forKey: .forceDASH)
         forceDirectDownload = try c.decodeIfPresent(Bool.self, forKey: .forceDirectDownload)
         extraHeadersFlat = try c.decodeIfPresent(String.self, forKey: .extraHeadersFlat)
-        headers   = try c.decodeIfPresent([String: String].self, forKey: .headers)
-        responseHeaders  = try c.decodeIfPresent([String: String].self, forKey: .responseHeaders)
+        // Browsers sometimes hand us header values that are numbers (e.g.
+        // X-YouTube-Page-CL is an int) or bools, but our struct stores them
+        // as String. Decode loosely and stringify so a single non-string
+        // value doesn't blow up the entire payload decode.
+        headers          = try Self.decodeLooseHeaders(c, key: .headers)
+        responseHeaders  = try Self.decodeLooseHeaders(c, key: .responseHeaders)
 
         if let qInt = try? c.decodeIfPresent(Int.self, forKey: .youtubeQuality) {
             youtubeQuality = String(qInt)
         } else {
             youtubeQuality = try c.decodeIfPresent(String.self, forKey: .youtubeQuality)
         }
+    }
+
+    /// Decodes a `[String: String]` map but tolerates individual values that
+    /// arrive as JSON numbers, booleans, or null. Anything that isn't already
+    /// a string gets stringified; null keys are dropped. Returns nil when the
+    /// outer field is missing entirely.
+    private static func decodeLooseHeaders(
+        _ container: KeyedDecodingContainer<CodingKeys>,
+        key: CodingKeys
+    ) throws -> [String: String]? {
+        guard container.contains(key),
+              try !container.decodeNil(forKey: key) else { return nil }
+        let nested = try container.nestedContainer(keyedBy: AnyStringKey.self, forKey: key)
+        var out: [String: String] = [:]
+        for k in nested.allKeys {
+            if let s = try? nested.decode(String.self, forKey: k) {
+                out[k.stringValue] = s
+            } else if let i = try? nested.decode(Int64.self, forKey: k) {
+                out[k.stringValue] = String(i)
+            } else if let d = try? nested.decode(Double.self, forKey: k) {
+                out[k.stringValue] = String(d)
+            } else if let b = try? nested.decode(Bool.self, forKey: k) {
+                out[k.stringValue] = String(b)
+            }
+            // Other shapes (arrays, objects, null) are intentionally dropped.
+        }
+        return out.isEmpty ? nil : out
+    }
+
+    private struct AnyStringKey: CodingKey {
+        var stringValue: String
+        init?(stringValue: String) { self.stringValue = stringValue }
+        var intValue: Int? { nil }
+        init?(intValue: Int) { return nil }
     }
 }
 

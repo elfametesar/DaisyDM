@@ -154,39 +154,62 @@ actor YouTubeExtractor {
         let osName: String?
         let osVersion: String?
         let androidSdkVersion: Int?
+        /// InnerTube API key, appended as `?key=` to the endpoint. YouTube
+        /// rotates these but the public set is stable enough that hard-coding
+        /// matches yt-dlp's approach.
+        let apiKey: String?
     }
 
+    /// Client identities used to talk to /youtubei/v1/player. Order matters —
+    /// we walk them in sequence and merge results. The lineup mirrors yt-dlp's
+    /// 2025 default set, biased toward clients that don't require a Proof-of-
+    /// Origin (PO) token to return playable URLs:
+    ///
+    /// 1. ANDROID_VR — Quest YouTube app. Currently the most reliable bypass.
+    /// 2. TVHTML5 — full TV client, exposes premium resolutions.
+    /// 3. WEB_EMBEDDED_PLAYER — works for the vast majority of embeds.
+    /// 4. TVHTML5_SIMPLY_EMBEDDED_PLAYER — last-ditch for age-gated content.
+    /// 5. IOS — kept as a final fallback; some clients reject AVR for music.
     private let clients: [ClientContext] = [
-        // iOS client — for non-DRM public videos this still serves cleartext
-        // URLs on the googlevideo CDN with no n-throttling.
         ClientContext(
-            name: "IOS",
-            version: "19.45.4",
-            userAgent: "com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 18_1_0 like Mac OS X;)",
-            xClientName: "5",
-            xClientVersion: "19.45.4",
-            deviceMake: "Apple",
-            deviceModel: "iPhone16,2",
-            osName: "iPhone",
-            osVersion: "18.1.0.22B83",
-            androidSdkVersion: nil
+            name: "ANDROID_VR",
+            version: "1.60.19",
+            userAgent: "com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
+            xClientName: "28",
+            xClientVersion: "1.60.19",
+            deviceMake: "Oculus",
+            deviceModel: "Quest 3",
+            osName: "Android",
+            osVersion: "12L",
+            androidSdkVersion: 32,
+            apiKey: "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"
         ),
-        // Android client — secondary fallback. Sometimes returns formats the
-        // iOS client doesn't expose (and vice-versa).
         ClientContext(
-            name: "ANDROID",
-            version: "19.50.42",
-            userAgent: "com.google.android.youtube/19.50.42 (Linux; U; Android 11) gzip",
-            xClientName: "3",
-            xClientVersion: "19.50.42",
+            name: "TVHTML5",
+            version: "7.20250115.16.00",
+            userAgent: "Mozilla/5.0 (ChromiumStylePlatform) Cobalt/Version",
+            xClientName: "7",
+            xClientVersion: "7.20250115.16.00",
             deviceMake: nil,
             deviceModel: nil,
-            osName: "Android",
-            osVersion: "11",
-            androidSdkVersion: 30
+            osName: nil,
+            osVersion: nil,
+            androidSdkVersion: nil,
+            apiKey: "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"
         ),
-        // TV embedded — useful for age-gated / embed-restricted content;
-        // generally returns lower max resolutions.
+        ClientContext(
+            name: "WEB_EMBEDDED_PLAYER",
+            version: "1.20250115.01.00",
+            userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            xClientName: "56",
+            xClientVersion: "1.20250115.01.00",
+            deviceMake: nil,
+            deviceModel: nil,
+            osName: nil,
+            osVersion: nil,
+            androidSdkVersion: nil,
+            apiKey: "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"
+        ),
         ClientContext(
             name: "TVHTML5_SIMPLY_EMBEDDED_PLAYER",
             version: "2.0",
@@ -197,7 +220,21 @@ actor YouTubeExtractor {
             deviceModel: nil,
             osName: nil,
             osVersion: nil,
-            androidSdkVersion: nil
+            androidSdkVersion: nil,
+            apiKey: "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"
+        ),
+        ClientContext(
+            name: "IOS",
+            version: "20.10.4",
+            userAgent: "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)",
+            xClientName: "5",
+            xClientVersion: "20.10.4",
+            deviceMake: "Apple",
+            deviceModel: "iPhone16,2",
+            osName: "iPhone",
+            osVersion: "18.3.2.22D82",
+            androidSdkVersion: nil,
+            apiKey: "AIzaSyB-63vPrdThhKuerbB2N_l7Kwwcxj6yUAc"
         )
     ]
 
@@ -289,7 +326,11 @@ actor YouTubeExtractor {
     }
 
     private func fetch(videoId: String, client: ClientContext) async throws -> YouTubeVideoInfo {
-        guard let endpoint = URL(string: "https://www.youtube.com/youtubei/v1/player?prettyPrint=false") else {
+        var endpointString = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false"
+        if let key = client.apiKey, !key.isEmpty {
+            endpointString += "&key=\(key)"
+        }
+        guard let endpoint = URL(string: endpointString) else {
             throw YouTubeExtractorError.networkError("invalid endpoint")
         }
 
