@@ -44,7 +44,7 @@ function ytVideoIdFromUrl(href) {
 
 function recordYtFormat(tabId, videoId, info) {
     if (!Number.isFinite(tabId) || tabId < 0 || !videoId || !info || !info.itag) return;
-    try { console.log("[Daisy] capture itag=" + info.itag + " mime=" + (info.mime || "?") + " tab=" + tabId + " vid=" + videoId); } catch (_) {}
+    try { console.log("[Daisy] capture itag=" + info.itag + " mime=" + (info.mime || "?") + " tab=" + tabId + " vid=" + videoId + (info.status ? " status=" + info.status : "")); } catch (_) {}
     let bucket = capturedYtFormats.get(tabId);
     if (!bucket || bucket.videoId !== videoId) {
         // SPA navigation to a different video — reset the format map for
@@ -255,9 +255,16 @@ _api.webRequest.onBeforeSendHeaders.addListener(
 // requests against googlevideo.com to fetch chunks. We intercept those
 // URLs and stash them per-tab so the popup can offer them as direct
 // download options without going through InnerTube at all.
-_api.webRequest.onBeforeRequest.addListener(
+//
+// We only stash on onCompleted with a successful status (200/206).
+// onBeforeRequest fires for speculative / pre-rewrite URLs which Safari
+// sometimes reports as the encrypted form that NXDOMAINs externally;
+// only the completed-with-200 URL is one the wire actually accepted.
+_api.webRequest.onCompleted.addListener(
     function(details) {
         if (details.tabId < 0) return;
+        const status = details.statusCode || 0;
+        if (status !== 200 && status !== 206) return;
         const parsed = parseGoogleVideoUrl(details.url);
         if (!parsed) return;
         try {
@@ -268,7 +275,7 @@ _api.webRequest.onBeforeRequest.addListener(
                     ytVideoIdFromUrl(details.documentUrl) ||
                     ytVideoIdFromUrl(details.initiator);
                 if (!vid) return;
-                recordYtFormat(details.tabId, vid, { itag: parsed.itag, url: parsed.cleanUrl || details.url, mime: parsed.mime, contentLength: parsed.contentLength });
+                recordYtFormat(details.tabId, vid, { itag: parsed.itag, url: parsed.cleanUrl || details.url, mime: parsed.mime, contentLength: parsed.contentLength, status: details.statusCode });
             });
         } catch (_) {}
     },
