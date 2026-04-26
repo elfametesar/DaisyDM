@@ -107,7 +107,7 @@ struct ContentView: View {
                         askBeforeRemoving = false
                         defaultRemoveAction = trash ? "trash" : "keep"
                     }
-                    context.items.forEach { engine.remove($0, trashFile: trash) }
+                    engine.remove(context.items, trashFile: trash)
                     itemsToRemove = nil
                 } onCancel: { itemsToRemove = nil }
                 .interactiveDismissDisabled()
@@ -339,11 +339,13 @@ struct ContentView: View {
     }
 
     private func requestRemove(items: [DownloadItem]) {
+        let snapshot = Array(items)
+        guard !snapshot.isEmpty else { return }
         if askBeforeRemoving {
-            itemsToRemove = RemovalContext(items: items)
+            itemsToRemove = RemovalContext(items: snapshot)
         } else {
             let trash = (defaultRemoveAction == "trash")
-            items.forEach { engine.remove($0, trashFile: trash) }
+            engine.remove(snapshot, trashFile: trash)
         }
     }
 
