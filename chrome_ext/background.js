@@ -44,6 +44,7 @@ function ytVideoIdFromUrl(href) {
 
 function recordYtFormat(tabId, videoId, info) {
     if (!Number.isFinite(tabId) || tabId < 0 || !videoId || !info || !info.itag) return;
+    try { console.log("[Daisy] capture itag=" + info.itag + " mime=" + (info.mime || "?") + " tab=" + tabId + " vid=" + videoId); } catch (_) {}
     let bucket = capturedYtFormats.get(tabId);
     if (!bucket || bucket.videoId !== videoId) {
         // SPA navigation to a different video — reset the format map for
@@ -364,6 +365,9 @@ _api.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const formats = (typeof tabId === "number" && tabId >= 0)
             ? getYtFormatsFor(tabId, message.videoId || null)
             : [];
+        try {
+            console.log("[Daisy] GET_YT_CAPTURED_FORMATS tab=" + tabId + " vid=" + (message.videoId || "?") + " count=" + formats.length + " itags=" + formats.map(f => f.itag).join(","));
+        } catch (_) {}
         sendResponse({ ok: true, formats });
         return true;
     }

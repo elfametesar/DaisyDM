@@ -287,6 +287,7 @@ class LocalServer {
     }
 
     private func showConfirmation(for payload: DownloadPayload) {
+            print("[Daisy] dispatch received url=\(payload.url) hasYtVideo=\(payload.ytVideoUrl != nil) hasYtAudio=\(payload.ytAudioUrl != nil) ytHeight=\(payload.ytHeight ?? 0) ytTitle=\(payload.ytTitle ?? "(none)")")
             guard let url = URL(string: payload.url)
                 ?? URL(string: payload.url.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")
             else { return }

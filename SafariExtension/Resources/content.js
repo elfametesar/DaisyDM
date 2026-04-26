@@ -1106,6 +1106,12 @@ document.addEventListener('mouseover', (e) => {
                 captured.forEach(c => { if (c && c.itag != null) capturedByItag.set(c.itag, c); });
                 const catalogByItag = new Map();
                 (yt.catalog || []).forEach(f => { if (f && f.itag != null) catalogByItag.set(f.itag, f); });
+                try {
+                    console.log("[Daisy] popup-build YT vid=" + (yt && yt.videoId) +
+                        " captured=" + captured.length +
+                        " catalog=" + (yt.catalog || []).length +
+                        " trueHeights=" + JSON.stringify(trueHeights));
+                } catch (_) {}
 
                 let bestAudio = null;
                 for (const [itag, c] of capturedByItag.entries()) {
@@ -1279,6 +1285,7 @@ document.addEventListener('mouseover', (e) => {
                 finalName += (opt.ext || '.mp4');
                 const dispatchExtra = { youtubeQuality: opt.ytQuality, forceHLS: opt.type === 'hls', forceDASH: opt.type === 'dash' };
                 if (opt.ytPreResolved) {
+                    try { console.log("[Daisy] YT dispatch IDM-style height=" + opt.ytPreResolved.height + " hasV=" + !!opt.ytPreResolved.videoUrl + " hasA=" + !!opt.ytPreResolved.audioUrl); } catch (_) {}
                     dispatchExtra.ytVideoUrl = opt.ytPreResolved.videoUrl;
                     dispatchExtra.ytAudioUrl = opt.ytPreResolved.audioUrl;
                     dispatchExtra.ytVideoMime = opt.ytPreResolved.videoMime;

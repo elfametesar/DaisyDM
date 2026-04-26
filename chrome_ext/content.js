@@ -1078,6 +1078,12 @@ document.createElement = function(tag, ...args) {
                 captured.forEach(c => { if (c && c.itag != null) capturedByItag.set(c.itag, c); });
                 const catalogByItag = new Map();
                 (yt.catalog || []).forEach(f => { if (f && f.itag != null) catalogByItag.set(f.itag, f); });
+                try {
+                    console.log("[Daisy] popup-build YT vid=" + (yt && yt.videoId) +
+                        " captured=" + captured.length +
+                        " catalog=" + (yt.catalog || []).length +
+                        " trueHeights=" + JSON.stringify(trueHeights));
+                } catch (_) {}
 
                 // Pick the best-bitrate audio itag for muxing video-only streams.
                 let bestAudio = null;
@@ -1264,6 +1270,7 @@ document.createElement = function(tag, ...args) {
                 if (opt.ytPreResolved) {
                     // IDM-style: ship the already-resolved googlevideo URL
                     // pair so Swift can skip the extractor entirely.
+                    try { console.log("[Daisy] YT dispatch IDM-style height=" + opt.ytPreResolved.height + " hasV=" + !!opt.ytPreResolved.videoUrl + " hasA=" + !!opt.ytPreResolved.audioUrl); } catch (_) {}
                     dispatchExtra.ytVideoUrl = opt.ytPreResolved.videoUrl;
                     dispatchExtra.ytAudioUrl = opt.ytPreResolved.audioUrl;
                     dispatchExtra.ytVideoMime = opt.ytPreResolved.videoMime;
