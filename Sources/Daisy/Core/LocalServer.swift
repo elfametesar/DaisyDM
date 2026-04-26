@@ -15,6 +15,16 @@ struct DownloadPayload: Decodable {
     let browser: String?
     let ytPoToken: String?
     let ytPoTokenVisitor: String?
+    /// IDM-style: when the popup picks a YouTube quality whose googlevideo
+    /// URLs the browser already requested (and we captured via webRequest),
+    /// these fields carry the resolved URL pair so the Swift side can skip
+    /// the InnerTube extractor entirely and go straight to aria2c + ffmpeg.
+    let ytVideoUrl: String?
+    let ytAudioUrl: String?
+    let ytVideoMime: String?
+    let ytAudioMime: String?
+    let ytHeight: Int?
+    let ytTitle: String?
     let headers: [String: String]? // <--- Correctly maps to the background.js payload
     let responseHeaders: [String: String]?
     let extraHeadersFlat: String?
@@ -32,7 +42,13 @@ struct DownloadPayload: Decodable {
          responseHeaders: [String: String]? = nil,
          extraHeadersFlat: String? = nil,
          ytPoToken: String? = nil,
-         ytPoTokenVisitor: String? = nil) {
+         ytPoTokenVisitor: String? = nil,
+         ytVideoUrl: String? = nil,
+         ytAudioUrl: String? = nil,
+         ytVideoMime: String? = nil,
+         ytAudioMime: String? = nil,
+         ytHeight: Int? = nil,
+         ytTitle: String? = nil) {
         self.url             = url
         self.filename        = filename
         self.cookies         = cookies
@@ -48,6 +64,12 @@ struct DownloadPayload: Decodable {
         self.extraHeadersFlat = extraHeadersFlat
         self.ytPoToken       = ytPoToken
         self.ytPoTokenVisitor = ytPoTokenVisitor
+        self.ytVideoUrl      = ytVideoUrl
+        self.ytAudioUrl      = ytAudioUrl
+        self.ytVideoMime     = ytVideoMime
+        self.ytAudioMime     = ytAudioMime
+        self.ytHeight        = ytHeight
+        self.ytTitle         = ytTitle
     }
 
     enum CodingKeys: String, CodingKey {
@@ -55,6 +77,7 @@ struct DownloadPayload: Decodable {
         case youtubeQuality, forceHLS, forceDASH, forceDirectDownload, browser
         case headers, responseHeaders, extraHeadersFlat
         case ytPoToken, ytPoTokenVisitor
+        case ytVideoUrl, ytAudioUrl, ytVideoMime, ytAudioMime, ytHeight, ytTitle
     }
 
     init(from decoder: Decoder) throws {
@@ -71,6 +94,12 @@ struct DownloadPayload: Decodable {
         extraHeadersFlat = try c.decodeIfPresent(String.self, forKey: .extraHeadersFlat)
         ytPoToken = try c.decodeIfPresent(String.self, forKey: .ytPoToken)
         ytPoTokenVisitor = try c.decodeIfPresent(String.self, forKey: .ytPoTokenVisitor)
+        ytVideoUrl  = try c.decodeIfPresent(String.self, forKey: .ytVideoUrl)
+        ytAudioUrl  = try c.decodeIfPresent(String.self, forKey: .ytAudioUrl)
+        ytVideoMime = try c.decodeIfPresent(String.self, forKey: .ytVideoMime)
+        ytAudioMime = try c.decodeIfPresent(String.self, forKey: .ytAudioMime)
+        ytHeight    = try c.decodeIfPresent(Int.self,    forKey: .ytHeight)
+        ytTitle     = try c.decodeIfPresent(String.self, forKey: .ytTitle)
         // Browsers sometimes hand us header values that are numbers (e.g.
         // X-YouTube-Page-CL is an int) or bools, but our struct stores them
         // as String. Decode loosely and stringify so a single non-string
@@ -230,7 +259,13 @@ class LocalServer {
                         responseHeaders: payload.responseHeaders,
                         extraHeadersFlat: payload.extraHeadersFlat,
                         ytPoToken:       payload.ytPoToken,
-                        ytPoTokenVisitor: payload.ytPoTokenVisitor
+                        ytPoTokenVisitor: payload.ytPoTokenVisitor,
+                        ytVideoUrl:      payload.ytVideoUrl,
+                        ytAudioUrl:      payload.ytAudioUrl,
+                        ytVideoMime:     payload.ytVideoMime,
+                        ytAudioMime:     payload.ytAudioMime,
+                        ytHeight:        payload.ytHeight,
+                        ytTitle:         payload.ytTitle
                     )
 
                     DispatchQueue.main.async {
@@ -286,7 +321,13 @@ class LocalServer {
                     "headers":          finalHeaders,
                     "extraHeadersFlat": payload.extraHeadersFlat ?? "",
                     "ytPoToken":        payload.ytPoToken       ?? "",
-                    "ytPoTokenVisitor": payload.ytPoTokenVisitor ?? ""
+                    "ytPoTokenVisitor": payload.ytPoTokenVisitor ?? "",
+                    "ytVideoUrl":       payload.ytVideoUrl       ?? "",
+                    "ytAudioUrl":       payload.ytAudioUrl       ?? "",
+                    "ytVideoMime":      payload.ytVideoMime      ?? "",
+                    "ytAudioMime":      payload.ytAudioMime      ?? "",
+                    "ytHeight":         payload.ytHeight         ?? 0,
+                    "ytTitle":          payload.ytTitle          ?? ""
                 ]
             )
         }

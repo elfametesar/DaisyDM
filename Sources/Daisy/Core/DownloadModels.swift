@@ -87,6 +87,16 @@ public final class DownloadItem: Identifiable, Codable, Hashable {
     /// server-side download call doesn't trip the bot gate.
     public var ytPoToken: String?
     public var ytPoTokenVisitor: String?
+    /// IDM-style: when present, the YouTube engine skips the InnerTube
+    /// extractor entirely and uses these resolved URLs directly. The
+    /// browser captured them off the YouTube player's range requests, so
+    /// they're already signed and n-cipher-decoded.
+    public var ytVideoUrl: String?
+    public var ytAudioUrl: String?
+    public var ytVideoMime: String?
+    public var ytAudioMime: String?
+    public var ytHeight: Int?
+    public var ytTitle: String?
 
     public var isHLS: Bool = false
     public var isDASH: Bool = false

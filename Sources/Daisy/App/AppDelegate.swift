@@ -109,6 +109,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let ytPoToken: String? = ytPoTokenRaw.isEmpty ? nil : ytPoTokenRaw
             let ytPoTokenVisitorRaw = info["ytPoTokenVisitor"] as? String ?? ""
             let ytPoTokenVisitor: String? = ytPoTokenVisitorRaw.isEmpty ? nil : ytPoTokenVisitorRaw
+            let ytVideoUrlRaw = info["ytVideoUrl"] as? String ?? ""
+            let ytVideoUrl: String? = ytVideoUrlRaw.isEmpty ? nil : ytVideoUrlRaw
+            let ytAudioUrlRaw = info["ytAudioUrl"] as? String ?? ""
+            let ytAudioUrl: String? = ytAudioUrlRaw.isEmpty ? nil : ytAudioUrlRaw
+            let ytVideoMimeRaw = info["ytVideoMime"] as? String ?? ""
+            let ytVideoMime: String? = ytVideoMimeRaw.isEmpty ? nil : ytVideoMimeRaw
+            let ytAudioMimeRaw = info["ytAudioMime"] as? String ?? ""
+            let ytAudioMime: String? = ytAudioMimeRaw.isEmpty ? nil : ytAudioMimeRaw
+            let ytHeightRaw = info["ytHeight"] as? Int ?? 0
+            let ytHeight: Int? = ytHeightRaw > 0 ? ytHeightRaw : nil
+            let ytTitleRaw = info["ytTitle"] as? String ?? ""
+            let ytTitle: String? = ytTitleRaw.isEmpty ? nil : ytTitleRaw
 
             let request = ConfirmDownloadRequest(
                 url:      url,
@@ -122,7 +134,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 forceDirectDownload: forceDirectDownload,
                 youtubeQuality: youtubeQuality,
                 ytPoToken: ytPoToken,
-                ytPoTokenVisitor: ytPoTokenVisitor
+                ytPoTokenVisitor: ytPoTokenVisitor,
+                ytVideoUrl: ytVideoUrl,
+                ytAudioUrl: ytAudioUrl,
+                ytVideoMime: ytVideoMime,
+                ytAudioMime: ytAudioMime,
+                ytHeight: ytHeight,
+                ytTitle: ytTitle
             )
             self?.presentConfirmPanel(request: request)
         }
@@ -211,7 +229,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         browser:     nil,
                         forceDirectDownload: confirmedRequest.forceDirectDownload,
                         ytPoToken:   confirmedRequest.ytPoToken,
-                        ytPoTokenVisitor: confirmedRequest.ytPoTokenVisitor
+                        ytPoTokenVisitor: confirmedRequest.ytPoTokenVisitor,
+                        ytVideoUrl:  confirmedRequest.ytVideoUrl,
+                        ytAudioUrl:  confirmedRequest.ytAudioUrl,
+                        ytVideoMime: confirmedRequest.ytVideoMime,
+                        ytAudioMime: confirmedRequest.ytAudioMime,
+                        ytHeight:    confirmedRequest.ytHeight,
+                        ytTitle:     confirmedRequest.ytTitle
                     )
                     
                     if let newestItem = engine.items.last(where: { $0.url == url }) {

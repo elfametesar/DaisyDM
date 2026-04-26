@@ -50,7 +50,7 @@ public final class DownloadEngine {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
 
-    public func addDownload(urls: [URL], destination: URL? = nil, connections: Int = 16, headers: [String: String]? = nil, cookies: String? = nil, userAgent: String? = nil, referer: String? = nil, filename: String? = nil, youtubeQuality: String? = nil, isHLS: Bool = false, isDASH: Bool = false, browser: String? = nil, forceDirectDownload: Bool = false, ytPoToken: String? = nil, ytPoTokenVisitor: String? = nil) {
+    public func addDownload(urls: [URL], destination: URL? = nil, connections: Int = 16, headers: [String: String]? = nil, cookies: String? = nil, userAgent: String? = nil, referer: String? = nil, filename: String? = nil, youtubeQuality: String? = nil, isHLS: Bool = false, isDASH: Bool = false, browser: String? = nil, forceDirectDownload: Bool = false, ytPoToken: String? = nil, ytPoTokenVisitor: String? = nil, ytVideoUrl: String? = nil, ytAudioUrl: String? = nil, ytVideoMime: String? = nil, ytAudioMime: String? = nil, ytHeight: Int? = nil, ytTitle: String? = nil) {
         guard !urls.isEmpty else { return }
         let defaults = UserDefaults.standard
         let defaultPath = defaults.string(forKey: "defaultDownloadPath") ?? downloadsDir().path
@@ -80,6 +80,12 @@ public final class DownloadEngine {
             item.youtubeQuality = youtubeQuality
             item.ytPoToken = ytPoToken
             item.ytPoTokenVisitor = ytPoTokenVisitor
+            item.ytVideoUrl = ytVideoUrl
+            item.ytAudioUrl = ytAudioUrl
+            item.ytVideoMime = ytVideoMime
+            item.ytAudioMime = ytAudioMime
+            item.ytHeight = ytHeight
+            item.ytTitle = ytTitle
             
             if isFuckingFast { item.needsFuckingFastResolve = true }
 

@@ -63,6 +63,35 @@ extension DownloadEngine {
         let itemUserAgent = await MainActor.run { item.userAgent }
         let itemPoToken = await MainActor.run { item.ytPoToken }
         let itemPoTokenVisitor = await MainActor.run { item.ytPoTokenVisitor }
+        let preVideoUrl = await MainActor.run { item.ytVideoUrl }
+        let preAudioUrl = await MainActor.run { item.ytAudioUrl }
+        let preTitle = await MainActor.run { item.ytTitle }
+        let preHeight = await MainActor.run { item.ytHeight }
+
+        // IDM-style short-circuit. The browser extension already captured a
+        // resolved googlevideo URL pair off the YouTube player's range
+        // requests, so we can skip InnerTube extraction entirely.
+        if let v = preVideoUrl, !v.isEmpty, let a = preAudioUrl, !a.isEmpty {
+            print("[Daisy] YouTube IDM-style: using pre-resolved URLs (height=\(preHeight ?? 0))")
+            // Adopt the captured title for the saved filename when the
+            // user hasn't customised it. We don't have a full
+            // YouTubeVideoInfo here, so synthesise a minimal one just for
+            // the filename adoption helper.
+            if let t = preTitle, !t.isEmpty {
+                let info = YouTubeVideoInfo(
+                    videoId: "",
+                    title: t,
+                    author: nil,
+                    durationSeconds: nil,
+                    formats: [],
+                    adaptiveFormats: [],
+                    sourceClient: "BROWSER_CAPTURE"
+                )
+                await self.adoptYouTubeTitleIfDefault(item: item, info: info)
+            }
+            await self.handleMultiPartYoutube(item, videoURL: v, audioURL: a)
+            return
+        }
 
         do {
             let credentials = YouTubeExtractor.Credentials(

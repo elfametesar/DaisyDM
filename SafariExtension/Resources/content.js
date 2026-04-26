@@ -313,7 +313,7 @@ function getActualYtFormatsAsync() {
         // YouTube's player to finish initializing after an SPA navigation.
         const timeout = setTimeout(() => {
             window.removeEventListener("message", listener);
-            resolve({ heights: getActualYtFormats(), title: null, author: null, videoId: null });
+            resolve({ heights: getActualYtFormats(), title: null, author: null, videoId: null, catalog: [] });
         }, 2000);
 
         const listener = (e) => {
@@ -326,13 +326,33 @@ function getActualYtFormatsAsync() {
                     heights: Array.from(heights).sort((a, b) => b - a),
                     title: e.data.__daisyYtTitle || null,
                     author: e.data.__daisyYtAuthor || null,
-                    videoId: e.data.__daisyYtVideoId || null
+                    videoId: e.data.__daisyYtVideoId || null,
+                    catalog: Array.isArray(e.data.__daisyYtFormatsCatalog) ? e.data.__daisyYtFormatsCatalog : []
                 });
             }
         };
         window.addEventListener("message", listener);
         window.postMessage({ __daisyReqYtFormats: true }, "*");
     });
+}
+
+// Asks background.js for any googlevideo URLs the YouTube player has
+// already requested for this tab. The webRequest listener over there
+// captures them; here we just shuttle the question.
+function getCapturedYtFormatsFor(videoId) {
+    return new Promise(resolve => {
+        try {
+            const api = (typeof browser !== "undefined" ? browser : chrome);
+            api.runtime.sendMessage({ type: "GET_YT_CAPTURED_FORMATS", videoId: videoId || null }, (resp) => {
+                if (api.runtime.lastError || !resp || !resp.ok) { resolve([]); return; }
+                resolve(Array.isArray(resp.formats) ? resp.formats : []);
+            });
+        } catch (_) { resolve([]); }
+    });
+}
+
+function requestYtQualitySwitch(height) {
+    try { window.postMessage({ __daisySwitchYtQuality: height }, "*"); } catch (_) {}
 }
 
 function sniffScriptUrls(root) {
@@ -1078,12 +1098,70 @@ document.addEventListener('mouseover', (e) => {
                 const trueHeights = yt && yt.heights ? yt.heights : [];
                 const ytTitle = sanitiseName(yt && yt.title);
                 if (ytTitle) vidName = ytTitle;
+
+                // IDM-style: ask background.js what googlevideo URLs the
+                // YouTube player has actually requested for this tab.
+                const captured = await getCapturedYtFormatsFor(yt && yt.videoId);
+                const capturedByItag = new Map();
+                captured.forEach(c => { if (c && c.itag != null) capturedByItag.set(c.itag, c); });
+                const catalogByItag = new Map();
+                (yt.catalog || []).forEach(f => { if (f && f.itag != null) catalogByItag.set(f.itag, f); });
+
+                let bestAudio = null;
+                for (const [itag, c] of capturedByItag.entries()) {
+                    const cat = catalogByItag.get(itag);
+                    if (!cat || cat.kind !== "audio") continue;
+                    if (!bestAudio || (cat.bitrate || 0) > (bestAudio.cat.bitrate || 0)) {
+                        bestAudio = { url: c.url, mime: c.mime || (cat && cat.mime) || null, cat };
+                    }
+                }
+
                 dropdownEl.innerHTML = '';
-                if (trueHeights.length > 0) {
-                    trueHeights.map(h => ({ id: `bestvideo[height<=${h}]+bestaudio/best`, vidName: vidName, quality: `${h}p`, ext: ".mp4" }))
-                        .forEach(q => renderOption(dropdownEl, { vidName: q.vidName, quality: q.quality, ext: q.ext, url: pageUrl, ytQuality: q.id, type: 'yt' }));
-                } else {
+
+                const heights = new Set();
+                catalogByItag.forEach(f => { if (f.kind === "video" && f.height) heights.add(f.height); });
+                trueHeights.forEach(h => heights.add(h));
+                const sortedHeights = Array.from(heights).sort((a, b) => b - a);
+
+                if (sortedHeights.length === 0) {
                     renderOption(dropdownEl, { vidName: vidName, quality: "Original", ext: ".mp4", url: pageUrl, ytQuality: "bestvideo+bestaudio/best", type: 'yt' });
+                    return;
+                }
+
+                for (const h of sortedHeights) {
+                    let captured = null;
+                    let bestVideoCat = null;
+                    for (const [itag, cat] of catalogByItag.entries()) {
+                        if (cat.kind !== "video" || cat.height !== h) continue;
+                        const c = capturedByItag.get(itag);
+                        if (!c) continue;
+                        if (!bestVideoCat || (cat.bitrate || 0) > (bestVideoCat.bitrate || 0)) {
+                            captured = { url: c.url, mime: c.mime || cat.mime || null, cat };
+                            bestVideoCat = cat;
+                        }
+                    }
+
+                    const opt = {
+                        vidName: vidName,
+                        quality: `${h}p`,
+                        ext: ".mp4",
+                        url: pageUrl,
+                        ytQuality: `bestvideo[height<=${h}]+bestaudio/best`,
+                        type: 'yt'
+                    };
+                    if (captured && bestAudio) {
+                        opt.ytPreResolved = {
+                            videoUrl: captured.url,
+                            audioUrl: bestAudio.url,
+                            videoMime: captured.mime,
+                            audioMime: bestAudio.mime,
+                            height: h,
+                            title: ytTitle || vidName
+                        };
+                    } else {
+                        opt.ytNeedsSwitch = h;
+                    }
+                    renderOption(dropdownEl, opt);
                 }
                 return;
             }
@@ -1199,7 +1277,18 @@ document.addEventListener('mouseover', (e) => {
                 let sanitizedName = opt.vidName.replace(/[\\/:*?"<>|]/g, '').trim();
                 let finalName = opt.quality ? `${sanitizedName} - ${opt.quality}` : sanitizedName;
                 finalName += (opt.ext || '.mp4');
-                sendToDispatch(opt.url, finalName, { youtubeQuality: opt.ytQuality, forceHLS: opt.type === 'hls', forceDASH: opt.type === 'dash' });
+                const dispatchExtra = { youtubeQuality: opt.ytQuality, forceHLS: opt.type === 'hls', forceDASH: opt.type === 'dash' };
+                if (opt.ytPreResolved) {
+                    dispatchExtra.ytVideoUrl = opt.ytPreResolved.videoUrl;
+                    dispatchExtra.ytAudioUrl = opt.ytPreResolved.audioUrl;
+                    dispatchExtra.ytVideoMime = opt.ytPreResolved.videoMime;
+                    dispatchExtra.ytAudioMime = opt.ytPreResolved.audioMime;
+                    dispatchExtra.ytHeight = opt.ytPreResolved.height;
+                    dispatchExtra.ytTitle = opt.ytPreResolved.title;
+                } else if (opt.ytNeedsSwitch) {
+                    requestYtQualitySwitch(opt.ytNeedsSwitch);
+                }
+                sendToDispatch(opt.url, finalName, dispatchExtra);
                 const overlayContainer = item.closest('.daisydm-overlay-container');
                 if (overlayContainer) overlayContainer.classList.remove('expanded', 'visible');
             };

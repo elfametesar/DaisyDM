@@ -105,6 +105,10 @@
 
     function harvestYouTube() {
         const heights = new Set();
+        // Full per-itag format catalog from streamingData. The popup uses
+        // this to map captured googlevideo URLs (which only carry itag) to
+        // the human-readable height/mime label.
+        const formats = new Map();
         let title = null;
         let author = null;
         let videoId = null;
@@ -117,12 +121,33 @@
             const m = String(label).match(/(\d+)\s*p/i);
             if (m) addH(parseInt(m[1], 10));
         };
+        const recordFormat = (f) => {
+            if (!f || typeof f.itag !== 'number') return;
+            const mime = f.mimeType || "";
+            const isVideo = mime.startsWith("video/");
+            const isAudio = mime.startsWith("audio/");
+            const hasVideo = isVideo;
+            const hasAudio = isAudio || (isVideo && /codecs="[^"]*mp4a/.test(mime));
+            const kind = hasVideo && (isAudio || /codecs="[^"]*mp4a/.test(mime)) ? "muxed"
+                       : hasVideo ? "video"
+                       : hasAudio ? "audio"
+                       : "unknown";
+            formats.set(f.itag, {
+                itag: f.itag,
+                height: typeof f.height === "number" ? f.height : null,
+                qualityLabel: f.qualityLabel || null,
+                mime: mime || null,
+                bitrate: typeof f.bitrate === "number" ? f.bitrate : (typeof f.averageBitrate === "number" ? f.averageBitrate : null),
+                kind
+            });
+        };
         const addFromFormatsArray = (arr) => {
             if (!Array.isArray(arr)) return;
             arr.forEach(f => {
                 if (!f) return;
                 if (typeof f.height === 'number') addH(f.height);
                 else if (f.qualityLabel) addFromLabel(f.qualityLabel);
+                recordFormat(f);
             });
         };
         const captureMeta = (resp) => {
@@ -182,8 +207,50 @@
             }
         } catch (_) {}
 
-        return { heights, title, author, videoId };
+        return { heights, title, author, videoId, formats: Array.from(formats.values()) };
     }
+
+    // Programmatically tells the YouTube player to switch to a specific
+    // quality. The player will then fire a fresh range request to
+    // googlevideo for that itag, which background.js's webRequest listener
+    // captures.
+    function ytSwitchQuality(qualityKey) {
+        try {
+            const player = document.querySelector('#movie_player') || document.getElementById('movie_player');
+            if (!player) return false;
+            if (typeof player.setPlaybackQualityRange === "function") {
+                player.setPlaybackQualityRange(qualityKey, qualityKey);
+                return true;
+            }
+            if (typeof player.setPlaybackQuality === "function") {
+                player.setPlaybackQuality(qualityKey);
+                return true;
+            }
+        } catch (_) {}
+        return false;
+    }
+
+    function ytQualityKeyForHeight(h) {
+        if (h >= 4320) return "highres";
+        if (h >= 2880) return "hd2880";
+        if (h >= 2160) return "hd2160";
+        if (h >= 1440) return "hd1440";
+        if (h >= 1080) return "hd1080";
+        if (h >= 720) return "hd720";
+        if (h >= 480) return "large";
+        if (h >= 360) return "medium";
+        if (h >= 240) return "small";
+        return "tiny";
+    }
+
+    window.addEventListener("message", (e) => {
+        if (!e.data || !e.data.__daisySwitchYtQuality) return;
+        const h = parseInt(e.data.__daisySwitchYtQuality, 10);
+        if (!isFinite(h)) return;
+        const key = ytQualityKeyForHeight(h);
+        const ok = ytSwitchQuality(key);
+        try { console.log("[Daisy] requested YT quality switch to", key, "ok=" + ok); } catch (_) {}
+    });
 
     window.addEventListener("message", (e) => {
         if (!e.data || !e.data.__daisyReqYtFormats) return;
@@ -192,13 +259,15 @@
         const intervalMs = 150;
         const completeEnough = 4;
         const cumulative = new Set();
+        const cumulativeFormats = new Map();
         let cumulativeTitle = null;
         let cumulativeAuthor = null;
         let cumulativeVideoId = null;
 
         const attempt = () => {
-            const { heights, title, author, videoId } = harvestYouTube();
+            const { heights, title, author, videoId, formats } = harvestYouTube();
             heights.forEach(h => cumulative.add(h));
+            if (Array.isArray(formats)) formats.forEach(f => { if (f && f.itag != null) cumulativeFormats.set(f.itag, f); });
             if (!cumulativeTitle && title) cumulativeTitle = title;
             if (!cumulativeAuthor && author) cumulativeAuthor = author;
             if (!cumulativeVideoId && videoId) cumulativeVideoId = videoId;
@@ -207,6 +276,7 @@
             if (done) {
                 window.postMessage({
                     __daisyYtFormatsResp: Array.from(cumulative),
+                    __daisyYtFormatsCatalog: Array.from(cumulativeFormats.values()),
                     __daisyYtTitle: cumulativeTitle,
                     __daisyYtAuthor: cumulativeAuthor,
                     __daisyYtVideoId: cumulativeVideoId

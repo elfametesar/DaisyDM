@@ -20,6 +20,15 @@ struct ConfirmDownloadRequest: Identifiable {
     /// anonymous server-side scrape, which clears the bot gate.
     var ytPoToken: String? = nil
     var ytPoTokenVisitor: String? = nil
+    /// IDM-style: when the popup picked a YouTube quality the browser had
+    /// already requested (and we captured), these carry the resolved URL
+    /// pair so the download engine can skip the InnerTube extractor.
+    var ytVideoUrl: String? = nil
+    var ytAudioUrl: String? = nil
+    var ytVideoMime: String? = nil
+    var ytAudioMime: String? = nil
+    var ytHeight: Int? = nil
+    var ytTitle: String? = nil
 }
 
 struct YouTubeFormatOption: Hashable {
