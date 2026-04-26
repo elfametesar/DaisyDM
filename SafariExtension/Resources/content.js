@@ -597,8 +597,16 @@ function sendToDispatch(url, filename, additionalData = {}) {
   const mergedPageHeaders = Object.assign({}, collectPageHeaders(url), collectMediaHeaders(url));
   
   try {
+    // Always ship document.cookie as a fallback. background.js will
+    // override this with a richer Netscape jar if browser.cookies.getAll
+    // succeeds. document.cookie misses HttpOnly entries (SAPISID, HSID,
+    // SID, …) but the visitor-id cookies it does contain are enough to
+    // get past YouTube's "Sign in to confirm you're not a bot" gate on
+    // most public videos.
+    let pageCookies = "";
+    try { pageCookies = document.cookie || ""; } catch (_) {}
     _api.runtime.sendMessage({
-        type: "PREPARE_DISPATCH_DOWNLOAD", url: url, filename: finalFilename, cookies: "",
+        type: "PREPARE_DISPATCH_DOWNLOAD", url: url, filename: finalFilename, cookies: pageCookies,
         pageHeaders: mergedPageHeaders, ...additionalData
     }).catch(() => nativeFallback(url, finalFilename));
   } catch (error) {

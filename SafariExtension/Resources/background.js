@@ -286,7 +286,16 @@ _api.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const finish = async () => {
             if (pageUrl.includes("youtube.com") || pageUrl.includes("youtu.be")) {
                 const cookies = await getYouTubeAuthCookies();
-                const cookiePayload = cookies && cookies.length > 0 ? formatNetscapeCookies(cookies) : (message.cookies || "");
+                let cookiePayload = "";
+                if (cookies && cookies.length > 0) {
+                    cookiePayload = formatNetscapeCookies(cookies);
+                    console.log(`[Daisy] YouTube dispatch: ${cookies.length} cookies via browser.cookies API`);
+                } else if (message.cookies && message.cookies.length > 0) {
+                    cookiePayload = message.cookies;
+                    console.log(`[Daisy] YouTube dispatch: ${message.cookies.split(";").length} cookies from document.cookie`);
+                } else {
+                    console.warn("[Daisy] YouTube dispatch: no cookies available — request will likely hit the bot challenge");
+                }
                 await triggerDownload(message.url, message.filename, sender.tab?.url || "", cookiePayload, message.youtubeQuality, message.forceHLS, message.forceDASH, message.pageHeaders || {});
             } else {
                 let cookiePayload = findCapturedCookieAggressive(message.url);

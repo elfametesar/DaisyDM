@@ -262,6 +262,13 @@ actor YouTubeExtractor {
     /// like it came from the same logged-in session, which is what gets
     /// past YouTube's "Sign in to confirm you're not a bot" gate.
     struct Credentials: Sendable {
+        /// The cookie blob as captured by the browser extension. May be:
+        ///  - a raw HTTP cookie header (`name=value; name=value`)
+        ///  - a Netscape cookies.txt jar (yt-dlp's preferred format,
+        ///    starts with `# Netscape HTTP Cookie File`)
+        ///  - JSON array from `chrome.cookies.getAll`
+        /// `cookieHeader` normalises whichever shape we got into a
+        /// single header string we can hand to InnerTube.
         let cookies: String?
         let userAgent: String?
 
@@ -269,24 +276,58 @@ actor YouTubeExtractor {
             (cookies?.isEmpty ?? true) && (userAgent?.isEmpty ?? true)
         }
 
-        /// Reads SAPISID (or __Secure-3PAPISID as a fallback) from a raw
-        /// "k=v; k=v" cookie blob. YouTube web auth signs API requests with
-        /// a SHA-1 of `<unix> <sapisid> <origin>` in the Authorization
-        /// header, so we extract it here for callers that need it.
+        /// Returns a proper `Cookie:` header value (`name=value; name=value`)
+        /// regardless of whether the captured blob was already in that shape
+        /// or in Netscape jar format.
+        var cookieHeader: String? {
+            guard let raw = cookies, !raw.isEmpty else { return nil }
+            let parsed = parsedCookies()
+            guard !parsed.isEmpty else {
+                // No recognisable structure — return the raw value, in case
+                // the extension was already shipping a header-shaped string.
+                return raw.contains("=") ? raw : nil
+            }
+            return parsed.map { "\($0.key)=\($0.value)" }.joined(separator: "; ")
+        }
+
+        /// Reads SAPISID (or __Secure-3PAPISID as a fallback) from whatever
+        /// shape the cookie blob takes.
         var sapisid: String? {
-            guard let cookies = cookies, !cookies.isEmpty else { return nil }
-            let pairs = cookies.split(separator: ";").map { $0.trimmingCharacters(in: .whitespaces) }
-            for p in pairs {
-                if p.hasPrefix("SAPISID=") {
-                    return String(p.dropFirst("SAPISID=".count))
-                }
-            }
-            for p in pairs {
-                if p.hasPrefix("__Secure-3PAPISID=") {
-                    return String(p.dropFirst("__Secure-3PAPISID=".count))
-                }
-            }
+            let parsed = parsedCookies()
+            if let v = parsed["SAPISID"], !v.isEmpty { return v }
+            if let v = parsed["__Secure-3PAPISID"], !v.isEmpty { return v }
             return nil
+        }
+
+        /// Best-effort parse of the cookie blob into a [name: value] map.
+        /// Recognises Netscape jar lines and `name=value; name=value`
+        /// header strings; later entries win on duplicate names.
+        private func parsedCookies() -> [String: String] {
+            guard let raw = cookies, !raw.isEmpty else { return [:] }
+            var out: [String: String] = [:]
+            if raw.hasPrefix("# Netscape") || raw.contains("\n#") || raw.contains("\tTRUE\t") || raw.contains("\tFALSE\t") {
+                // Netscape jar: `domain  flag  path  secure  expiry  name  value`
+                for line in raw.split(separator: "\n") {
+                    let trimmed = line.trimmingCharacters(in: .whitespaces)
+                    if trimmed.isEmpty || trimmed.hasPrefix("#") { continue }
+                    let cols = trimmed.components(separatedBy: "\t")
+                    if cols.count >= 7 {
+                        let name = cols[5]
+                        let value = cols[6]
+                        if !name.isEmpty { out[name] = value }
+                    }
+                }
+                if !out.isEmpty { return out }
+            }
+            // `name=value; name=value` header form.
+            for chunk in raw.split(separator: ";") {
+                let pair = chunk.trimmingCharacters(in: .whitespaces)
+                guard let eq = pair.firstIndex(of: "=") else { continue }
+                let name = String(pair[..<eq]).trimmingCharacters(in: .whitespaces)
+                let value = String(pair[pair.index(after: eq)...]).trimmingCharacters(in: .whitespaces)
+                if !name.isEmpty { out[name] = value }
+            }
+            return out
         }
     }
 
@@ -304,6 +345,10 @@ actor YouTubeExtractor {
         var merged: YouTubeVideoInfo?
         var seenItags = Set<Int>()
         var seenAdaptiveItags = Set<Int>()
+
+        let cookieCount = credentials.cookieHeader?.split(separator: ";").count ?? 0
+        let hasSapisid = credentials.sapisid != nil
+        print("[Daisy] InnerTube extract videoId=\(videoId) cookies=\(cookieCount) sapisid=\(hasSapisid) ua=\(credentials.userAgent?.prefix(40) ?? "<none>")")
 
         for client in clients {
             do {
@@ -424,8 +469,11 @@ actor YouTubeExtractor {
         // Forward the user's authenticated cookie session for any client.
         // The "Sign in to confirm you're not a bot" gate goes away as soon
         // as YouTube sees a logged-in cookie set on the request.
-        if let cookies = credentials.cookies, !cookies.isEmpty {
-            req.setValue(cookies, forHTTPHeaderField: "Cookie")
+        // Note: the extension ships cookies as a Netscape jar — `cookieHeader`
+        // re-packs whichever shape we got into a proper `name=value; …`
+        // header before we hand it off.
+        if let cookieHeader = credentials.cookieHeader {
+            req.setValue(cookieHeader, forHTTPHeaderField: "Cookie")
             // SAPISIDHASH is required for signed XHR auth on web-family
             // clients. Other clients don't strictly need it but accepting
             // it doesn't hurt and may unlock a few more videos.
