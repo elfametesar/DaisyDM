@@ -71,8 +71,9 @@ extension DownloadEngine {
         // IDM-style short-circuit. The browser extension already captured a
         // resolved googlevideo URL pair off the YouTube player's range
         // requests, so we can skip InnerTube extraction entirely.
-        if let v = preVideoUrl, !v.isEmpty, let a = preAudioUrl, !a.isEmpty {
-            print("[Daisy] YouTube IDM-style: using pre-resolved URLs (height=\(preHeight ?? 0))")
+        if let v = preVideoUrl, !v.isEmpty {
+            let hasAudio = (preAudioUrl?.isEmpty == false)
+            print("[Daisy] YouTube IDM-style: using pre-resolved URLs (height=\(preHeight ?? 0), hasAudio=\(hasAudio))")
             // Adopt the captured title for the saved filename when the
             // user hasn't customised it. We don't have a full
             // YouTubeVideoInfo here, so synthesise a minimal one just for
@@ -89,7 +90,23 @@ extension DownloadEngine {
                 )
                 await self.adoptYouTubeTitleIfDefault(item: item, info: info)
             }
-            await self.handleMultiPartYoutube(item, videoURL: v, audioURL: a)
+            if hasAudio, let a = preAudioUrl {
+                await self.handleMultiPartYoutube(item, videoURL: v, audioURL: a)
+            } else {
+                // Pre-muxed (legacy progressive) stream: single URL with
+                // both tracks. No ffmpeg merge needed — just point the
+                // existing single-source pipeline at the resolved URL.
+                await MainActor.run {
+                    guard let u = URL(string: v) else {
+                        item.status = .failed
+                        item.error = "Resolved muxed URL was not parseable."
+                        self.persist(); self.scheduleNext()
+                        return
+                    }
+                    item.url = u
+                    self.continueStartDownload(item)
+                }
+            }
             return
         }
 

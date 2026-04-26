@@ -1103,11 +1103,22 @@ document.createElement = function(tag, ...args) {
                 // audio, dispatch the pre-resolved URL pair. Otherwise
                 // fall back to the legacy InnerTube path on the Swift side.
                 const heights = new Set();
-                catalogByItag.forEach(f => { if (f.kind === "video" && f.height) heights.add(f.height); });
+                catalogByItag.forEach(f => { if ((f.kind === "video" || f.kind === "muxed") && f.height) heights.add(f.height); });
                 trueHeights.forEach(h => heights.add(h));
                 const sortedHeights = Array.from(heights).sort((a, b) => b - a);
 
-                if (sortedHeights.length === 0) {
+                // Surface captured muxed itags (e.g. fmt 18 = 360p mp4 with
+                // audio embedded) as standalone single-URL options. These
+                // are what a non-DASH <video> element grabs by default and
+                // are often the only thing we capture without manual
+                // quality switching, so it's important they actually show.
+                const capturedMuxedHeights = new Set();
+                for (const [itag, c] of capturedByItag.entries()) {
+                    const cat = catalogByItag.get(itag);
+                    if (cat && cat.kind === "muxed" && cat.height) capturedMuxedHeights.add(cat.height);
+                }
+
+                if (sortedHeights.length === 0 && capturedMuxedHeights.size === 0) {
                     renderOption(dropdownEl, { vidName: vidName, quality: "Original", ext: ".mp4", url: pageUrl, ytQuality: "bestvideo+bestaudio/best", type: 'yt' });
                     return;
                 }
@@ -1143,6 +1154,33 @@ document.createElement = function(tag, ...args) {
                             height: h,
                             title: ytTitle || vidName
                         };
+                    } else if (capturedMuxedHeights.has(h)) {
+                        // Pre-muxed (legacy progressive) stream at this
+                        // height: single URL with both tracks. No need for
+                        // audio merge.
+                        let muxedCaptured = null;
+                        let bestMuxedCat = null;
+                        for (const [itag, cat] of catalogByItag.entries()) {
+                            if (cat.kind !== "muxed" || cat.height !== h) continue;
+                            const c = capturedByItag.get(itag);
+                            if (!c) continue;
+                            if (!bestMuxedCat || (cat.bitrate || 0) > (bestMuxedCat.bitrate || 0)) {
+                                muxedCaptured = { url: c.url, mime: c.mime || cat.mime || null, cat };
+                                bestMuxedCat = cat;
+                            }
+                        }
+                        if (muxedCaptured) {
+                            opt.ytPreResolved = {
+                                videoUrl: muxedCaptured.url,
+                                audioUrl: null,
+                                videoMime: muxedCaptured.mime,
+                                audioMime: null,
+                                height: h,
+                                title: ytTitle || vidName
+                            };
+                        } else {
+                            opt.ytNeedsSwitch = h;
+                        }
                     } else {
                         // Mark as "needs a player switch first" — clicking
                         // this row will tell the player to switch quality

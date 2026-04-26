@@ -1125,11 +1125,17 @@ document.addEventListener('mouseover', (e) => {
                 dropdownEl.innerHTML = '';
 
                 const heights = new Set();
-                catalogByItag.forEach(f => { if (f.kind === "video" && f.height) heights.add(f.height); });
+                catalogByItag.forEach(f => { if ((f.kind === "video" || f.kind === "muxed") && f.height) heights.add(f.height); });
                 trueHeights.forEach(h => heights.add(h));
                 const sortedHeights = Array.from(heights).sort((a, b) => b - a);
 
-                if (sortedHeights.length === 0) {
+                const capturedMuxedHeights = new Set();
+                for (const [itag, c] of capturedByItag.entries()) {
+                    const cat = catalogByItag.get(itag);
+                    if (cat && cat.kind === "muxed" && cat.height) capturedMuxedHeights.add(cat.height);
+                }
+
+                if (sortedHeights.length === 0 && capturedMuxedHeights.size === 0) {
                     renderOption(dropdownEl, { vidName: vidName, quality: "Original", ext: ".mp4", url: pageUrl, ytQuality: "bestvideo+bestaudio/best", type: 'yt' });
                     return;
                 }
@@ -1164,6 +1170,30 @@ document.addEventListener('mouseover', (e) => {
                             height: h,
                             title: ytTitle || vidName
                         };
+                    } else if (capturedMuxedHeights.has(h)) {
+                        let muxedCaptured = null;
+                        let bestMuxedCat = null;
+                        for (const [itag, cat] of catalogByItag.entries()) {
+                            if (cat.kind !== "muxed" || cat.height !== h) continue;
+                            const c = capturedByItag.get(itag);
+                            if (!c) continue;
+                            if (!bestMuxedCat || (cat.bitrate || 0) > (bestMuxedCat.bitrate || 0)) {
+                                muxedCaptured = { url: c.url, mime: c.mime || cat.mime || null, cat };
+                                bestMuxedCat = cat;
+                            }
+                        }
+                        if (muxedCaptured) {
+                            opt.ytPreResolved = {
+                                videoUrl: muxedCaptured.url,
+                                audioUrl: null,
+                                videoMime: muxedCaptured.mime,
+                                audioMime: null,
+                                height: h,
+                                title: ytTitle || vidName
+                            };
+                        } else {
+                            opt.ytNeedsSwitch = h;
+                        }
                     } else {
                         opt.ytNeedsSwitch = h;
                     }

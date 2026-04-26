@@ -207,6 +207,18 @@
             }
         } catch (_) {}
 
+        if (!videoId) {
+            try {
+                const u = new URL(window.location.href);
+                const v = u.searchParams.get("v");
+                if (v && /^[\w-]{6,}$/.test(v)) videoId = v;
+                else {
+                    const m = u.pathname.match(/^\/(?:shorts|embed|live|v)\/([\w-]{6,})/);
+                    if (m) videoId = m[1];
+                }
+            } catch (_) {}
+        }
+
         return { heights, title, author, videoId, formats: Array.from(formats.values()) };
     }
 

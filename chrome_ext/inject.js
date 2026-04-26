@@ -120,6 +120,21 @@
             }
         } catch (_) {}
 
+        // Last-resort videoId from the URL itself, so the popup query is
+        // always scoped correctly even when player APIs are still warming
+        // up after an SPA navigation.
+        if (!videoId) {
+            try {
+                const u = new URL(window.location.href);
+                const v = u.searchParams.get("v");
+                if (v && /^[\w-]{6,}$/.test(v)) videoId = v;
+                else {
+                    const m = u.pathname.match(/^\/(?:shorts|embed|live|v)\/([\w-]{6,})/);
+                    if (m) videoId = m[1];
+                }
+            } catch (_) {}
+        }
+
         return { heights, title, author, videoId, formats: Array.from(formats.values()) };
     }
 
