@@ -251,15 +251,15 @@ _api.webRequest.onBeforeSendHeaders.addListener(
 // URLs and stash them per-tab so the popup can offer them as direct
 // download options without going through InnerTube at all.
 //
-// We only stash on onCompleted with a successful status (200/206).
-// onBeforeRequest fires for speculative / pre-rewrite URLs which Safari
-// sometimes reports as the encrypted form that NXDOMAINs externally;
-// only the completed-with-200 URL is one the wire actually accepted.
-_api.webRequest.onCompleted.addListener(
+// We listen on onBeforeRequest because Safari's onCompleted does not fire
+// for QUIC-routed media requests, and inject.js fetch/XHR hooks miss the
+// player's MSE-internal byte fetches. onBeforeRequest occasionally sees
+// pre-rewrite / speculative URLs that NXDOMAIN externally — we accept that
+// noise and let aria2c fail on those; the user can retry until a real URL
+// is captured.
+_api.webRequest.onBeforeRequest.addListener(
     function(details) {
         if (details.tabId < 0) return;
-        const status = details.statusCode || 0;
-        if (status !== 200 && status !== 206) return;
         const parsed = parseGoogleVideoUrl(details.url);
         if (!parsed) return;
         try {
@@ -270,7 +270,7 @@ _api.webRequest.onCompleted.addListener(
                     ytVideoIdFromUrl(details.documentUrl) ||
                     ytVideoIdFromUrl(details.initiator);
                 if (!vid) return;
-                recordYtFormat(details.tabId, vid, { itag: parsed.itag, url: parsed.cleanUrl || details.url, mime: parsed.mime, contentLength: parsed.contentLength, status: details.statusCode });
+                recordYtFormat(details.tabId, vid, { itag: parsed.itag, url: parsed.cleanUrl || details.url, mime: parsed.mime, contentLength: parsed.contentLength });
             });
         } catch (_) {}
     },
