@@ -286,7 +286,19 @@ extension DownloadEngine {
         }
 
         proc.arguments = args
-        let stdoutPipe = Pipe(); proc.standardOutput = stdoutPipe; proc.standardError = FileHandle.nullDevice
+        if url.host?.contains("googlevideo.com") == true {
+            print("[Daisy] aria2 args for googlevideo: \(args.joined(separator: " "))")
+        }
+        let stdoutPipe = Pipe(); proc.standardOutput = stdoutPipe
+        let stderrPipe: Pipe? = (url.host?.contains("googlevideo.com") == true) ? Pipe() : nil
+        if let p = stderrPipe { proc.standardError = p } else { proc.standardError = FileHandle.nullDevice }
+        if let p = stderrPipe {
+            Task.detached {
+                for try await line in p.fileHandleForReading.bytes.lines {
+                    print("[Daisy] aria2 gv-err> \(line)")
+                }
+            }
+        }
         
         let dummySizeTask = Task { [weak item] in
             guard let item = item else { return }
@@ -345,7 +357,11 @@ extension DownloadEngine {
                 }
             }
             
+            let logGoogleVideo = url.host?.contains("googlevideo.com") == true
             for try await line in stdoutPipe.fileHandleForReading.bytes.lines {
+                if logGoogleVideo {
+                    print("[Daisy] aria2 gv> \(line)")
+                }
                 if line.contains("Length: ") {
                     if let range = line.range(of: "Length: ") {
                         let sub = line[range.upperBound...]

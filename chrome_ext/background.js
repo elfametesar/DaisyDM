@@ -85,7 +85,14 @@ function parseGoogleVideoUrl(href) {
         if (!Number.isFinite(itag)) return null;
         const mime = u.searchParams.get("mime") || null;
         const contentLength = u.searchParams.get("clen") || null;
-        return { itag, mime, contentLength };
+        // Strip per-request DASH parameters that pin the response to a
+        // single byte slice. Aria2 issues its own Range header per
+        // connection so we need a fresh full-file URL with no embedded
+        // slicing left behind. We keep signature/expire/sparams intact
+        // since those carry the actual auth payload.
+        const dropParams = ["range", "rn", "rbuf", "ump", "srfvp", "alr"];
+        for (const p of dropParams) u.searchParams.delete(p);
+        return { itag, mime, contentLength, cleanUrl: u.toString() };
     } catch (_) {
         return null;
     }
@@ -261,7 +268,7 @@ _api.webRequest.onBeforeRequest.addListener(
                     ytVideoIdFromUrl(details.documentUrl) ||
                     ytVideoIdFromUrl(details.initiator);
                 if (!vid) return;
-                recordYtFormat(details.tabId, vid, { itag: parsed.itag, url: details.url, mime: parsed.mime, contentLength: parsed.contentLength });
+                recordYtFormat(details.tabId, vid, { itag: parsed.itag, url: parsed.cleanUrl || details.url, mime: parsed.mime, contentLength: parsed.contentLength });
             });
         } catch (_) {}
     },

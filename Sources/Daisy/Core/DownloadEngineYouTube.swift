@@ -73,7 +73,11 @@ extension DownloadEngine {
         // requests, so we can skip InnerTube extraction entirely.
         if let v = preVideoUrl, !v.isEmpty {
             let hasAudio = (preAudioUrl?.isEmpty == false)
+            let itemUAForLog: String? = await MainActor.run { item.userAgent }
             print("[Daisy] YouTube IDM-style: using pre-resolved URLs (height=\(preHeight ?? 0), hasAudio=\(hasAudio))")
+            print("[Daisy] IDM video URL: \(v)")
+            if let a = preAudioUrl, !a.isEmpty { print("[Daisy] IDM audio URL: \(a)") }
+            print("[Daisy] IDM UA: \(itemUAForLog ?? "(none)")")
             // Adopt the captured title for the saved filename when the
             // user hasn't customised it. We don't have a full
             // YouTubeVideoInfo here, so synthesise a minimal one just for
@@ -115,7 +119,15 @@ extension DownloadEngine {
                     hdrs.removeValue(forKey: "cookie")
                     hdrs.removeValue(forKey: "Cookie")
                     hdrs["Origin"] = "https://www.youtube.com"
+                    hdrs["Sec-Fetch-Dest"] = "video"
+                    hdrs["Sec-Fetch-Mode"] = "no-cors"
+                    hdrs["Sec-Fetch-Site"] = "cross-site"
                     item.headers = hdrs
+                    // googlevideo throttles or 403s parallel fetches that
+                    // didn't come from its own ump/dash protocol. Single
+                    // connection is what the player itself uses for
+                    // progressive itags.
+                    item.connectionCount = 1
                     self.continueStartDownload(item)
                 }
             }
@@ -280,7 +292,7 @@ extension DownloadEngine {
         ]
 
         await Task.detached(priority: .userInitiated) {
-            let commonArgs = ["-x16", "-s16", "-k1M", "--summary-interval=1", "--console-log-level=notice", "--file-allocation=none", "--continue=true", "--auto-file-renaming=false"] + ytArgs
+            let commonArgs = ["-x1", "-s1", "-k1M", "--summary-interval=1", "--console-log-level=notice", "--file-allocation=none", "--continue=true", "--auto-file-renaming=false"] + ytArgs
             let vProc = Process(); vProc.executableURL = URL(fileURLWithPath: aria); vProc.arguments = commonArgs + ["-o", "video.tmp", "--dir=\(tempDir.path)", videoURL]
             let vPipe = Pipe(); vProc.standardOutput = vPipe
             
