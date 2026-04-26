@@ -542,111 +542,83 @@ struct ConfirmDownloadView: View {
         } catch { }
     }
 
-    private func getInstalledYTDlpPath() -> String? {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        let executablePaths = [ "/opt/homebrew/bin/yt-dlp", "/usr/local/bin/yt-dlp", "\(home)/.local/bin/yt-dlp", "/usr/bin/yt-dlp", "/bin/yt-dlp" ]
-        return executablePaths.first(where: { FileManager.default.fileExists(atPath: $0) })
-    }
-    
-    private func fetchYouTubeTitle(url: URL) async -> String? {
-        guard let ytDlpPath = getInstalledYTDlpPath() else { return nil }
-        let browsersToTry: [String?] = [nil, "safari", "chrome", "brave", "firefox", "edge", "opera"]
-        for browser in browsersToTry {
-            if let title = await runYTDlpTitleFetch(url: url, ytDlpPath: ytDlpPath, browser: browser) { return title }
+    /// Lazily extracts video metadata once per `ConfirmDownloadView` show so the
+    /// title and format list share a single InnerTube round-trip.
+    private static let infoCache = NSCache<NSString, CachedYouTubeInfo>()
+
+    private func cachedYouTubeInfo(for url: URL) async -> YouTubeVideoInfo? {
+        let key = url.absoluteString as NSString
+        if let cached = Self.infoCache.object(forKey: key) {
+            return cached.info
         }
-        return nil
-    }
-    
-    private func runYTDlpTitleFetch(url: URL, ytDlpPath: String, browser: String?) async -> String? {
-        return await Task.detached(priority: .userInitiated) {
-            let proc = Process()
-            proc.executableURL = URL(fileURLWithPath: ytDlpPath)
-            var env = ProcessInfo.processInfo.environment
-            env["PATH"] = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:\(FileManager.default.homeDirectoryForCurrentUser.path)/.local/bin"
-            proc.environment = env
-            var args = ["--print", "title", "--no-warnings", "--no-playlist"]
-            if let b = browser { args.append(contentsOf: ["--cookies-from-browser", b]) }
-            args.append(url.absoluteString)
-            proc.arguments = args
-            let pipe = Pipe()
-            proc.standardOutput = pipe
-            proc.standardError = FileHandle.nullDevice
-            do {
-                try proc.run()
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                proc.waitUntilExit()
-                if proc.terminationStatus == 0, let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines), !output.isEmpty {
-                    return output.replacingOccurrences(of: "/", with: "_") + ".mp4"
-                }
-            } catch {}
+        do {
+            let info = try await YouTubeExtractor.shared.extract(url: url)
+            Self.infoCache.setObject(CachedYouTubeInfo(info: info), forKey: key)
+            return info
+        } catch {
             return nil
-        }.value
-    }
-    
-    private func fetchYouTubeFormats(url: URL) async -> [YouTubeFormatOption] {
-        guard let ytDlpPath = getInstalledYTDlpPath() else { return [] }
-        let browsersToTry: [String?] = [nil, "safari", "chrome", "brave", "firefox", "edge", "opera"]
-        for browser in browsersToTry {
-            let formats = await runYTDlpFormatFetch(url: url, ytDlpPath: ytDlpPath, browser: browser)
-            if !formats.isEmpty { return formats }
         }
-        return []
     }
-    
-    private func runYTDlpFormatFetch(url: URL, ytDlpPath: String, browser: String?) async -> [YouTubeFormatOption] {
-        return await Task.detached(priority: .userInitiated) {
-            let proc = Process()
-            proc.executableURL = URL(fileURLWithPath: ytDlpPath)
-            var env = ProcessInfo.processInfo.environment
-            env["PATH"] = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:\(FileManager.default.homeDirectoryForCurrentUser.path)/.local/bin"
-            proc.environment = env
-            var args = ["-j", "--no-warnings", "--no-playlist"]
-            if let b = browser { args.append(contentsOf: ["--cookies-from-browser", b]) }
-            args.append(url.absoluteString)
-            proc.arguments = args
-            let pipe = Pipe()
-            proc.standardOutput = pipe
-            proc.standardError = FileHandle.nullDevice
-            do {
-                try proc.run()
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                proc.waitUntilExit()
-                if proc.terminationStatus == 0,
-                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                   let formats = json["formats"] as? [[String: Any]] {
-                    var options: [YouTubeFormatOption] = []
-                    let audios = formats.filter { ($0["vcodec"] as? String ?? "none") == "none" && ($0["acodec"] as? String ?? "none") != "none" }
-                    let bestAudioSize = audios.compactMap { $0["filesize"] as? Int64 ?? $0["filesize_approx"] as? Int64 }.max() ?? 0
-                    let videos = formats.filter {
-                        let vcodec = $0["vcodec"] as? String ?? "none"
-                        let height = $0["height"] as? Int ?? 0
-                        return vcodec != "none" && height > 0
-                    }.sorted { ($0["height"] as? Int ?? 0) > ($1["height"] as? Int ?? 0) }
-                    var seen = Set<String>()
-                    for v in videos {
-                        let h = v["height"] as? Int ?? 0
-                        let ext = v["ext"] as? String ?? ""
-                        let fps = v["fps"] as? Int ?? 0
-                        if h == 0 || ext.isEmpty { continue }
-                        let vSize = v["filesize"] as? Int64 ?? v["filesize_approx"] as? Int64 ?? 0
-                        let estimatedTotal = (vSize > 0) ? (vSize + bestAudioSize) : 0
-                        let fpsString = (fps > 30) ? "\(fps)" : ""
-                        let key = "\(h)\(fpsString)-\(ext)"
-                        if !seen.contains(key) {
-                            seen.insert(key)
-                            let label = "\(h)p\(fpsString) (\(ext.uppercased()))"
-                            let query = "bestvideo[height<=\(h)][ext=\(ext)]+bestaudio/best"
-                            options.append(YouTubeFormatOption(label: label, query: query, estimatedSize: estimatedTotal))
-                        }
-                    }
-                    let defaultBestSize = options.first?.estimatedSize ?? 0
-                    options.insert(YouTubeFormatOption(label: "Best Quality (Default)", query: "", estimatedSize: defaultBestSize), at: 0)
-                    return options
-                }
-            } catch {}
-            return []
-        }.value
+
+    private func fetchYouTubeTitle(url: URL) async -> String? {
+        guard let info = await cachedYouTubeInfo(for: url) else { return nil }
+        let trimmed = info.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let sanitised = trimmed.replacingOccurrences(
+            of: #"[/\\:*?\"<>|]"#,
+            with: "_",
+            options: .regularExpression
+        )
+        return sanitised + ".mp4"
     }
+
+    private func fetchYouTubeFormats(url: URL) async -> [YouTubeFormatOption] {
+        guard let info = await cachedYouTubeInfo(for: url) else { return [] }
+        return Self.makeFormatOptions(from: info)
+    }
+
+    /// Builds the UI's quality picker list from a parsed `YouTubeVideoInfo`.
+    /// We only surface adaptive (bestvideo + bestaudio) entries because those
+    /// drive the existing aria2 + ffmpeg merge pipeline; progressive entries
+    /// are reserved for the silent "Best Quality (Default)" fallback when no
+    /// adaptive video is usable.
+    static func makeFormatOptions(from info: YouTubeVideoInfo) -> [YouTubeFormatOption] {
+        let usableAudio = info.adaptiveFormats.filter { $0.isAudio && $0.hasUsableUrl }
+        let bestAudioSize = usableAudio.compactMap { $0.contentLength }.max() ?? 0
+
+        let usableVideo = info.adaptiveFormats
+            .filter { $0.isVideo && $0.hasUsableUrl && ($0.height ?? 0) > 0 }
+            .sorted { ($0.height ?? 0, $0.bitrate) > ($1.height ?? 0, $1.bitrate) }
+
+        var options: [YouTubeFormatOption] = []
+        var seen = Set<String>()
+        for v in usableVideo {
+            guard let h = v.height, h > 0 else { continue }
+            let ext = v.fileExtension
+            let fps = v.fps ?? 0
+            let fpsLabel = fps > 30 ? "\(fps)" : ""
+            let key = "\(h)\(fpsLabel)-\(ext)"
+            if seen.contains(key) { continue }
+            seen.insert(key)
+            let label = "\(h)p\(fpsLabel) (\(ext.uppercased()))"
+            let query = "bestvideo[height<=\(h)][ext=\(ext)]+bestaudio/best"
+            let estimated: Int64 = {
+                guard let v = v.contentLength, v > 0 else { return 0 }
+                return v + bestAudioSize
+            }()
+            options.append(YouTubeFormatOption(label: label, query: query, estimatedSize: estimated))
+        }
+        let defaultSize = options.first?.estimatedSize ?? 0
+        options.insert(YouTubeFormatOption(label: "Best Quality (Default)", query: "", estimatedSize: defaultSize), at: 0)
+        return options
+    }
+}
+
+/// Reference-type wrapper so we can stash `YouTubeVideoInfo` (a value type)
+/// inside `NSCache`, which only accepts class instances.
+private final class CachedYouTubeInfo {
+    let info: YouTubeVideoInfo
+    init(info: YouTubeVideoInfo) { self.info = info }
 }
 
 // --- FIXED: FETCH REAL NAME FROM MAGNET PARAMETERS ---

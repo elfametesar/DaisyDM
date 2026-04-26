@@ -35,14 +35,6 @@ extension DownloadEngine {
     }
 
     func runYoutubeDownload(_ item: DownloadItem) async {
-        guard let exe = ytDlpPath else {
-            await MainActor.run {
-                item.status = .failed; item.error = "Missing Engine. Ensure yt-dlp is installed via Homebrew."
-                persist(); scheduleNext()
-            }
-            return
-        }
-
         await MainActor.run {
             item._managesOwnSpeed = true
             if !item.isPrepared {
@@ -56,7 +48,7 @@ extension DownloadEngine {
                 else { dest = uniqueURL(dest) }
                 item.destinationURL = dest; item.filename = dest.lastPathComponent; item.isPrepared = true; persist()
             }
-            
+
             // Setup the macOS .dysy bundle proxy for the UI
             let bundleURL = item.destinationURL.appendingPathExtension("dysy")
             try? FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
@@ -65,40 +57,107 @@ extension DownloadEngine {
             }
         }
 
-        let url = await MainActor.run { item.url.absoluteString }
-        let formatID = await MainActor.run { item.youtubeQuality ?? "bestvideo+bestaudio/best" }
-        let browser = await MainActor.run { item.browser ?? "chrome" }
+        let url = await MainActor.run { item.url }
+        let formatQuery = await MainActor.run { item.youtubeQuality }
 
-        await Task.detached(priority: .userInitiated) {
-            let proc = Process(); proc.executableURL = URL(fileURLWithPath: exe)
-            var env = ProcessInfo.processInfo.environment
-            env["PATH"] = "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-            proc.environment = env
-            proc.arguments = ["--get-url", "-f", formatID, "--cookies-from-browser", browser, url]
+        do {
+            let info = try await YouTubeExtractor.shared.extract(url: url)
+            let selection = YouTubeFormatSelection.parse(formatQuery)
+            let resolved = try selection.resolve(in: info)
+            let isDownloading = await MainActor.run { item.status == .downloading }
+            guard isDownloading else { return }
 
-            let pipe = Pipe(); proc.standardOutput = pipe
-            await MainActor.run { item.processes.append(proc) }
-            
-            do {
-                try proc.run(); proc.waitUntilExit()
-                let isDownloading = await MainActor.run { item.status == .downloading }
-                guard isDownloading else { return }
-                
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                let output = String(data: data, encoding: .utf8) ?? ""
-                let parts = output.components(separatedBy: .newlines).filter { !$0.isEmpty }
+            // Adopt the canonical title for the saved filename, if the user
+            // hasn't customised it. Done before kicking off any download so
+            // the .dysy bundle and final mp4 land at the right path.
+            await self.adoptYouTubeTitleIfDefault(item: item, info: info)
 
-                if parts.count >= 2 { await self.handleMultiPartYoutube(item, videoURL: parts[0], audioURL: parts[1]) }
-                else if parts.count == 1 {
-                    await MainActor.run { item.url = URL(string: parts[0])!; self.continueStartDownload(item) }
-                } else {
-                    await MainActor.run { item.status = .failed; item.error = "yt-dlp could not extract media URLs."; self.persist(); self.scheduleNext() }
+            if let audio = resolved.audio, let videoURL = resolved.video.url {
+                guard let audioURL = audio.url else {
+                    await MainActor.run {
+                        item.status = .failed
+                        item.error = "Resolved audio stream had no usable URL."
+                        self.persist(); self.scheduleNext()
+                    }
+                    return
                 }
-            } catch {
-                let isDownloading = await MainActor.run { item.status == .downloading }
-                if isDownloading { await MainActor.run { item.status = .failed; item.error = "yt-dlp extract error: \(error.localizedDescription)"; self.persist(); self.scheduleNext() } }
+                if let total = self.estimatedTotalBytes(video: resolved.video, audio: audio) {
+                    await MainActor.run { item.totalBytes = total }
+                }
+                await self.handleMultiPartYoutube(item, videoURL: videoURL, audioURL: audioURL)
+            } else if let progressiveURL = resolved.video.url {
+                if let total = resolved.video.contentLength {
+                    await MainActor.run { item.totalBytes = total }
+                }
+                await MainActor.run {
+                    guard let u = URL(string: progressiveURL) else {
+                        item.status = .failed
+                        item.error = "Resolved progressive URL was not parseable."
+                        self.persist(); self.scheduleNext()
+                        return
+                    }
+                    item.url = u
+                    self.continueStartDownload(item)
+                }
+            } else {
+                await MainActor.run {
+                    item.status = .failed
+                    item.error = "YouTube returned no usable stream URL for the selected quality."
+                    self.persist(); self.scheduleNext()
+                }
             }
-        }.value
+        } catch {
+            let isDownloading = await MainActor.run { item.status == .downloading }
+            if isDownloading {
+                await MainActor.run {
+                    item.status = .failed
+                    item.error = "YouTube extract error: \(error.localizedDescription)"
+                    self.persist(); self.scheduleNext()
+                }
+            }
+        }
+    }
+
+    /// Sum of contentLength on the chosen video + audio streams (when both
+    /// are reported). Lets the UI show a total before either aria2 worker
+    /// has emitted its first progress line.
+    nonisolated func estimatedTotalBytes(video: YouTubeFormat, audio: YouTubeFormat) -> Int64? {
+        guard let v = video.contentLength, let a = audio.contentLength else { return nil }
+        let sum = v + a
+        return sum > 0 ? sum : nil
+    }
+
+    /// If the queued item is still using a placeholder filename (the user
+    /// never customised it), replace it with the canonical title returned
+    /// by the InnerTube API, sanitised for the filesystem.
+    @MainActor
+    func adoptYouTubeTitleIfDefault(item: DownloadItem, info: YouTubeVideoInfo) {
+        let current = item.filename
+        let placeholderHints = [
+            "youtube_video.mp4",
+            "video.mp4",
+            "download",
+            "download.mp4"
+        ]
+        let isPlaceholder = current.isEmpty
+            || placeholderHints.contains(current.lowercased())
+            || current.hasPrefix("watch?v=")
+            || (item.url.absoluteString.contains("/watch") && current.lowercased().hasPrefix("watch"))
+        guard isPlaceholder else { return }
+
+        var sanitised = info.title
+            .replacingOccurrences(of: #"[/\\:*?\"<>|]"#, with: "_", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if sanitised.isEmpty { sanitised = "YouTube Video" }
+        if !sanitised.lowercased().hasSuffix(".mp4") { sanitised += ".mp4" }
+
+        var dest = item.destinationURL
+        dest = dest.deletingLastPathComponent().appendingPathComponent(sanitised)
+        if FileManager.default.fileExists(atPath: dest.path) { dest = uniqueURL(dest) }
+
+        item.filename = dest.lastPathComponent
+        item.destinationURL = dest
+        persist()
     }
 
     func handleMultiPartYoutube(_ item: DownloadItem, videoURL: String, audioURL: String) async {
