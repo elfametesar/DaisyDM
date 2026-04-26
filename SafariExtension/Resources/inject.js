@@ -344,6 +344,21 @@
         }
     }
 
+    // Capture googlevideo.com /videoplayback URLs the player JS asks
+    // fetch/XHR to load. Safari's webRequest API doesn't reliably observe
+    // these (they go via QUIC/HTTP3 and webRequest may report
+    // pre-rewrite/decoy hostnames that NXDOMAIN externally). The JS-level
+    // URL is what the player code actually constructs and is the most
+    // reliable source.
+    function maybeCaptureYtIdmUrl(rawUrl, status) {
+        try {
+            if (!rawUrl) return;
+            const u = (typeof rawUrl === "string") ? rawUrl : (rawUrl && rawUrl.url) || "";
+            if (!u || !/^https?:\/\/[^/]*googlevideo\.com\/videoplayback\b/i.test(u)) return;
+            window.postMessage({ __daisyYtIdmCapture: { url: u, status: status || 0 } }, "*");
+        } catch (_) {}
+    }
+
     const _fetch = window.fetch;
     window.fetch = async function(...args) {
         const req = args[0];
@@ -373,6 +388,19 @@
         
         if (Object.keys(headers).length > 0 || MEDIA_RE.test(url) || hasRange) {
             window.postMessage({ __daisyMediaHeaders: { url, headers } }, "*");
+        }
+        const ytGv = /^https?:\/\/[^/]*googlevideo\.com\/videoplayback\b/i.test(url);
+        if (ytGv) {
+            const p = _fetch.apply(this, args);
+            p.then(resp => {
+                try {
+                    const finalUrl = (resp && resp.url) ? resp.url : url;
+                    if (resp && (resp.status === 200 || resp.status === 206)) {
+                        maybeCaptureYtIdmUrl(finalUrl, resp.status);
+                    }
+                } catch (_) {}
+            }).catch(() => {});
+            return p;
         }
         // Try opts.body first (string/FormData), then clone the Request body
         // if YouTube passed a Request object. Request bodies can only be read
@@ -418,6 +446,18 @@
                 }
                 if (Object.keys(this._daisyHeaders || {}).length > 0 || MEDIA_RE.test(absoluteUrl) || hasRange) {
                     window.postMessage({ __daisyMediaHeaders: { url: absoluteUrl, headers: this._daisyHeaders || {} } }, "*");
+                }
+                if (/^https?:\/\/[^/]*googlevideo\.com\/videoplayback\b/i.test(absoluteUrl)) {
+                    const xhr = this;
+                    xhr.addEventListener("load", function() {
+                        try {
+                            const st = xhr.status || 0;
+                            if (st === 200 || st === 206) {
+                                const finalUrl = xhr.responseURL || absoluteUrl;
+                                maybeCaptureYtIdmUrl(finalUrl, st);
+                            }
+                        } catch (_) {}
+                    });
                 }
             } catch(e) {
                 let hasRange = false;

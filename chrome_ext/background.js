@@ -370,6 +370,28 @@ _api.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return true;
     }
 
+    // Page-level fetch/XHR hook in inject.js relays each successfully-
+    // fetched googlevideo URL here. We use this in addition to (or instead
+    // of) webRequest.onCompleted, which on Safari sometimes never fires for
+    // QUIC-routed media requests.
+    if (message.type === "RECORD_YT_IDM_CAPTURE") {
+        const tabId = sender && sender.tab && sender.tab.id;
+        if (typeof tabId !== "number" || tabId < 0) { sendResponse({ ok: false }); return true; }
+        const parsed = parseGoogleVideoUrl(message.url || "");
+        if (!parsed) { sendResponse({ ok: false }); return true; }
+        const vid = message.videoId || ytVideoIdFromUrl(sender.tab && sender.tab.url) || null;
+        if (!vid) { sendResponse({ ok: false }); return true; }
+        recordYtFormat(tabId, vid, {
+            itag: parsed.itag,
+            url: parsed.cleanUrl || message.url,
+            mime: parsed.mime,
+            contentLength: parsed.contentLength,
+            status: message.status || 200
+        });
+        sendResponse({ ok: true });
+        return true;
+    }
+
     // Content script asks "what googlevideo URLs have you captured for this
     // tab + videoId?". Used by the popup to build the quality list from
     // the URLs the YouTube player has already resolved, instead of going

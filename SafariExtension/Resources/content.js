@@ -306,6 +306,14 @@ window.addEventListener("message", (e) => {
             bubbleMediaToTop({ url, mediaType: 'unknown', frameOrigin: window.location.origin });
         }
     }
+    if (e.data && e.data.__daisyYtIdmCapture && e.data.__daisyYtIdmCapture.url) {
+        const cap = e.data.__daisyYtIdmCapture;
+        try {
+            const u = new URL(window.location.href);
+            const vid = u.searchParams.get("v") || (window.location.pathname.startsWith("/shorts/") ? window.location.pathname.split("/")[2] : null);
+            _api.runtime.sendMessage({ type: "RECORD_YT_IDM_CAPTURE", url: cap.url, videoId: vid, status: cap.status || 0 }).catch(() => {});
+        } catch(_) {}
+    }
     if (e.data && e.data.__daisyYtPoToken && e.data.__daisyYtPoTokenVideoId) {
         const entry = {
             poToken: String(e.data.__daisyYtPoToken),
