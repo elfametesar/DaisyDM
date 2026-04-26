@@ -586,8 +586,19 @@ struct ConfirmDownloadView: View {
     }
 
     private func fetchYouTubeTitle(url: URL) async -> String? {
-        guard let info = await cachedYouTubeInfo(for: url) else { return nil }
-        let trimmed = info.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let raw: String?
+        if let info = await cachedYouTubeInfo(for: url) {
+            raw = info.title
+        } else if let pageTitle = request.ytTitle, !pageTitle.isEmpty {
+            // InnerTube failed (bot gate). Use the title the browser
+            // extension scraped from the watch page so the saved filename
+            // still matches the video.
+            raw = pageTitle
+        } else {
+            raw = nil
+        }
+        guard let raw, !raw.isEmpty else { return nil }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
         let sanitised = trimmed.replacingOccurrences(
             of: #"[/\\:*?\"<>|]"#,
@@ -598,8 +609,34 @@ struct ConfirmDownloadView: View {
     }
 
     private func fetchYouTubeFormats(url: URL) async -> [YouTubeFormatOption] {
-        guard let info = await cachedYouTubeInfo(for: url) else { return [] }
-        return Self.makeFormatOptions(from: info)
+        if let info = await cachedYouTubeInfo(for: url) {
+            let opts = Self.makeFormatOptions(from: info)
+            if !opts.isEmpty { return opts }
+        }
+        // InnerTube failed (most often the bot gate). Fall through to a
+        // hardcoded yt-dlp quality menu — yt-dlp accepts these height
+        // selectors directly via `-f` and the download path will use the
+        // yt-dlp fallback to resolve the URL.
+        return Self.makeYtDlpFallbackOptions()
+    }
+
+    static func makeYtDlpFallbackOptions() -> [YouTubeFormatOption] {
+        let heights: [(String, Int)] = [
+            ("2160p (4K)", 2160),
+            ("1440p (2K)", 1440),
+            ("1080p (Full HD)", 1080),
+            ("720p (HD)", 720),
+            ("480p", 480),
+            ("360p", 360)
+        ]
+        var opts: [YouTubeFormatOption] = []
+        opts.append(YouTubeFormatOption(label: "Best Quality (Default)", query: "", estimatedSize: 0))
+        for (label, h) in heights {
+            let query = "bestvideo[height<=\(h)]+bestaudio/best[height<=\(h)]"
+            opts.append(YouTubeFormatOption(label: label, query: query, estimatedSize: 0))
+        }
+        opts.append(YouTubeFormatOption(label: "Audio Only (m4a)", query: "bestaudio[ext=m4a]/bestaudio", estimatedSize: 0))
+        return opts
     }
 
     /// Builds the UI's quality picker list from a parsed `YouTubeVideoInfo`.

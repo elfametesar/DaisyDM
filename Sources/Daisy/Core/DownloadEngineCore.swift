@@ -34,6 +34,7 @@ public final class DownloadEngine {
     
     var aria2Path: String? { resolveHomebrewPath(for: "aria2c") }
     var ffmpegPath: String? { resolveHomebrewPath(for: "ffmpeg") }
+    var ytDlpPath: String? { resolveHomebrewPath(for: "yt-dlp") }
 
     private init() {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!

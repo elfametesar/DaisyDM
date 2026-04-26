@@ -187,15 +187,88 @@ extension DownloadEngine {
                 }
             }
         } catch {
+            let innerTubeError = error
             let isDownloading = await MainActor.run { item.status == .downloading }
-            if isDownloading {
+            guard isDownloading else { return }
+
+            // Fall back to yt-dlp when the native InnerTube path fails. The
+            // most common cause is YouTube's bot gate refusing every client
+            // variant we try (LOGIN_REQUIRED — Sign in to confirm you're not
+            // a bot). yt-dlp ships its own JS interpreter for the n-cipher
+            // and has actively-maintained workarounds for the bot gate, so
+            // it succeeds where our pure-Swift extractor cannot.
+            print("[Daisy] InnerTube failed (\(innerTubeError.localizedDescription)); falling back to yt-dlp")
+            await self.runYtDlpFallback(item: item, url: url, formatQuery: formatQuery, innerTubeError: innerTubeError)
+        }
+    }
+
+    /// Spawns yt-dlp with `--get-url` to resolve a video (and optional audio)
+    /// URL pair, then hands the URLs to `handleMultiPartYoutube` /
+    /// `continueStartDownload` so the rest of the pipeline (aria2 + ffmpeg
+    /// merge) is identical to the native path.
+    func runYtDlpFallback(item: DownloadItem, url: URL, formatQuery: String?, innerTubeError: Error) async {
+        guard let exe = ytDlpPath else {
+            await MainActor.run {
+                item.status = .failed
+                item.error = "YouTube needs yt-dlp installed (brew install yt-dlp). Native extractor failed: \(innerTubeError.localizedDescription)"
+                self.persist(); self.scheduleNext()
+            }
+            return
+        }
+
+        let formatID = formatQuery ?? "bestvideo+bestaudio/best"
+        let browser = await MainActor.run { item.browser ?? "safari" }
+        let urlString = url.absoluteString
+
+        await Task.detached(priority: .userInitiated) {
+            let proc = Process()
+            proc.executableURL = URL(fileURLWithPath: exe)
+            var env = ProcessInfo.processInfo.environment
+            env["PATH"] = "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+            proc.environment = env
+            proc.arguments = ["--get-url", "-f", formatID, "--cookies-from-browser", browser, urlString]
+
+            let outPipe = Pipe(); proc.standardOutput = outPipe
+            let errPipe = Pipe(); proc.standardError = errPipe
+            await MainActor.run { item.processes.append(proc) }
+
+            do {
+                try proc.run()
+                proc.waitUntilExit()
+                let isDownloading = await MainActor.run { item.status == .downloading }
+                guard isDownloading else { return }
+
+                let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
+                let output = String(data: outData, encoding: .utf8) ?? ""
+                let parts = output.components(separatedBy: .newlines).filter { !$0.isEmpty }
+
+                if parts.count >= 2 {
+                    print("[Daisy] yt-dlp fallback: resolved video + audio URLs")
+                    await self.handleMultiPartYoutube(item, videoURL: parts[0], audioURL: parts[1])
+                } else if parts.count == 1, let resolved = URL(string: parts[0]) {
+                    print("[Daisy] yt-dlp fallback: resolved muxed URL")
+                    await MainActor.run {
+                        item.url = resolved
+                        self.continueStartDownload(item)
+                    }
+                } else {
+                    let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+                    let errStr = String(data: errData, encoding: .utf8) ?? ""
+                    let trimmedErr = errStr.split(separator: "\n").last.map(String.init) ?? "yt-dlp produced no output"
+                    await MainActor.run {
+                        item.status = .failed
+                        item.error = "yt-dlp could not extract media URLs: \(trimmedErr)"
+                        self.persist(); self.scheduleNext()
+                    }
+                }
+            } catch {
                 await MainActor.run {
                     item.status = .failed
-                    item.error = "YouTube extract error: \(error.localizedDescription)"
+                    item.error = "yt-dlp invocation failed: \(error.localizedDescription)"
                     self.persist(); self.scheduleNext()
                 }
             }
-        }
+        }.value
     }
 
     /// Sum of contentLength on the chosen video + audio streams (when both
