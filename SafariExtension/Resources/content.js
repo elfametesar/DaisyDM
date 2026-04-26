@@ -230,6 +230,13 @@ function isLikelyDownloadUrl(urlStr) {
     }
 }
 
+// Caches the latest YouTube proof-of-origin token captured from a real
+// player API request on the current page. Without this token, server-side
+// InnerTube calls fail with the "Sign in to confirm you're not a bot" gate
+// even when a logged-in cookie session is forwarded.
+const capturedYtPoTokens = new Map();   // videoId -> { poToken, visitorData }
+let lastCapturedPoToken = null;
+
 window.addEventListener("message", (e) => {
     if (e.data && e.data.__daisyTriggerDownload) {
         if (shouldBypass(true)) return;
@@ -251,7 +258,34 @@ window.addEventListener("message", (e) => {
             bubbleMediaToTop({ url, mediaType: 'unknown', frameOrigin: window.location.origin });
         }
     }
+    if (e.data && e.data.__daisyYtPoToken && e.data.__daisyYtPoTokenVideoId) {
+        const entry = {
+            poToken: String(e.data.__daisyYtPoToken),
+            visitorData: e.data.__daisyYtPoTokenVisitor ? String(e.data.__daisyYtPoTokenVisitor) : null
+        };
+        capturedYtPoTokens.set(String(e.data.__daisyYtPoTokenVideoId), entry);
+        lastCapturedPoToken = entry;
+    }
 });
+
+function getYtPoTokenFor(videoId) {
+    if (videoId && capturedYtPoTokens.has(videoId)) return capturedYtPoTokens.get(videoId);
+    return lastCapturedPoToken;
+}
+
+function ytVideoIdFromUrl(href) {
+    try {
+        const u = new URL(href, window.location.href);
+        if (u.hostname.includes("youtu.be")) {
+            return u.pathname.replace(/^\//, "").split("/")[0] || null;
+        }
+        const v = u.searchParams.get("v");
+        if (v) return v;
+        const m = u.pathname.match(/\/(?:shorts|embed|live|v)\/([\w-]{6,})/);
+        if (m) return m[1];
+    } catch (_) {}
+    return null;
+}
 
 function getActualYtFormats() {
     let formats = new Set();
@@ -605,8 +639,25 @@ function sendToDispatch(url, filename, additionalData = {}) {
     // most public videos.
     let pageCookies = "";
     try { pageCookies = document.cookie || ""; } catch (_) {}
+
+    let ytPoToken = null;
+    let ytPoTokenVisitor = null;
+    try {
+        const isYt = (window.location.hostname || "").includes("youtube.com")
+                  || (window.location.hostname || "").includes("youtu.be");
+        if (isYt) {
+            const vid = ytVideoIdFromUrl(window.location.href) || ytVideoIdFromUrl(url);
+            const entry = getYtPoTokenFor(vid);
+            if (entry) {
+                ytPoToken = entry.poToken;
+                ytPoTokenVisitor = entry.visitorData;
+            }
+        }
+    } catch (_) {}
+
     _api.runtime.sendMessage({
         type: "PREPARE_DISPATCH_DOWNLOAD", url: url, filename: finalFilename, cookies: pageCookies,
+        ytPoToken: ytPoToken, ytPoTokenVisitor: ytPoTokenVisitor,
         pageHeaders: mergedPageHeaders, ...additionalData
     }).catch(() => nativeFallback(url, finalFilename));
   } catch (error) {

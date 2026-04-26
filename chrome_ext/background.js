@@ -266,12 +266,12 @@ _api.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 } else {
                     console.warn("[Daisy] YouTube dispatch: no cookies available — request will likely hit the bot challenge");
                 }
-                await triggerDownload(message.url, message.filename, sender.tab?.url || "", cookiePayload, message.youtubeQuality, message.forceHLS, message.forceDASH, message.pageHeaders || {});
+                await triggerDownload(message.url, message.filename, sender.tab?.url || "", cookiePayload, message.youtubeQuality, message.forceHLS, message.forceDASH, message.pageHeaders || {}, message.ytPoToken || null, message.ytPoTokenVisitor || null);
             } else {
                 let cookiePayload = findCapturedCookieAggressive(message.url);
                 if (!cookiePayload && pageUrl.startsWith("http")) cookiePayload = await fetchBaseDomainCookies(pageUrl);
                 if (!cookiePayload) cookiePayload = message.cookies || "";
-                await triggerDownload(message.url, message.filename, sender.tab?.url || "", cookiePayload, message.youtubeQuality, message.forceHLS, message.forceDASH, message.pageHeaders || {});
+                await triggerDownload(message.url, message.filename, sender.tab?.url || "", cookiePayload, message.youtubeQuality, message.forceHLS, message.forceDASH, message.pageHeaders || {}, null, null);
             }
         };
 
@@ -280,7 +280,7 @@ _api.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 });
 
-async function triggerDownload(url, filename, referer, cookies, youtubeQuality, forceHLS, forceDASH, pageHeaders) {
+async function triggerDownload(url, filename, referer, cookies, youtubeQuality, forceHLS, forceDASH, pageHeaders, ytPoToken, ytPoTokenVisitor) {
     let finalCookies = cookies;
     if (!finalCookies) finalCookies = findCapturedCookieAggressive(url) || await fetchBaseDomainCookies(referer || url);
     
@@ -294,6 +294,8 @@ async function triggerDownload(url, filename, referer, cookies, youtubeQuality, 
     const payload = JSON.stringify({
         url, filename: filename || "download", cookies: finalCookies || "", referer: referer || "",
         ua: navigator.userAgent, browser: "chrome", youtubeQuality, forceHLS, forceDASH,
+        ytPoToken: ytPoToken || null,
+        ytPoTokenVisitor: ytPoTokenVisitor || null,
         headers: mergedHeaders,
         requestHeaders: mergedHeaders,
         responseHeaders: respHeaders,

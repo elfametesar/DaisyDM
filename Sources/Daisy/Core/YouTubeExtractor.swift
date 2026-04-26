@@ -271,9 +271,25 @@ actor YouTubeExtractor {
         /// single header string we can hand to InnerTube.
         let cookies: String?
         let userAgent: String?
+        /// Proof-of-origin token captured by the browser extension from the
+        /// real YouTube player's outgoing InnerTube request. When present,
+        /// the WEB client uses it in the request body so YouTube treats the
+        /// call as an in-page player request rather than a server scrape.
+        let poToken: String?
+        /// Visitor data the player paired with the poToken — they're bound
+        /// together. If we got a token, we should use the matching visitorData
+        /// instead of the one we scraped from the watch page HTML.
+        let poTokenVisitor: String?
+
+        init(cookies: String?, userAgent: String?, poToken: String? = nil, poTokenVisitor: String? = nil) {
+            self.cookies = cookies
+            self.userAgent = userAgent
+            self.poToken = (poToken?.isEmpty ?? true) ? nil : poToken
+            self.poTokenVisitor = (poTokenVisitor?.isEmpty ?? true) ? nil : poTokenVisitor
+        }
 
         var isEmpty: Bool {
-            (cookies?.isEmpty ?? true) && (userAgent?.isEmpty ?? true)
+            (cookies?.isEmpty ?? true) && (userAgent?.isEmpty ?? true) && (poToken?.isEmpty ?? true)
         }
 
         /// Returns a proper `Cookie:` header value (`name=value; name=value`)
@@ -346,16 +362,24 @@ actor YouTubeExtractor {
         var seenItags = Set<Int>()
         var seenAdaptiveItags = Set<Int>()
 
-        // Fetch the watch page to harvest a visitorData token. YouTube's bot
-        // detection treats InnerTube requests as suspicious unless the client
-        // context carries a visitor fingerprint, even when the user's cookies
-        // are valid. This single GET costs ~200ms and dramatically improves
-        // success rate against the "Sign in to confirm you're not a bot" gate.
-        let visitorData = await fetchVisitorData(videoId: videoId, credentials: credentials)
+        // Prefer the visitorData the browser paired with the captured poToken
+        // — they're bound together. Falls back to scraping the watch page if
+        // we don't have a captured token.
+        let visitorData: String?
+        if let v = credentials.poTokenVisitor, !v.isEmpty {
+            visitorData = v
+        } else {
+            // Fetch the watch page to harvest a visitorData token. YouTube's bot
+            // detection treats InnerTube requests as suspicious unless the
+            // client context carries a visitor fingerprint, even when cookies
+            // are valid. ~200ms cost, big lift on bot-gate success rate.
+            visitorData = await fetchVisitorData(videoId: videoId, credentials: credentials)
+        }
 
         let cookieCount = credentials.cookieHeader?.split(separator: ";").count ?? 0
         let hasSapisid = credentials.sapisid != nil
-        print("[Daisy] InnerTube extract videoId=\(videoId) cookies=\(cookieCount) sapisid=\(hasSapisid) visitor=\(visitorData != nil) ua=\(credentials.userAgent?.prefix(40) ?? "<none>")")
+        let hasPoToken = credentials.poToken != nil
+        print("[Daisy] InnerTube extract videoId=\(videoId) cookies=\(cookieCount) sapisid=\(hasSapisid) visitor=\(visitorData != nil) poToken=\(hasPoToken) ua=\(credentials.userAgent?.prefix(40) ?? "<none>")")
 
         for client in clients {
             do {
@@ -549,7 +573,7 @@ actor YouTubeExtractor {
             clientCtx["visitorData"] = vd
         }
 
-        let body: [String: Any] = [
+        var body: [String: Any] = [
             "context": ["client": clientCtx],
             "videoId": videoId,
             "playbackContext": [
@@ -560,6 +584,14 @@ actor YouTubeExtractor {
             "contentCheckOk": true,
             "racyCheckOk": true
         ]
+        // Forward the proof-of-origin token captured by the extension. This
+        // is the field YouTube checks to decide whether a logged-in cookie
+        // session is allowed past the bot gate. Only valid for the WEB
+        // client family — mobile/TV clients use a different attestation
+        // pipeline that doesn't accept this token.
+        if webFamily, let pot = credentials.poToken {
+            body["serviceIntegrityDimensions"] = ["poToken": pot]
+        }
 
         do {
             req.httpBody = try JSONSerialization.data(withJSONObject: body)

@@ -105,6 +105,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let forceDirectDownload = info["forceDirectDownload"] as? Bool ?? false
             let youtubeQuality = info["youtubeQuality"] as? String
             let headers = info["headers"] as? [String: String] ?? [:]
+            let ytPoTokenRaw = info["ytPoToken"] as? String ?? ""
+            let ytPoToken: String? = ytPoTokenRaw.isEmpty ? nil : ytPoTokenRaw
+            let ytPoTokenVisitorRaw = info["ytPoTokenVisitor"] as? String ?? ""
+            let ytPoTokenVisitor: String? = ytPoTokenVisitorRaw.isEmpty ? nil : ytPoTokenVisitorRaw
 
             let request = ConfirmDownloadRequest(
                 url:      url,
@@ -116,7 +120,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 forceHLS: forceHLS,
                 forceDASH: forceDASH,
                 forceDirectDownload: forceDirectDownload,
-                youtubeQuality: youtubeQuality
+                youtubeQuality: youtubeQuality,
+                ytPoToken: ytPoToken,
+                ytPoTokenVisitor: ytPoTokenVisitor
             )
             self?.presentConfirmPanel(request: request)
         }
@@ -203,7 +209,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         isHLS:       confirmedRequest.forceHLS,
                         isDASH:      confirmedRequest.forceDASH,
                         browser:     nil,
-                        forceDirectDownload: confirmedRequest.forceDirectDownload
+                        forceDirectDownload: confirmedRequest.forceDirectDownload,
+                        ytPoToken:   confirmedRequest.ytPoToken,
+                        ytPoTokenVisitor: confirmedRequest.ytPoTokenVisitor
                     )
                     
                     if let newestItem = engine.items.last(where: { $0.url == url }) {

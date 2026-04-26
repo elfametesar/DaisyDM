@@ -82,6 +82,11 @@ public final class DownloadItem: Identifiable, Codable, Hashable {
     public var cookies: String?
     public var userAgent: String?
     public var referer: String?
+    /// YouTube proof-of-origin token captured by the browser extension
+    /// from the in-page player request. Forwarded to InnerTube so the
+    /// server-side download call doesn't trip the bot gate.
+    public var ytPoToken: String?
+    public var ytPoTokenVisitor: String?
 
     public var isHLS: Bool = false
     public var isDASH: Bool = false

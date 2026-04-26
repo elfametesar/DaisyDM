@@ -13,6 +13,8 @@ struct DownloadPayload: Decodable {
     let forceDASH: Bool?
     let forceDirectDownload: Bool?
     let browser: String?
+    let ytPoToken: String?
+    let ytPoTokenVisitor: String?
     let headers: [String: String]? // <--- Correctly maps to the background.js payload
     let responseHeaders: [String: String]?
     let extraHeadersFlat: String?
@@ -28,7 +30,9 @@ struct DownloadPayload: Decodable {
          ua: String?, youtubeQuality: String?, forceHLS: Bool?, forceDASH: Bool?, forceDirectDownload: Bool?, browser: String?,
          headers: [String: String]? = nil,
          responseHeaders: [String: String]? = nil,
-         extraHeadersFlat: String? = nil) {
+         extraHeadersFlat: String? = nil,
+         ytPoToken: String? = nil,
+         ytPoTokenVisitor: String? = nil) {
         self.url             = url
         self.filename        = filename
         self.cookies         = cookies
@@ -42,12 +46,15 @@ struct DownloadPayload: Decodable {
         self.headers         = headers
         self.responseHeaders = responseHeaders
         self.extraHeadersFlat = extraHeadersFlat
+        self.ytPoToken       = ytPoToken
+        self.ytPoTokenVisitor = ytPoTokenVisitor
     }
 
     enum CodingKeys: String, CodingKey {
         case url, filename, cookies, referer, ua
         case youtubeQuality, forceHLS, forceDASH, forceDirectDownload, browser
         case headers, responseHeaders, extraHeadersFlat
+        case ytPoToken, ytPoTokenVisitor
     }
 
     init(from decoder: Decoder) throws {
@@ -62,6 +69,8 @@ struct DownloadPayload: Decodable {
         forceDASH = try c.decodeIfPresent(Bool.self, forKey: .forceDASH)
         forceDirectDownload = try c.decodeIfPresent(Bool.self, forKey: .forceDirectDownload)
         extraHeadersFlat = try c.decodeIfPresent(String.self, forKey: .extraHeadersFlat)
+        ytPoToken = try c.decodeIfPresent(String.self, forKey: .ytPoToken)
+        ytPoTokenVisitor = try c.decodeIfPresent(String.self, forKey: .ytPoTokenVisitor)
         // Browsers sometimes hand us header values that are numbers (e.g.
         // X-YouTube-Page-CL is an int) or bools, but our struct stores them
         // as String. Decode loosely and stringify so a single non-string
@@ -219,7 +228,9 @@ class LocalServer {
                         browser:         payload.browser,
                         headers:         payload.headers, // <--- Correctly passing it
                         responseHeaders: payload.responseHeaders,
-                        extraHeadersFlat: payload.extraHeadersFlat
+                        extraHeadersFlat: payload.extraHeadersFlat,
+                        ytPoToken:       payload.ytPoToken,
+                        ytPoTokenVisitor: payload.ytPoTokenVisitor
                     )
 
                     DispatchQueue.main.async {
@@ -273,7 +284,9 @@ class LocalServer {
                     "forceDirectDownload": payload.forceDirectDownload ?? false,
                     "browser":          payload.browser         ?? "",
                     "headers":          finalHeaders,
-                    "extraHeadersFlat": payload.extraHeadersFlat ?? ""
+                    "extraHeadersFlat": payload.extraHeadersFlat ?? "",
+                    "ytPoToken":        payload.ytPoToken       ?? "",
+                    "ytPoTokenVisitor": payload.ytPoTokenVisitor ?? ""
                 ]
             )
         }

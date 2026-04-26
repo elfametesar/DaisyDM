@@ -14,6 +14,12 @@ struct ConfirmDownloadRequest: Identifiable {
     var forceDASH: Bool = false
     var forceDirectDownload: Bool = false
     var youtubeQuality: String? = nil
+    /// Proof-of-origin token captured by the browser extension from the
+    /// real YouTube player request. When present, the InnerTube call
+    /// looks like a normal in-page player request rather than an
+    /// anonymous server-side scrape, which clears the bot gate.
+    var ytPoToken: String? = nil
+    var ytPoTokenVisitor: String? = nil
 }
 
 struct YouTubeFormatOption: Hashable {
@@ -557,7 +563,9 @@ struct ConfirmDownloadView: View {
         // gate without having to ship a real OAuth flow.
         let credentials = YouTubeExtractor.Credentials(
             cookies: request.cookies.isEmpty ? nil : request.cookies,
-            userAgent: request.ua.isEmpty ? nil : request.ua
+            userAgent: request.ua.isEmpty ? nil : request.ua,
+            poToken: request.ytPoToken,
+            poTokenVisitor: request.ytPoTokenVisitor
         )
         do {
             let info = try await YouTubeExtractor.shared.extract(url: url, credentials: credentials)

@@ -218,6 +218,27 @@
         attempt();
     });
 
+    // Peek at YouTube's own outgoing player API requests so we can lift
+    // the proof-of-origin token (PO Token) the real player generated for
+    // the current video. Without this token, YouTube blocks server-side
+    // InnerTube calls at the "Sign in to confirm you're not a bot" gate
+    // even with a logged-in cookie session.
+    function maybeCapturePoToken(url, body) {
+        try {
+            if (!url || !body || !url.includes("/youtubei/v1/player")) return;
+            const json = typeof body === "string" ? JSON.parse(body) : null;
+            if (!json) return;
+            const dims = json.serviceIntegrityDimensions || json.serviceIntegrity;
+            const pot = dims && dims.poToken;
+            const vid = json.videoId;
+            const vd = json.context && json.context.client && json.context.client.visitorData;
+            if (pot && vid) {
+                window.postMessage({ __daisyYtPoToken: pot, __daisyYtPoTokenVideoId: vid, __daisyYtPoTokenVisitor: vd || null }, "*");
+                try { console.log("[Daisy] captured poToken for videoId", vid, "len=" + pot.length); } catch (_) {}
+            }
+        } catch (_) {}
+    }
+
     const _fetch = window.fetch;
     window.fetch = async function(...args) {
         const req = args[0];
@@ -248,6 +269,20 @@
         if (Object.keys(headers).length > 0 || MEDIA_RE.test(url) || hasRange) {
             window.postMessage({ __daisyMediaHeaders: { url, headers } }, "*");
         }
+        // Try opts.body first (string/FormData), then clone the Request body
+        // if YouTube passed a Request object. Request bodies can only be read
+        // once, so we always clone() to avoid breaking the actual fetch.
+        if (url.includes("/youtubei/v1/player")) {
+            if (opts.body) {
+                try { maybeCapturePoToken(url, opts.body); } catch (_) {}
+            } else if (req instanceof Request) {
+                try {
+                    req.clone().text().then((txt) => {
+                        if (txt) maybeCapturePoToken(url, txt);
+                    }).catch(() => {});
+                } catch (_) {}
+            }
+        }
         return _fetch.apply(this, args);
     };
 
@@ -270,6 +305,7 @@
         if (this._daisyUrl) {
             try {
                 const absoluteUrl = new URL(this._daisyUrl, document.baseURI).href;
+                if (args && args[0]) maybeCapturePoToken(absoluteUrl, args[0]);
                 let hasRange = false;
                 if (this._daisyHeaders) {
                     const lowerHeaders = Object.keys(this._daisyHeaders).map(k => k.toLowerCase());

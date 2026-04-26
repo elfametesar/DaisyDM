@@ -50,7 +50,7 @@ public final class DownloadEngine {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
 
-    public func addDownload(urls: [URL], destination: URL? = nil, connections: Int = 16, headers: [String: String]? = nil, cookies: String? = nil, userAgent: String? = nil, referer: String? = nil, filename: String? = nil, youtubeQuality: String? = nil, isHLS: Bool = false, isDASH: Bool = false, browser: String? = nil, forceDirectDownload: Bool = false) {
+    public func addDownload(urls: [URL], destination: URL? = nil, connections: Int = 16, headers: [String: String]? = nil, cookies: String? = nil, userAgent: String? = nil, referer: String? = nil, filename: String? = nil, youtubeQuality: String? = nil, isHLS: Bool = false, isDASH: Bool = false, browser: String? = nil, forceDirectDownload: Bool = false, ytPoToken: String? = nil, ytPoTokenVisitor: String? = nil) {
         guard !urls.isEmpty else { return }
         let defaults = UserDefaults.standard
         let defaultPath = defaults.string(forKey: "defaultDownloadPath") ?? downloadsDir().path
@@ -78,6 +78,8 @@ public final class DownloadEngine {
             item.referer = referer
             item.browser = browser
             item.youtubeQuality = youtubeQuality
+            item.ytPoToken = ytPoToken
+            item.ytPoTokenVisitor = ytPoTokenVisitor
             
             if isFuckingFast { item.needsFuckingFastResolve = true }
 
