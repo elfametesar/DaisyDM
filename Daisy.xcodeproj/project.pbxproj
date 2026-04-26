@@ -18,6 +18,7 @@
 		7149138A2F9609D700167751 /* DownloadEngineAria2.swift in Sources */ = {isa = PBXBuildFile; fileRef = 714913892F9609D400167751 /* DownloadEngineAria2.swift */; };
 		7149138C2F9609EB00167751 /* DownloadEngineCurl.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7149138B2F9609E800167751 /* DownloadEngineCurl.swift */; };
 		7149138E2F9609FB00167751 /* DownloadEngineYouTube.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7149138D2F9609F900167751 /* DownloadEngineYouTube.swift */; };
+		71D415A02F9F00010000A001 /* YouTubeExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71D415A12F9F00020000A002 /* YouTubeExtractor.swift */; };
 		714913902F960A2300167751 /* DownloadEngineDASH.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7149138F2F960A1E00167751 /* DownloadEngineDASH.swift */; };
 		714913922F960A3700167751 /* DownloadEngineHLS.swift in Sources */ = {isa = PBXBuildFile; fileRef = 714913912F960A3400167751 /* DownloadEngineHLS.swift */; };
 		714913942F960AE800167751 /* DownloadModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 714913932F960AE600167751 /* DownloadModels.swift */; };
@@ -100,6 +101,7 @@
 		714913892F9609D400167751 /* DownloadEngineAria2.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadEngineAria2.swift; sourceTree = "<group>"; };
 		7149138B2F9609E800167751 /* DownloadEngineCurl.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadEngineCurl.swift; sourceTree = "<group>"; };
 		7149138D2F9609F900167751 /* DownloadEngineYouTube.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadEngineYouTube.swift; sourceTree = "<group>"; };
+		71D415A12F9F00020000A002 /* YouTubeExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YouTubeExtractor.swift; sourceTree = "<group>"; };
 		7149138F2F960A1E00167751 /* DownloadEngineDASH.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadEngineDASH.swift; sourceTree = "<group>"; };
 		714913912F960A3400167751 /* DownloadEngineHLS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadEngineHLS.swift; sourceTree = "<group>"; };
 		714913932F960AE600167751 /* DownloadModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadModels.swift; sourceTree = "<group>"; };
@@ -233,6 +235,7 @@
 				714913912F960A3400167751 /* DownloadEngineHLS.swift */,
 				7149138F2F960A1E00167751 /* DownloadEngineDASH.swift */,
 				7149138D2F9609F900167751 /* DownloadEngineYouTube.swift */,
+				71D415A12F9F00020000A002 /* YouTubeExtractor.swift */,
 				7149138B2F9609E800167751 /* DownloadEngineCurl.swift */,
 				714913892F9609D400167751 /* DownloadEngineAria2.swift */,
 				714913872F96081500167751 /* DownloadEngineUtilities.swift */,
@@ -414,6 +417,7 @@
 				714913962F960B0500167751 /* HLSBridge.swift in Sources */,
 				714913982F960B3800167751 /* Utilities.swift in Sources */,
 				7149138E2F9609FB00167751 /* DownloadEngineYouTube.swift in Sources */,
+				71D415A02F9F00010000A001 /* YouTubeExtractor.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
