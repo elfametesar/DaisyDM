@@ -362,24 +362,38 @@ actor YouTubeExtractor {
         var seenItags = Set<Int>()
         var seenAdaptiveItags = Set<Int>()
 
-        // Prefer the visitorData the browser paired with the captured poToken
-        // — they're bound together. Falls back to scraping the watch page if
-        // we don't have a captured token.
+        // Fetch the watch page once. It gives us two things:
+        //   1. visitorData (needed in client context for the bot gate).
+        //   2. ytInitialPlayerResponse — the same streamingData blob the
+        //      browser would render with. For many videos this *already*
+        //      contains usable URLs and saves us the InnerTube round-trips
+        //      (and the bot gate that comes with them).
+        let scrape = await fetchWatchPage(videoId: videoId, credentials: credentials)
+
+        // Prefer the captured-token visitor over the scraped one — the two
+        // need to match the same session for the token to be valid.
         let visitorData: String?
         if let v = credentials.poTokenVisitor, !v.isEmpty {
             visitorData = v
         } else {
-            // Fetch the watch page to harvest a visitorData token. YouTube's bot
-            // detection treats InnerTube requests as suspicious unless the
-            // client context carries a visitor fingerprint, even when cookies
-            // are valid. ~200ms cost, big lift on bot-gate success rate.
-            visitorData = await fetchVisitorData(videoId: videoId, credentials: credentials)
+            visitorData = scrape.visitorData
         }
 
         let cookieCount = credentials.cookieHeader?.split(separator: ";").count ?? 0
         let hasSapisid = credentials.sapisid != nil
         let hasPoToken = credentials.poToken != nil
-        print("[Daisy] InnerTube extract videoId=\(videoId) cookies=\(cookieCount) sapisid=\(hasSapisid) visitor=\(visitorData != nil) poToken=\(hasPoToken) ua=\(credentials.userAgent?.prefix(40) ?? "<none>")")
+        let watchHasFormats = scrape.playerResponse != nil
+        print("[Daisy] InnerTube extract videoId=\(videoId) cookies=\(cookieCount) sapisid=\(hasSapisid) visitor=\(visitorData != nil) poToken=\(hasPoToken) watchPage=\(watchHasFormats) ua=\(credentials.userAgent?.prefix(40) ?? "<none>")")
+
+        // Watch-page short-circuit: if the embedded ytInitialPlayerResponse
+        // has at least one format with a directly usable URL, we can skip
+        // the InnerTube clients entirely. This is the most reliable path
+        // because the URLs are exactly what the real player would use.
+        if let playerJson = scrape.playerResponse,
+           let info = Self.videoInfoFromPlayerResponse(playerJson, fallbackVideoId: videoId) {
+            print("[Daisy] watch-page short-circuit videoId=\(videoId) formats=\(info.formats.count) adaptive=\(info.adaptiveFormats.count)")
+            return info
+        }
 
         for client in clients {
             do {
@@ -470,12 +484,27 @@ actor YouTubeExtractor {
         return digest.map { String(format: "%02x", $0) }.joined()
     }
 
-    /// Fetches the watch page and pulls out the `visitorData` token that
-    /// `ytcfg.set({...})` advertises. Returns nil on any failure — the
-    /// caller proceeds without a visitor token, which is fine for many
-    /// videos but raises the chance of hitting the bot gate.
-    private func fetchVisitorData(videoId: String, credentials: Credentials) async -> String? {
-        guard let url = URL(string: "https://www.youtube.com/watch?v=\(videoId)") else { return nil }
+    /// Result of fetching and scraping the YouTube watch page. Both fields
+    /// are independently optional — typically `visitorData` succeeds even
+    /// when `playerResponse` is missing (e.g. age-gated videos), and vice
+    /// versa.
+    private struct WatchPageScrape {
+        let visitorData: String?
+        /// The `ytInitialPlayerResponse` JSON object, decoded as a dictionary.
+        /// Contains `videoDetails`, `playabilityStatus`, and (for unauthenticated
+        /// or low-restriction videos) full `streamingData`.
+        let playerResponse: [String: Any]?
+    }
+
+    /// Fetches the watch page once and harvests both the visitorData token
+    /// and `ytInitialPlayerResponse`. The watch page is the most reliable
+    /// source for both — server-side rendering bakes them in based on the
+    /// authenticated cookie session, so a logged-in browser would see the
+    /// same data. Returns whatever it could find; both fields are optional.
+    private func fetchWatchPage(videoId: String, credentials: Credentials) async -> WatchPageScrape {
+        guard let url = URL(string: "https://www.youtube.com/watch?v=\(videoId)&bpctr=9999999999&has_verified=1") else {
+            return WatchPageScrape(visitorData: nil, playerResponse: nil)
+        }
         var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 8)
         req.setValue(credentials.userAgent ?? "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
         if let cookieHeader = credentials.cookieHeader {
@@ -484,27 +513,115 @@ actor YouTubeExtractor {
         req.setValue("text/html,application/xhtml+xml", forHTTPHeaderField: "Accept")
         do {
             let (data, _) = try await URLSession.shared.data(for: req)
-            guard let html = String(data: data, encoding: .utf8) else { return nil }
-            for pattern in [#""visitorData":"([^"]+)""#, #""VISITOR_DATA":"([^"]+)""#] {
-                guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
-                let range = NSRange(html.startIndex..., in: html)
-                if let match = regex.firstMatch(in: html, range: range),
-                   match.numberOfRanges >= 2,
-                   let r = Range(match.range(at: 1), in: html) {
-                    let raw = String(html[r])
-                    // visitorData is unicode-escape-encoded in the HTML
-                    // (\u003D etc.). Replace the common escapes back.
-                    let decoded = raw
-                        .replacingOccurrences(of: "\\u003d", with: "=")
-                        .replacingOccurrences(of: "\\u003D", with: "=")
-                        .replacingOccurrences(of: "\\u0026", with: "&")
-                    return decoded
-                }
+            guard let html = String(data: data, encoding: .utf8) else {
+                return WatchPageScrape(visitorData: nil, playerResponse: nil)
             }
-            return nil
+            let visitor = Self.scrapeVisitorData(from: html)
+            let player = Self.scrapeYtInitialPlayerResponse(from: html)
+            return WatchPageScrape(visitorData: visitor, playerResponse: player)
         } catch {
-            return nil
+            return WatchPageScrape(visitorData: nil, playerResponse: nil)
         }
+    }
+
+    private static func scrapeVisitorData(from html: String) -> String? {
+        for pattern in [#""visitorData":"([^"]+)""#, #""VISITOR_DATA":"([^"]+)""#] {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+            let range = NSRange(html.startIndex..., in: html)
+            if let match = regex.firstMatch(in: html, range: range),
+               match.numberOfRanges >= 2,
+               let r = Range(match.range(at: 1), in: html) {
+                let raw = String(html[r])
+                return raw
+                    .replacingOccurrences(of: "\\u003d", with: "=")
+                    .replacingOccurrences(of: "\\u003D", with: "=")
+                    .replacingOccurrences(of: "\\u0026", with: "&")
+            }
+        }
+        return nil
+    }
+
+    /// Pulls the `ytInitialPlayerResponse` JSON out of the watch page HTML.
+    /// Walks the JSON literal byte-by-byte tracking string state and brace
+    /// depth so we don't get fooled by nested `}` characters in encoded
+    /// strings (a regex `}` match would truncate the JSON).
+    private static func scrapeYtInitialPlayerResponse(from html: String) -> [String: Any]? {
+        let markers = [
+            "var ytInitialPlayerResponse = ",
+            "ytInitialPlayerResponse = ",
+            "ytInitialPlayerResponse=",
+        ]
+        for marker in markers {
+            guard let markerRange = html.range(of: marker) else { continue }
+            let after = html[markerRange.upperBound...]
+            guard let openIndex = after.firstIndex(of: "{") else { continue }
+            // Walk forward tracking depth, respecting JSON string escapes.
+            var depth = 0
+            var inString = false
+            var escape = false
+            var endIndex: String.Index?
+            var i = openIndex
+            while i < after.endIndex {
+                let ch = after[i]
+                if escape {
+                    escape = false
+                } else if inString {
+                    if ch == "\\" { escape = true }
+                    else if ch == "\"" { inString = false }
+                } else {
+                    if ch == "\"" { inString = true }
+                    else if ch == "{" { depth += 1 }
+                    else if ch == "}" {
+                        depth -= 1
+                        if depth == 0 { endIndex = after.index(after: i); break }
+                    }
+                }
+                i = after.index(after: i)
+            }
+            guard let end = endIndex else { continue }
+            let jsonText = String(after[openIndex..<end])
+            guard let data = jsonText.data(using: .utf8) else { continue }
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                return json
+            }
+        }
+        return nil
+    }
+
+    /// Builds a YouTubeVideoInfo from a parsed `ytInitialPlayerResponse`
+    /// dictionary. Returns nil if there's no usable streamingData (e.g.
+    /// age-gated, geo-blocked, or sign-in-required video). When this
+    /// returns a value, we can skip the InnerTube round-trips entirely.
+    private static func videoInfoFromPlayerResponse(_ json: [String: Any], fallbackVideoId: String) -> YouTubeVideoInfo? {
+        let videoDetails = json["videoDetails"] as? [String: Any] ?? [:]
+        let title = (videoDetails["title"] as? String) ?? ""
+        let author = videoDetails["author"] as? String
+        let lengthString = videoDetails["lengthSeconds"] as? String
+        let lengthInt = videoDetails["lengthSeconds"] as? Int
+        let durationSeconds = lengthInt ?? Int(lengthString ?? "")
+        let id = (videoDetails["videoId"] as? String) ?? fallbackVideoId
+
+        guard let streamingData = json["streamingData"] as? [String: Any] else { return nil }
+        let formats = (streamingData["formats"] as? [[String: Any]] ?? []).compactMap { Self.parseFormat($0) }
+        let adaptive = (streamingData["adaptiveFormats"] as? [[String: Any]] ?? []).compactMap { Self.parseFormat($0) }
+
+        // Reject if nothing has a directly usable URL (i.e. all formats are
+        // signature-cipher protected and we don't have a decryptor). The
+        // caller will fall through to the InnerTube clients in that case.
+        let anyUsable =
+            formats.contains(where: { $0.hasUsableUrl }) ||
+            adaptive.contains(where: { $0.hasUsableUrl })
+        guard anyUsable else { return nil }
+
+        return YouTubeVideoInfo(
+            videoId: id,
+            title: title.isEmpty ? "YouTube Video" : title,
+            author: author,
+            durationSeconds: durationSeconds,
+            formats: formats,
+            adaptiveFormats: adaptive,
+            sourceClient: "WATCH_PAGE"
+        )
     }
 
     private func fetch(videoId: String, client: ClientContext, credentials: Credentials, visitorData: String?) async throws -> YouTubeVideoInfo {

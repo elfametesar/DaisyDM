@@ -142,18 +142,41 @@
     // even with a logged-in cookie session.
     function maybeCapturePoToken(url, body) {
         try {
-            if (!url || !body || !url.includes("/youtubei/v1/player")) return;
-            const json = typeof body === "string" ? JSON.parse(body) : null;
-            if (!json) return;
-            const dims = json.serviceIntegrityDimensions || json.serviceIntegrity;
-            const pot = dims && dims.poToken;
-            const vid = json.videoId;
+            if (!url || !body) return;
+            // Match any youtubei/v1 endpoint; YouTube has shifted token-bearing
+            // payloads between /player, /next, /reel/reel_item_watch, etc.
+            // We accept any of them — the videoId + poToken pair is what we
+            // care about, the endpoint is incidental.
+            if (!url.includes("/youtubei/v1/")) return;
+            try { console.log("[Daisy] yt-fetch", url.split("?")[0]); } catch (_) {}
+            const text = typeof body === "string"
+                ? body
+                : (body && typeof body.toString === "function" ? body.toString() : null);
+            if (!text || text[0] !== "{") return;
+            const json = JSON.parse(text);
+            // YouTube has used several names for this; check all known ones.
+            const dims = json.serviceIntegrityDimensions
+                       || json.serviceIntegrity
+                       || (json.context && json.context.serviceIntegrityDimensions);
+            let pot = dims && (dims.poToken || dims.po_token || dims.token);
+            // Fallback: deep-scan for a poToken anywhere in the body.
+            if (!pot) {
+                const m = text.match(/"poToken"\s*:\s*"([^"]+)"/);
+                if (m) pot = m[1];
+            }
+            const vid = json.videoId
+                     || (json.playbackContext && json.playbackContext.contentPlaybackContext && json.playbackContext.contentPlaybackContext.currentUrl && (json.playbackContext.contentPlaybackContext.currentUrl.match(/[?&]v=([\w-]{6,})/) || [])[1])
+                     || null;
             const vd = json.context && json.context.client && json.context.client.visitorData;
             if (pot && vid) {
                 window.postMessage({ __daisyYtPoToken: pot, __daisyYtPoTokenVideoId: vid, __daisyYtPoTokenVisitor: vd || null }, "*");
                 try { console.log("[Daisy] captured poToken for videoId", vid, "len=" + pot.length); } catch (_) {}
+            } else if (url.includes("/youtubei/v1/player")) {
+                try { console.log("[Daisy] /player body had no poToken; keys:", Object.keys(json).join(",")); } catch (_) {}
             }
-        } catch (_) {}
+        } catch (e) {
+            try { console.log("[Daisy] poToken capture parse error", e && e.message); } catch (_) {}
+        }
     }
 
     const _fetch = window.fetch;
