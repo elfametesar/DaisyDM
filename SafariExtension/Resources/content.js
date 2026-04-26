@@ -274,10 +274,13 @@ function getActualYtFormats() {
 
 function getActualYtFormatsAsync() {
     return new Promise(resolve => {
+        // Has to outlive inject.js's own retry window (~1500ms) so we don't
+        // time out before the page-context harvester finishes waiting for
+        // YouTube's player to finish initializing after an SPA navigation.
         const timeout = setTimeout(() => {
             window.removeEventListener("message", listener);
             resolve(getActualYtFormats());
-        }, 800);
+        }, 2000);
 
         const listener = (e) => {
             if (e.data && e.data.__daisyYtFormatsResp) {
