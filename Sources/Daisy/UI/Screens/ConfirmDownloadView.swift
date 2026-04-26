@@ -551,8 +551,16 @@ struct ConfirmDownloadView: View {
         if let cached = Self.infoCache.object(forKey: key) {
             return cached.info
         }
+        // Forward the cookie + UA captured by the browser extension so the
+        // InnerTube call looks like it's coming from the same logged-in
+        // session — gets us past the "Sign in to confirm you're not a bot"
+        // gate without having to ship a real OAuth flow.
+        let credentials = YouTubeExtractor.Credentials(
+            cookies: request.cookies.isEmpty ? nil : request.cookies,
+            userAgent: request.ua.isEmpty ? nil : request.ua
+        )
         do {
-            let info = try await YouTubeExtractor.shared.extract(url: url)
+            let info = try await YouTubeExtractor.shared.extract(url: url, credentials: credentials)
             Self.infoCache.setObject(CachedYouTubeInfo(info: info), forKey: key)
             return info
         } catch {

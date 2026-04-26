@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 /// A single stream returned by YouTube's InnerTube `/youtubei/v1/player` API.
 /// Either video-only, audio-only (adaptiveFormats) or muxed (formats).
@@ -171,6 +172,24 @@ actor YouTubeExtractor {
     /// 4. TVHTML5_SIMPLY_EMBEDDED_PLAYER — last-ditch for age-gated content.
     /// 5. IOS — kept as a final fallback; some clients reject AVR for music.
     private let clients: [ClientContext] = [
+        // WEB — primary client when the user has a logged-in cookie session.
+        // The browser-style request matches what the cookies authenticate
+        // for, so this is the most reliable authenticated path. When cookies
+        // are absent it usually fails with the "are you a bot" gate and we
+        // fall through to the unauthenticated clients below.
+        ClientContext(
+            name: "WEB",
+            version: "2.20250115.01.00",
+            userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            xClientName: "1",
+            xClientVersion: "2.20250115.01.00",
+            deviceMake: nil,
+            deviceModel: nil,
+            osName: nil,
+            osVersion: nil,
+            androidSdkVersion: nil,
+            apiKey: "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"
+        ),
         ClientContext(
             name: "ANDROID_VR",
             version: "1.60.19",
@@ -238,16 +257,49 @@ actor YouTubeExtractor {
         )
     ]
 
-    /// Walk the configured clients in order. Merge usable formats from every
-    /// client that responds — iOS often has more resolutions, Android often
-    /// reports filesize for older itags, TV embedded sometimes plays content
-    /// the others won't. The merged result is what we hand back.
-    func extract(url: URL) async throws -> YouTubeVideoInfo {
-        let videoId = try Self.parseVideoId(url)
-        return try await extract(videoId: videoId)
+    /// Optional credentials harvested from the user's browser session.
+    /// When present, we forward them to InnerTube so the request looks
+    /// like it came from the same logged-in session, which is what gets
+    /// past YouTube's "Sign in to confirm you're not a bot" gate.
+    struct Credentials: Sendable {
+        let cookies: String?
+        let userAgent: String?
+
+        var isEmpty: Bool {
+            (cookies?.isEmpty ?? true) && (userAgent?.isEmpty ?? true)
+        }
+
+        /// Reads SAPISID (or __Secure-3PAPISID as a fallback) from a raw
+        /// "k=v; k=v" cookie blob. YouTube web auth signs API requests with
+        /// a SHA-1 of `<unix> <sapisid> <origin>` in the Authorization
+        /// header, so we extract it here for callers that need it.
+        var sapisid: String? {
+            guard let cookies = cookies, !cookies.isEmpty else { return nil }
+            let pairs = cookies.split(separator: ";").map { $0.trimmingCharacters(in: .whitespaces) }
+            for p in pairs {
+                if p.hasPrefix("SAPISID=") {
+                    return String(p.dropFirst("SAPISID=".count))
+                }
+            }
+            for p in pairs {
+                if p.hasPrefix("__Secure-3PAPISID=") {
+                    return String(p.dropFirst("__Secure-3PAPISID=".count))
+                }
+            }
+            return nil
+        }
     }
 
-    func extract(videoId: String) async throws -> YouTubeVideoInfo {
+    /// Walk the configured clients in order. Merge usable formats from every
+    /// client that responds. Credentials, when present, are forwarded to each
+    /// request so an authenticated cookie session bypasses the unauthenticated
+    /// "are you a bot" challenge.
+    func extract(url: URL, credentials: Credentials = .init(cookies: nil, userAgent: nil)) async throws -> YouTubeVideoInfo {
+        let videoId = try Self.parseVideoId(url)
+        return try await extract(videoId: videoId, credentials: credentials)
+    }
+
+    func extract(videoId: String, credentials: Credentials = .init(cookies: nil, userAgent: nil)) async throws -> YouTubeVideoInfo {
         var lastError: Error?
         var merged: YouTubeVideoInfo?
         var seenItags = Set<Int>()
@@ -255,7 +307,7 @@ actor YouTubeExtractor {
 
         for client in clients {
             do {
-                let info = try await fetch(videoId: videoId, client: client)
+                let info = try await fetch(videoId: videoId, client: client, credentials: credentials)
                 if merged == nil {
                     merged = info
                     seenItags = Set(info.formats.map { $0.itag })
@@ -325,7 +377,24 @@ actor YouTubeExtractor {
         throw YouTubeExtractorError.missingVideoId
     }
 
-    private func fetch(videoId: String, client: ClientContext) async throws -> YouTubeVideoInfo {
+    /// Builds the `Authorization: SAPISIDHASH <ts>_<sha1(ts " " sapisid " " origin)>`
+    /// header that the YouTube web client sends on signed-in InnerTube calls.
+    /// Returns nil if the SAPISID is empty.
+    static func sapisidHash(sapisid: String, origin: String) -> String? {
+        guard !sapisid.isEmpty else { return nil }
+        let ts = Int(Date().timeIntervalSince1970)
+        let payload = "\(ts) \(sapisid) \(origin)"
+        guard let data = payload.data(using: .utf8) else { return nil }
+        let hex = sha1Hex(data)
+        return "SAPISIDHASH \(ts)_\(hex)"
+    }
+
+    private static func sha1Hex(_ data: Data) -> String {
+        let digest = Insecure.SHA1.hash(data: data)
+        return digest.map { String(format: "%02x", $0) }.joined()
+    }
+
+    private func fetch(videoId: String, client: ClientContext, credentials: Credentials) async throws -> YouTubeVideoInfo {
         var endpointString = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false"
         if let key = client.apiKey, !key.isEmpty {
             endpointString += "&key=\(key)"
@@ -337,11 +406,35 @@ actor YouTubeExtractor {
         var req = URLRequest(url: endpoint, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 20)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.setValue(client.userAgent, forHTTPHeaderField: "User-Agent")
+        // Web-family clients (WEB_*, MWEB) need the *browser* user agent for
+        // the cookie session to remain valid. Mobile/TV clients keep their
+        // own UA — switching them to Safari/Chrome can itself trigger the
+        // bot challenge.
+        let webFamily = client.name.hasPrefix("WEB") || client.name == "MWEB"
+        if webFamily, let browserUA = credentials.userAgent, !browserUA.isEmpty {
+            req.setValue(browserUA, forHTTPHeaderField: "User-Agent")
+        } else {
+            req.setValue(client.userAgent, forHTTPHeaderField: "User-Agent")
+        }
         req.setValue(client.xClientName, forHTTPHeaderField: "X-YouTube-Client-Name")
         req.setValue(client.xClientVersion, forHTTPHeaderField: "X-YouTube-Client-Version")
         req.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
         req.setValue("https://www.youtube.com", forHTTPHeaderField: "Referer")
+
+        // Forward the user's authenticated cookie session for any client.
+        // The "Sign in to confirm you're not a bot" gate goes away as soon
+        // as YouTube sees a logged-in cookie set on the request.
+        if let cookies = credentials.cookies, !cookies.isEmpty {
+            req.setValue(cookies, forHTTPHeaderField: "Cookie")
+            // SAPISIDHASH is required for signed XHR auth on web-family
+            // clients. Other clients don't strictly need it but accepting
+            // it doesn't hurt and may unlock a few more videos.
+            if let sapisid = credentials.sapisid, let auth = Self.sapisidHash(sapisid: sapisid, origin: "https://www.youtube.com") {
+                req.setValue(auth, forHTTPHeaderField: "Authorization")
+                req.setValue("https://www.youtube.com", forHTTPHeaderField: "X-Origin")
+                req.setValue("0", forHTTPHeaderField: "X-Goog-AuthUser")
+            }
+        }
 
         var clientCtx: [String: Any] = [
             "clientName": client.name,

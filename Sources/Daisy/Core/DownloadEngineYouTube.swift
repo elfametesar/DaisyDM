@@ -59,9 +59,12 @@ extension DownloadEngine {
 
         let url = await MainActor.run { item.url }
         let formatQuery = await MainActor.run { item.youtubeQuality }
+        let itemCookies = await MainActor.run { item.cookies }
+        let itemUserAgent = await MainActor.run { item.userAgent }
 
         do {
-            let info = try await YouTubeExtractor.shared.extract(url: url)
+            let credentials = YouTubeExtractor.Credentials(cookies: itemCookies, userAgent: itemUserAgent)
+            let info = try await YouTubeExtractor.shared.extract(url: url, credentials: credentials)
             let selection = YouTubeFormatSelection.parse(formatQuery)
             let resolved = try selection.resolve(in: info)
             let isDownloading = await MainActor.run { item.status == .downloading }
