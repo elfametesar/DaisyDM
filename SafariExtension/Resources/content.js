@@ -665,10 +665,62 @@ function getExtFromUrl(url) {
 }
 
 function extractFilename(url, el) {
+    // Try URL-derived name first.
+    let urlName = "download";
     try {
         const parts = new URL(url).pathname.split("/");
-        return decodeURIComponent(parts[parts.length - 1]) || "download";
-    } catch { return "download"; }
+        urlName = decodeURIComponent(parts[parts.length - 1]) || "download";
+    } catch {}
+
+    // If the URL-derived name is clearly generic (no extension, or is
+    // an API endpoint like `/content`, `/download`, `/blob/...`), look
+    // for a real filename in the clicked element's surroundings. App-
+    // style pages (Claude, Notion, Gmail, Dropbox) render the real
+    // file name as text next to the download button.
+    const looksGeneric = !urlName ||
+        urlName === "download" || urlName === "content" ||
+        urlName === "attachment" || urlName === "file" ||
+        !/\.[0-9a-z]{1,6}$/i.test(urlName);
+
+    if (looksGeneric && el instanceof Element) {
+        const dom = scrapeFilenameFromDOM(el);
+        if (dom) return dom;
+    }
+    return urlName || "download";
+}
+
+/**
+ * Walk up from a clicked element looking for a text node or attribute
+ * that looks like "name.ext" — the pattern every app UI uses for file
+ * labels. Checks common `aria-label` / `title` / `data-filename`
+ * attributes before falling back to text content. Stops at 8 ancestors
+ * to avoid drifting into unrelated UI regions.
+ */
+function scrapeFilenameFromDOM(startEl) {
+    const filenameRegex = /([\w\-. ()\[\]!@#$%^&+=,;'`~]+\.[a-z0-9]{1,6})(?:\s|$)/i;
+    let el = startEl;
+    for (let i = 0; i < 8 && el; i++, el = el.parentElement) {
+        const attrs = [
+            el.getAttribute('data-filename'),
+            el.getAttribute('data-file-name'),
+            el.getAttribute('aria-label'),
+            el.getAttribute('title'),
+            el.getAttribute('alt'),
+        ];
+        for (const a of attrs) {
+            if (!a) continue;
+            const m = a.match(filenameRegex);
+            if (m) return m[1].trim();
+        }
+        // Only peek at the direct text of this container (not deep
+        // descendant text across unrelated siblings).
+        const text = el.innerText || el.textContent || '';
+        if (text && text.length < 300) {
+            const m = text.match(filenameRegex);
+            if (m) return m[1].trim();
+        }
+    }
+    return null;
 }
 
 function nativeFallback(url, filename) {

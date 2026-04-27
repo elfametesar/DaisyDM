@@ -599,6 +599,55 @@ function getExtFromUrl(url) {
     } catch { return '.mp4'; }
 }
 
+function extractFilename(url, el) {
+    let urlName = "download";
+    try {
+        const parts = new URL(url).pathname.split("/");
+        urlName = decodeURIComponent(parts[parts.length - 1]) || "download";
+    } catch {}
+
+    const looksGeneric = !urlName ||
+        urlName === "download" || urlName === "content" ||
+        urlName === "attachment" || urlName === "file" ||
+        !/\.[0-9a-z]{1,6}$/i.test(urlName);
+
+    if (looksGeneric && el instanceof Element) {
+        const dom = scrapeFilenameFromDOM(el);
+        if (dom) return dom;
+    }
+    return urlName || "download";
+}
+
+/**
+ * Walk up from a clicked element looking for a text node or attribute
+ * that looks like "name.ext" — the pattern every app UI uses for file
+ * labels (Claude, Notion, Gmail, Dropbox ...).
+ */
+function scrapeFilenameFromDOM(startEl) {
+    const filenameRegex = /([\w\-. ()\[\]!@#$%^&+=,;'`~]+\.[a-z0-9]{1,6})(?:\s|$)/i;
+    let el = startEl;
+    for (let i = 0; i < 8 && el; i++, el = el.parentElement) {
+        const attrs = [
+            el.getAttribute('data-filename'),
+            el.getAttribute('data-file-name'),
+            el.getAttribute('aria-label'),
+            el.getAttribute('title'),
+            el.getAttribute('alt'),
+        ];
+        for (const a of attrs) {
+            if (!a) continue;
+            const m = a.match(filenameRegex);
+            if (m) return m[1].trim();
+        }
+        const text = el.innerText || el.textContent || '';
+        if (text && text.length < 300) {
+            const m = text.match(filenameRegex);
+            if (m) return m[1].trim();
+        }
+    }
+    return null;
+}
+
 function nativeFallback(url, filename) {
   const a = document.createElement('a'); a.href = url;
   if (filename) a.download = filename;

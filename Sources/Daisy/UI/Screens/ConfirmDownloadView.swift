@@ -487,7 +487,22 @@ struct ConfirmDownloadView: View {
                 await MainActor.run {
                     var foundName: String? = nil
                     if let disposition = httpResp.value(forHTTPHeaderField: "Content-Disposition") ?? httpResp.value(forHTTPHeaderField: "content-disposition") {
-                        if let range = disposition.range(of: "filename=", options: .caseInsensitive) {
+                        // Prefer RFC 5987 `filename*=UTF-8''encoded.ext` over
+                        // the legacy `filename=...` because servers (Claude,
+                        // S3, Google Cloud, etc.) often send both and the
+                        // starred variant is the real, correctly-encoded
+                        // name while the unstarred one is a safe-ASCII
+                        // fallback.
+                        if let starRange = disposition.range(of: "filename*=", options: .caseInsensitive) {
+                            var raw = String(disposition[starRange.upperBound...]).trimmingCharacters(in: .whitespaces)
+                            if let endSemi = raw.firstIndex(of: ";") { raw = String(raw[..<endSemi]) }
+                            raw = raw.trimmingCharacters(in: .init(charactersIn: "\"' \r\n"))
+                            // Strip the `charset''` prefix (e.g. "UTF-8''").
+                            if let sep = raw.range(of: "''") { raw = String(raw[sep.upperBound...]) }
+                            let decoded = raw.removingPercentEncoding ?? raw
+                            if !decoded.isEmpty { foundName = decoded }
+                        }
+                        if foundName == nil, let range = disposition.range(of: "filename=", options: .caseInsensitive) {
                             var fn = String(disposition[range.upperBound...]).trimmingCharacters(in: .whitespaces)
                             if fn.hasPrefix("\"") {
                                 fn = String(fn.dropFirst())
@@ -495,10 +510,11 @@ struct ConfirmDownloadView: View {
                             } else {
                                 if let endSemi = fn.firstIndex(of: ";") { fn = String(fn[..<endSemi]) }
                             }
-                            if !fn.isEmpty { foundName = fn }
+                            let decoded = fn.removingPercentEncoding ?? fn
+                            if !decoded.isEmpty { foundName = decoded }
                         }
                     }
-                    
+
                     if foundName == nil {
                         let finalURL = httpResp.url ?? request.url
                         let lastComponent = finalURL.lastPathComponent.removingPercentEncoding ?? finalURL.lastPathComponent
@@ -506,8 +522,26 @@ struct ConfirmDownloadView: View {
                             foundName = lastComponent
                         }
                     }
-                    
-                    if let fn = foundName, fn != "download", fn != "file" { self.filename = fn }
+
+                    // Bias toward taking the server-provided name whenever
+                    // the current filename is generic — the extension hands
+                    // us a URL-derived placeholder like "content" or
+                    // "download.mp4" for Claude and similar app URLs.
+                    let currentLower = self.filename.lowercased()
+                    let isCurrentGeneric = self.filename.isEmpty
+                        || currentLower == "download"
+                        || currentLower == "download.mp4"
+                        || currentLower == "content"
+                        || currentLower == "content.mp4"
+                        || currentLower == "file"
+                        || currentLower == "file.mp4"
+                        || currentLower == "attachment"
+                        || currentLower == "attachment.mp4"
+                    if let fn = foundName, fn != "download", fn != "file" {
+                        if isCurrentGeneric || self.filename == request.filename {
+                            self.filename = fn
+                        }
+                    }
                     
                     let isHLS = isHLSUrl || ct.contains("mpegurl") || ct.contains("m3u8") || ct.contains("apple.mpegurl")
                     let isDASH = isDASHUrl || ct.contains("dash+xml")
