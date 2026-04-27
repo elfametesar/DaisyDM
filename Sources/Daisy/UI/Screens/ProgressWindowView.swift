@@ -75,11 +75,27 @@ struct ProgressWindowView: View {
         }
         .onReceive(timer) { _ in now = Date() }
         .onChange(of: window) { _, _ in setupWindowSettings() }
+        // Hide the "Hide to Menu Bar" traffic-light button whenever the
+        // download reaches a terminal state — there's nothing to keep
+        // tracking in the tray once the item is failed or completed.
+        .onChange(of: liveItem.status) { _, _ in updateTrayButtonVisibility() }
         // NEW: Triggers every single time the window is focused/reopened, even if it was just hidden
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notif in
             if let obj = notif.object as? NSWindow, obj == window {
                 TrayViewModel.shared.removeFromTray(liveItem.id)
             }
+        }
+    }
+
+    private var canHideToTray: Bool {
+        liveItem.status != .completed && liveItem.status != .failed
+    }
+
+    private func updateTrayButtonVisibility() {
+        guard let win = window else { return }
+        let customId = NSUserInterfaceItemIdentifier("CustomMenuTrafficLight")
+        if let btn = win.standardWindowButton(.zoomButton)?.superview?.subviews.first(where: { $0.identifier == customId }) {
+            btn.isHidden = !canHideToTray
         }
     }
     
@@ -127,7 +143,8 @@ struct ProgressWindowView: View {
         btn.target = btn
         btn.action = #selector(HoverTrafficLightButton.performTrayAction)
         btn.toolTip = "Hide to Menu Bar"
-        
+        btn.isHidden = !canHideToTray
+
         titlebar.addSubview(btn)
     }
     
