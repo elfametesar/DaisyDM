@@ -191,29 +191,17 @@ struct DetailView: View {
     }
     
     private func headersCard(for item: DownloadItem) -> some View {
-        inspectorCard {
-            Text("Headers & Cookies").font(.headline)
-            ScrollView {
-                VStack(spacing: 12) {
-                    if let headers = item.headers, !headers.isEmpty {
-                        ForEach(headers.sorted(by: { $0.key < $1.key }), id: \.key) { key, value in
-                            headerValueRow(label: key.capitalized, systemImage: "text.alignleft", value: value)
-                        }
-                    } else {
-                        if let ua = item.userAgent, !ua.isEmpty {
-                            headerValueRow(label: "User-Agent", systemImage: "text.alignleft", value: ua)
-                        }
-                        if let ref = item.referer, !ref.isEmpty {
-                            headerValueRow(label: "Referer", systemImage: "link", value: ref)
-                        }
-                    }
-                }
-                .padding(.trailing, 8)
-                .padding(.bottom, 8)
-            }
-            .frame(maxHeight: 250)
-            .clipped()
-        }
+        // Snapshot the relevant header-ish fields into plain value types so
+        // the Equatable child view only re-renders when one of them
+        // actually changes — not on every progress tick from the live
+        // DownloadItem @Observable.
+        HeadersCookiesCard(
+            headers: item.headers ?? [:],
+            userAgent: item.userAgent ?? "",
+            referer: item.referer ?? "",
+            cookies: item.cookies ?? ""
+        )
+        .equatable()
     }
 
     private func headerValueRow(label: String, systemImage: String, value: String) -> some View {
@@ -393,5 +381,130 @@ struct TorrentInfoCard: View {
             }.padding(.vertical, 8)
             if f.id != files.last?.id { Divider().opacity(0.5) }
         }
+    }
+}
+
+// MARK: - Headers & Cookies
+
+/// Renders request headers, UA/referer fallbacks, and a compact cookies
+/// summary. Conforms to Equatable and is wrapped with `.equatable()` at
+/// the call site so the whole card is skipped when only the progress /
+/// speed fields on the live DownloadItem change. Without this, the
+/// cookies-summary string was recomputed on every progress tick which
+/// made the detail view visibly lag with large cookie jars.
+struct HeadersCookiesCard: View, Equatable {
+    let headers: [String: String]
+    let userAgent: String
+    let referer: String
+    let cookies: String
+
+    /// Memoised summary of the cookie blob. Computed once on appear and
+    /// again only if `cookies` actually changes (very rare — cookies are
+    /// captured once when the item is created and never updated during
+    /// the download).
+    @State private var cookieSummary: String = ""
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.headers == rhs.headers &&
+        lhs.userAgent == rhs.userAgent &&
+        lhs.referer == rhs.referer &&
+        lhs.cookies == rhs.cookies
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Headers & Cookies").font(.headline)
+            ScrollView {
+                VStack(spacing: 12) {
+                    if !headers.isEmpty {
+                        ForEach(headers.sorted(by: { $0.key < $1.key }), id: \.key) { key, value in
+                            headerValueRow(label: key.capitalized, systemImage: "text.alignleft", value: value)
+                        }
+                    } else {
+                        if !userAgent.isEmpty {
+                            headerValueRow(label: "User-Agent", systemImage: "text.alignleft", value: userAgent)
+                        }
+                        if !referer.isEmpty {
+                            headerValueRow(label: "Referer", systemImage: "link", value: referer)
+                        }
+                    }
+                    if !cookies.isEmpty {
+                        headerValueRow(label: "Cookies", systemImage: "lock.shield", value: cookieSummary.isEmpty ? "…" : cookieSummary)
+                    }
+                }
+                .padding(.trailing, 8)
+                .padding(.bottom, 8)
+            }
+            .frame(maxHeight: 250)
+            .clipped()
+        }
+        .padding(20)
+        .background(Color(NSColor.controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay { RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Color.primary.opacity(0.08), lineWidth: 1) }
+        .shadow(color: Color.black.opacity(0.12), radius: 5, x: 0, y: 2)
+        .task(id: cookies) {
+            let raw = cookies
+            // Parsing runs off the main actor so the UI never stalls even
+            // for megabyte-scale cookie jars.
+            let summary = await Task.detached(priority: .utility) { () -> String in
+                HeadersCookiesCard.formatCookiesForDisplay(raw)
+            }.value
+            await MainActor.run { self.cookieSummary = summary }
+        }
+    }
+
+    private func headerValueRow(label: String, systemImage: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label(label, systemImage: systemImage)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+            ScrollView(.vertical, showsIndicators: true) {
+                Text(value)
+                    .font(.callout)
+                    .foregroundStyle(.primary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(10)
+            }
+            .frame(maxHeight: 80)
+            .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.primary.opacity(0.07), lineWidth: 1))
+        }
+        .padding(14)
+        .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    /// Counts cookies and lists their names. Handles both Netscape jar
+    /// format (what chrome.cookies.getAll → formatNetscapeCookies
+    /// produces) and the `name=value; name=value` header form. Rendering
+    /// the raw jar verbatim was the other big lag source — hundreds of
+    /// tab-separated lines of Text forced SwiftUI into a deep layout.
+    nonisolated static func formatCookiesForDisplay(_ raw: String) -> String {
+        var names: [String] = []
+        if raw.hasPrefix("# Netscape") || raw.contains("\tTRUE\t") || raw.contains("\tFALSE\t") {
+            for line in raw.split(separator: "\n") {
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                if trimmed.isEmpty || trimmed.hasPrefix("#") { continue }
+                let cols = trimmed.components(separatedBy: "\t")
+                if cols.count >= 6 { names.append(cols[5]) }
+            }
+        } else {
+            for chunk in raw.split(separator: ";") {
+                let pair = chunk.trimmingCharacters(in: .whitespaces)
+                if let eq = pair.firstIndex(of: "=") {
+                    names.append(String(pair[..<eq]).trimmingCharacters(in: .whitespaces))
+                }
+            }
+        }
+        names = names.filter { !$0.isEmpty }
+        if names.isEmpty { return "(cookie jar present)" }
+        let header = "\(names.count) cookie\(names.count == 1 ? "" : "s")"
+        // Cap the visible name list so the Text doesn't blow up into a
+        // 50 KB string for sites like YouTube that ship ~200 cookies.
+        let shown = names.prefix(40).joined(separator: ", ")
+        if names.count > 40 { return "\(header) — \(shown), …" }
+        return "\(header) — \(shown)"
     }
 }
