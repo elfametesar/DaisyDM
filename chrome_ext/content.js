@@ -954,7 +954,7 @@ document.createElement = function(tag, ...args) {
             .daisydm-overlay-container.scroll-hidden { opacity: 0 !important; pointer-events: none !important; transform: translateY(12px) scale(0.95) !important; visibility: hidden !important; }
             .daisydm-overlay-header { padding: 12px 16px; font-size: 14px; font-weight: 500; cursor: pointer; display: flex; align-items: center; gap: 10px; color: #f4f4f5; user-select: none; -webkit-user-select: none; }
             .daisydm-header-icon { font-size: 15px; line-height: 1; flex-shrink: 0; }
-            img.daisydm-header-icon { width: 26px; height: 26px; object-fit: contain; -webkit-user-drag: none; user-drag: none; }
+            img.daisydm-header-icon { width: 32px; height: 32px; margin-right: -10px; margin-top: 1px; object-fit: contain; -webkit-user-drag: none; user-drag: none; }
             .daisydm-header-label { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
             .daisydm-chevron { font-size: 10px; color: #8e8e93; flex-shrink: 0; transition: transform 0.2s ease; }
             .daisydm-overlay-container.expanded .daisydm-chevron { transform: rotate(180deg); }

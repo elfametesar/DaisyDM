@@ -167,8 +167,11 @@ struct ConfirmDownloadView: View {
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(.primary)
                     TextField("filename", text: $filename)
-                        .textFieldStyle(.roundedBorder)
+                        .textFieldStyle(.plain)
                         .font(.system(size: 11))
+                        .padding(6)
+                        .background(Color(NSColor.controlBackgroundColor).opacity(0.4), in: RoundedRectangle(cornerRadius: 6))
+                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color(NSColor.separatorColor).opacity(0.5), lineWidth: 1))
                 }
                 
                 // 2. Source URL
@@ -393,7 +396,7 @@ struct ConfirmDownloadView: View {
                     
                     onConfirm(r, destination, connections)
                 }) {
-                    Label("Download", systemImage: "arrow.down.circle")
+                    Label("Download", systemImage: "arrow.down")
                 }
                 .keyboardShortcut(.return)
                 .buttonStyle(ActionButtonStyle(prominent: true, hex: accentColorHex))
