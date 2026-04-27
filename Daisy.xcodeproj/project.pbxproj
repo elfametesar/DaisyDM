@@ -11,6 +11,7 @@
 		0A1B2C3D4E5F60718293A402 /* content.js in Resources */ = {isa = PBXBuildFile; fileRef = 0A1B2C3D4E5F60718293A302 /* content.js */; };
 		0A1B2C3D4E5F60718293A403 /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = 0A1B2C3D4E5F60718293A303 /* manifest.json */; };
 		0A1B2C3D4E5F60718293A404 /* popup.html in Resources */ = {isa = PBXBuildFile; fileRef = 0A1B2C3D4E5F60718293A304 /* popup.html */; };
+		0A1B2C3D4E5F60718293A4B0 /* BundleIcon.png in Resources */ = {isa = PBXBuildFile; fileRef = 0A1B2C3D4E5F60718293A3B0 /* BundleIcon.png */; };
 		53F624789BAF9FB2DB63EDBB /* SafariExtensionHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02FA831F84964C6E30740ED4 /* SafariExtensionHandler.swift */; };
 		712C631C2F8A952D00504612 /* LocalServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 712C631B2F8A952800504612 /* LocalServer.swift */; };
 		714070032F88B43700875649 /* popup.js in Resources */ = {isa = PBXBuildFile; fileRef = 714070022F88B43400875649 /* popup.js */; };
@@ -89,6 +90,7 @@
 		0A1B2C3D4E5F60718293A302 /* content.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = content.js; sourceTree = "<group>"; };
 		0A1B2C3D4E5F60718293A303 /* manifest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = manifest.json; sourceTree = "<group>"; };
 		0A1B2C3D4E5F60718293A304 /* popup.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = popup.html; sourceTree = "<group>"; };
+		0A1B2C3D4E5F60718293A3B0 /* BundleIcon.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = BundleIcon.png; sourceTree = "<group>"; };
 		17671D7F8AB5C98F683D0703 /* URLSchemeHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = URLSchemeHandler.swift; sourceTree = "<group>"; };
 		2238E812354119FCD1EFFAC1 /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
 		24DFD2C04C85C517992B2C81 /* DownloadDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadDetailView.swift; sourceTree = "<group>"; };
@@ -163,6 +165,7 @@
 				0A1B2C3D4E5F60718293A303 /* manifest.json */,
 				0A1B2C3D4E5F60718293A304 /* popup.html */,
 				71C764422F9C6F0A00972F96 /* inject.js */,
+				0A1B2C3D4E5F60718293A3B0 /* BundleIcon.png */,
 			);
 			name = Resources;
 			path = SafariExtension/Resources;
@@ -364,6 +367,7 @@
 				0A1B2C3D4E5F60718293A403 /* manifest.json in Resources */,
 				0A1B2C3D4E5F60718293A404 /* popup.html in Resources */,
 				71C764432F9C6F0A00972F96 /* inject.js in Resources */,
+				0A1B2C3D4E5F60718293A4B0 /* BundleIcon.png in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -22,14 +22,19 @@
   }
 
   .logo {
-    width: 32px;
-    height: 32px;
-    background: linear-gradient(135deg, #0a84ff, #5e5ce6);
-    border-radius: 8px;
+    width: 36px;
+    height: 36px;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 16px;
+    flex-shrink: 0;
+  }
+
+  .logo img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    -webkit-user-drag: none;
   }
 
   .title { font-size: 15px; font-weight: 600; }
@@ -135,7 +140,7 @@
 </head>
 <body>
   <div class="header">
-    <div class="logo">↓</div>
+    <div class="logo"><img src="BundleIcon.png" alt="Daisy"></div>
     <div>
       <div class="title">Dispatch</div>
       <div class="subtitle">Download Manager</div>
