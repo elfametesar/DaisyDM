@@ -181,9 +181,14 @@ struct ProgressWindowView: View {
     var statusTab: some View {
         VStack(spacing: 0) {
             HStack(alignment: .top, spacing: 14) {
-                let ext  = (liveItem.filename as NSString).pathExtension
-                let type = UTType(filenameExtension: ext) ?? .data
-                Image(nsImage: NSWorkspace.shared.icon(for: type))
+                let isBundle = liveItem.type == .torrent || liveItem.type == .batch
+                let progressIcon: NSImage = {
+                    if isBundle { return SharedIconCache.shared.bundleIcon(size: 40) }
+                    let ext  = (liveItem.filename as NSString).pathExtension
+                    let type = UTType(filenameExtension: ext) ?? .data
+                    return NSWorkspace.shared.icon(for: type)
+                }()
+                Image(nsImage: progressIcon)
                     .resizable().frame(width: 40, height: 40)
 
                 VStack(alignment: .leading, spacing: 3) {

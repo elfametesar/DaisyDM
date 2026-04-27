@@ -168,13 +168,15 @@ struct DetailView: View {
     private func sourceIcon(for item: DownloadItem) -> some View {
         ZStack {
             RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.primary.opacity(0.06))
-            let ext = (item.filename as NSString).pathExtension
-            if !ext.isEmpty, let utType = UTType(filenameExtension: ext) {
-                Image(nsImage: NSWorkspace.shared.icon(for: utType)).resizable().scaledToFit().frame(width: 28, height: 28)
-            } else if item.type == .torrent {
-                Image(nsImage: NSWorkspace.shared.icon(for: UTType(filenameExtension: "torrent") ?? .data)).resizable().scaledToFit().frame(width: 28, height: 28)
+            if item.type == .torrent || item.type == .batch {
+                Image(nsImage: SharedIconCache.shared.bundleIcon(size: 36)).resizable().scaledToFit().frame(width: 28, height: 28)
             } else {
-                Image(nsImage: NSWorkspace.shared.icon(for: .data)).resizable().scaledToFit().frame(width: 28, height: 28)
+                let ext = (item.filename as NSString).pathExtension
+                if !ext.isEmpty, let utType = UTType(filenameExtension: ext) {
+                    Image(nsImage: NSWorkspace.shared.icon(for: utType)).resizable().scaledToFit().frame(width: 28, height: 28)
+                } else {
+                    Image(nsImage: NSWorkspace.shared.icon(for: .data)).resizable().scaledToFit().frame(width: 28, height: 28)
+                }
             }
         }.frame(width: 52, height: 52)
     }

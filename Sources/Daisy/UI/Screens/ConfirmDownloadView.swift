@@ -91,6 +91,14 @@ struct ConfirmDownloadView: View {
     }
 
     private var fileIcon: NSImage {
+        // For magnets and .torrent files show the composite document-with-
+        // bundle icon since these are multi-file containers, not single
+        // files of a specific UTType.
+        let isMagnet = request.url.scheme?.lowercased() == "magnet"
+        let isTorrentFile = request.url.pathExtension.lowercased() == "torrent"
+        if isMagnet || isTorrentFile {
+            return SharedIconCache.shared.bundleIcon(size: 40)
+        }
         let ext  = (filename as NSString).pathExtension
         let type = UTType(filenameExtension: ext) ?? .data
         return NSWorkspace.shared.icon(for: type)

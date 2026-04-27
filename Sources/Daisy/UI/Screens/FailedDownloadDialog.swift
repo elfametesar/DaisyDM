@@ -20,9 +20,15 @@ struct FailedDownloadDialog: View {
             // Hero
             HStack(alignment: .top, spacing: 20) {
                 ZStack(alignment: .bottomTrailing) {
-                    let ext  = (item.filename as NSString).pathExtension
-                    let type = UTType(filenameExtension: ext) ?? .data
-                    Image(nsImage: NSWorkspace.shared.icon(for: type))
+                    let failedIcon: NSImage = {
+                        if item.type == .torrent || item.type == .batch {
+                            return SharedIconCache.shared.bundleIcon(size: 64)
+                        }
+                        let ext  = (item.filename as NSString).pathExtension
+                        let type = UTType(filenameExtension: ext) ?? .data
+                        return NSWorkspace.shared.icon(for: type)
+                    }()
+                    Image(nsImage: failedIcon)
                         .resizable().scaledToFit().frame(width: 64, height: 64)
 
                     Image(systemName: "xmark.circle.fill")
