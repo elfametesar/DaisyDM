@@ -91,11 +91,21 @@ struct ProgressWindowView: View {
         liveItem.status != .completed && liveItem.status != .failed
     }
 
+    /// Adds or removes the custom "Hide to Menu Bar" traffic-light
+    /// button based on the current download status. Using
+    /// removeFromSuperview (rather than isHidden) is important so the
+    /// view doesn't keep occupying the empty slot next to the zoom
+    /// button — that's what made the title bar look offset.
     private func updateTrayButtonVisibility() {
         guard let win = window else { return }
-        let customId = NSUserInterfaceItemIdentifier("CustomMenuTrafficLight")
-        if let btn = win.standardWindowButton(.zoomButton)?.superview?.subviews.first(where: { $0.identifier == customId }) {
-            btn.isHidden = !canHideToTray
+        if canHideToTray {
+            injectTrafficLight(into: win)
+        } else {
+            let customId = NSUserInterfaceItemIdentifier("CustomMenuTrafficLight")
+            if let titlebar = win.standardWindowButton(.zoomButton)?.superview,
+               let btn = titlebar.subviews.first(where: { $0.identifier == customId }) {
+                btn.removeFromSuperview()
+            }
         }
     }
     
@@ -117,11 +127,15 @@ struct ProgressWindowView: View {
                 win.level = .floating
             }
             
-            injectTrafficLight(into: win)
+            updateTrayButtonVisibility()
         }
     }
     
     private func injectTrafficLight(into win: NSWindow) {
+        // Don't add the button at all in terminal states — there's
+        // nothing to keep tracking in the tray for a
+        // failed/completed item.
+        guard canHideToTray else { return }
         guard let zoomBtn = win.standardWindowButton(.zoomButton),
               let titlebar = zoomBtn.superview else { return }
                
@@ -143,7 +157,6 @@ struct ProgressWindowView: View {
         btn.target = btn
         btn.action = #selector(HoverTrafficLightButton.performTrayAction)
         btn.toolTip = "Hide to Menu Bar"
-        btn.isHidden = !canHideToTray
 
         titlebar.addSubview(btn)
     }

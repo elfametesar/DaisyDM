@@ -230,11 +230,51 @@ function isLikelyDownloadUrl(urlStr) {
     }
 }
 
+// Tracks the most recent user gesture on a download-like element so that
+// we can recover a real filename when a site (Claude, Notion, Drive, …)
+// fetches the file and calls a synthetic `<a download>` whose element
+// is detached from the DOM before we inspect it. The scraper below only
+// walks ancestors of the clicked element — that's useless once the
+// element has been removed.
+let lastDownloadClickContext = { filename: null, at: 0 };
+
+function _rememberDownloadClick(target) {
+    if (!target || !(target instanceof Element)) return;
+    // Walk up a short chain — the user may have clicked on an icon
+    // inside the download button.
+    let el = target;
+    for (let i = 0; i < 4 && el; i++, el = el.parentElement) {
+        const candidate = scrapeFilenameFromDOM(el);
+        if (candidate) {
+            lastDownloadClickContext = { filename: candidate, at: Date.now() };
+            return;
+        }
+    }
+}
+
+// Capture phase so we see the click before any site-level handler can
+// stop propagation. `pointerdown` is also covered because some UIs
+// (Claude, Linear) download on pointerdown rather than click.
+document.addEventListener('pointerdown', (e) => { _rememberDownloadClick(e.target); }, true);
+document.addEventListener('click', (e) => { _rememberDownloadClick(e.target); }, true);
+
+function _recentClickFilename() {
+    if (!lastDownloadClickContext.filename) return null;
+    // 4 s is long enough for a fetch → blob → click cycle but short
+    // enough that we never reuse an old click's context for a fresh
+    // user gesture.
+    if (Date.now() - lastDownloadClickContext.at > 4000) return null;
+    return lastDownloadClickContext.filename;
+}
+
 window.addEventListener("message", (e) => {
     if (e.data && e.data.__daisyTriggerDownload) {
         if (shouldBypass(true)) return;
-        const filename = e.data.__daisyFilename || extractFilename(e.data.__daisyTriggerDownload);
-        sendToDispatch(e.data.__daisyTriggerDownload, filename);
+        const url = e.data.__daisyTriggerDownload;
+        let filename = e.data.__daisyFilename;
+        if (!filename) filename = _recentClickFilename();
+        if (!filename) filename = extractFilename(url);
+        sendToDispatch(url, filename);
         return;
     }
 
@@ -693,32 +733,74 @@ function extractFilename(url, el) {
  * Walk up from a clicked element looking for a text node or attribute
  * that looks like "name.ext" — the pattern every app UI uses for file
  * labels. Checks common `aria-label` / `title` / `data-filename`
- * attributes before falling back to text content. Stops at 8 ancestors
- * to avoid drifting into unrelated UI regions.
+ * attributes, descendant nodes within each ancestor, and text content.
+ * Stops at semantic boundaries (dialog, listitem, article) so we don't
+ * drift across unrelated parts of the page.
  */
 function scrapeFilenameFromDOM(startEl) {
-    const filenameRegex = /([\w\-. ()\[\]!@#$%^&+=,;'`~]+\.[a-z0-9]{1,6})(?:\s|$)/i;
-    let el = startEl;
-    for (let i = 0; i < 8 && el; i++, el = el.parentElement) {
-        const attrs = [
-            el.getAttribute('data-filename'),
-            el.getAttribute('data-file-name'),
-            el.getAttribute('aria-label'),
-            el.getAttribute('title'),
-            el.getAttribute('alt'),
-        ];
-        for (const a of attrs) {
-            if (!a) continue;
-            const m = a.match(filenameRegex);
+    // Permissive name charset (anything that isn't a filesystem
+    // separator or wildly unusual) followed by a 1–6 char extension.
+    // No trailing word-boundary assertion so we match inside longer
+    // aria-labels like "Download filename.pdf, 3 pages".
+    const filenameRegex = /([^\/\\<>|"?*\s][^\/\\<>|"?*]{0,150}\.[a-z0-9]{1,6})\b/i;
+    const ATTR_NAMES = [
+        'data-filename', 'data-file-name', 'data-name',
+        'aria-label', 'title', 'alt',
+        'download',
+    ];
+    const BOUNDARY = 'dialog,[role="dialog"],[role="listitem"],article,[data-testid*="attachment" i],[data-testid*="file" i]';
+
+    const tryAttrs = (el) => {
+        for (const name of ATTR_NAMES) {
+            const v = el.getAttribute && el.getAttribute(name);
+            if (!v) continue;
+            const m = v.match(filenameRegex);
             if (m) return m[1].trim();
         }
-        // Only peek at the direct text of this container (not deep
-        // descendant text across unrelated siblings).
-        const text = el.innerText || el.textContent || '';
-        if (text && text.length < 300) {
+        return null;
+    };
+
+    const tryDescendants = (root) => {
+        // Search obvious filename-bearing nodes inside the container.
+        if (!root.querySelectorAll) return null;
+        const candidates = root.querySelectorAll(
+            '[data-filename],[data-file-name],[data-name],' +
+            '[class*="filename" i],[class*="file-name" i],[class*="fileName"],' +
+            '[aria-label],[title]'
+        );
+        for (const c of candidates) {
+            const a = tryAttrs(c);
+            if (a) return a;
+            const t = (c.innerText || c.textContent || '').trim();
+            if (t && t.length < 240) {
+                const m = t.match(filenameRegex);
+                if (m) return m[1].trim();
+            }
+        }
+        return null;
+    };
+
+    let el = startEl;
+    for (let i = 0; i < 16 && el; i++, el = el.parentElement) {
+        const a = tryAttrs(el);
+        if (a) return a;
+        // Peek at the container's text first — cheap and usually
+        // sufficient for file rows in Claude / Notion / Drive.
+        const text = (el.innerText || el.textContent || '').trim();
+        if (text && text.length < 400) {
             const m = text.match(filenameRegex);
             if (m) return m[1].trim();
         }
+        const atBoundary = el.matches && el.matches(BOUNDARY);
+        // Full descendant sweep once we've reached a plausible
+        // container (3+ levels up) or a semantic boundary.
+        if (i >= 2 || atBoundary) {
+            const d = tryDescendants(el);
+            if (d) return d;
+        }
+        // Stop walking once we hit a semantic boundary — anything
+        // outside this wrapper belongs to a different piece of UI.
+        if (atBoundary) break;
     }
     return null;
 }
@@ -908,7 +990,11 @@ document.createElement = function(tag, ...args) {
       if (el.hasAttribute('data-daisy-bypass') || shouldBypass(true) || !el.href) { _click(); return; }
       
       if (el.href.startsWith("blob:") || el.hasAttribute("download") || isLikelyDownloadUrl(el.href) || el.dataset.daisyDownload === "true") {
-          sendToDispatch(el.href, el.dataset.daisyFilename || el.getAttribute("download") || extractFilename(el.href, el));
+          const name = el.dataset.daisyFilename
+              || el.getAttribute("download")
+              || _recentClickFilename()
+              || extractFilename(el.href, el);
+          sendToDispatch(el.href, name);
       } else { _click(); }
     };
   }
@@ -1011,6 +1097,7 @@ document.addEventListener('mouseover', (e) => {
             .daisydm-overlay-container.scroll-hidden { opacity: 0 !important; pointer-events: none !important; transform: translateY(12px) scale(0.95) !important; visibility: hidden !important; }
             .daisydm-overlay-header { padding: 12px 16px; font-size: 14px; font-weight: 500; cursor: pointer; display: flex; align-items: center; gap: 10px; color: #f4f4f5; user-select: none; -webkit-user-select: none; }
             .daisydm-header-icon { font-size: 15px; line-height: 1; flex-shrink: 0; }
+            img.daisydm-header-icon { width: 18px; height: 18px; object-fit: contain; -webkit-user-drag: none; user-drag: none; }
             .daisydm-header-label { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
             .daisydm-chevron { font-size: 10px; color: #8e8e93; flex-shrink: 0; transition: transform 0.2s ease; }
             .daisydm-overlay-container.expanded .daisydm-chevron { transform: rotate(180deg); }
@@ -1103,9 +1190,20 @@ document.addEventListener('mouseover', (e) => {
             globalOverlay.className = 'daisydm-overlay-container';
             globalOverlay.style.position = 'absolute';
             
+            // Resolve the BundleIcon asset via runtime.getURL so the
+            // extension's manifest web_accessible_resources entry is
+            // honored. Fall back to the flower emoji if the runtime
+            // isn't available (defensive — content scripts should
+            // always have it).
+            const _runtime = (typeof browser !== "undefined" ? browser : chrome);
+            let _bundleIconURL = "";
+            try { _bundleIconURL = _runtime && _runtime.runtime && _runtime.runtime.getURL ? _runtime.runtime.getURL('BundleIcon.png') : ""; } catch (_) {}
+            const _iconMarkup = _bundleIconURL
+                ? `<img src="${_bundleIconURL}" alt="" class="daisydm-header-icon" draggable="false">`
+                : `<span class="daisydm-header-icon">🌼</span>`;
             globalOverlay.innerHTML = `
                 <div class="daisydm-overlay-header">
-                    <span class="daisydm-header-icon">🌼</span>
+                    ${_iconMarkup}
                     <span class="daisydm-header-label">Daisy Download</span>
                     <span class="daisydm-chevron">▼</span>
                     <button class="daisydm-close-btn" title="Dismiss">✕</button>

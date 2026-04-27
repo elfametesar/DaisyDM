@@ -224,6 +224,33 @@ function bubbleMediaToTop(data) {
     }
 }
 
+// Tracks the most recent user gesture on a download-like element so that
+// we can recover a real filename when a site (Claude, Notion, Drive, …)
+// fetches the file and calls a synthetic `<a download>` whose element
+// is detached from the DOM before we inspect it.
+let lastDownloadClickContext = { filename: null, at: 0 };
+
+function _rememberDownloadClick(target) {
+    if (!target || !(target instanceof Element)) return;
+    let el = target;
+    for (let i = 0; i < 4 && el; i++, el = el.parentElement) {
+        const candidate = scrapeFilenameFromDOM(el);
+        if (candidate) {
+            lastDownloadClickContext = { filename: candidate, at: Date.now() };
+            return;
+        }
+    }
+}
+
+document.addEventListener('pointerdown', (e) => { _rememberDownloadClick(e.target); }, true);
+document.addEventListener('click', (e) => { _rememberDownloadClick(e.target); }, true);
+
+function _recentClickFilename() {
+    if (!lastDownloadClickContext.filename) return null;
+    if (Date.now() - lastDownloadClickContext.at > 4000) return null;
+    return lastDownloadClickContext.filename;
+}
+
 window.addEventListener("message", (e) => {
     if (e.data && e.data.__daisyMedia) bubbleMediaToTop(e.data.__daisyMedia);
     if (e.data && e.data.__daisyMediaHeaders) {
@@ -621,29 +648,63 @@ function extractFilename(url, el) {
 /**
  * Walk up from a clicked element looking for a text node or attribute
  * that looks like "name.ext" — the pattern every app UI uses for file
- * labels (Claude, Notion, Gmail, Dropbox ...).
+ * labels (Claude, Notion, Gmail, Dropbox ...). Also inspects
+ * descendants so filename spans that are siblings of the download
+ * button are reached.
  */
 function scrapeFilenameFromDOM(startEl) {
-    const filenameRegex = /([\w\-. ()\[\]!@#$%^&+=,;'`~]+\.[a-z0-9]{1,6})(?:\s|$)/i;
-    let el = startEl;
-    for (let i = 0; i < 8 && el; i++, el = el.parentElement) {
-        const attrs = [
-            el.getAttribute('data-filename'),
-            el.getAttribute('data-file-name'),
-            el.getAttribute('aria-label'),
-            el.getAttribute('title'),
-            el.getAttribute('alt'),
-        ];
-        for (const a of attrs) {
-            if (!a) continue;
-            const m = a.match(filenameRegex);
+    const filenameRegex = /([^\/\\<>|"?*\s][^\/\\<>|"?*]{0,150}\.[a-z0-9]{1,6})\b/i;
+    const ATTR_NAMES = [
+        'data-filename', 'data-file-name', 'data-name',
+        'aria-label', 'title', 'alt',
+        'download',
+    ];
+    const BOUNDARY = 'dialog,[role="dialog"],[role="listitem"],article,[data-testid*="attachment" i],[data-testid*="file" i]';
+
+    const tryAttrs = (el) => {
+        for (const name of ATTR_NAMES) {
+            const v = el.getAttribute && el.getAttribute(name);
+            if (!v) continue;
+            const m = v.match(filenameRegex);
             if (m) return m[1].trim();
         }
-        const text = el.innerText || el.textContent || '';
-        if (text && text.length < 300) {
+        return null;
+    };
+
+    const tryDescendants = (root) => {
+        if (!root.querySelectorAll) return null;
+        const candidates = root.querySelectorAll(
+            '[data-filename],[data-file-name],[data-name],' +
+            '[class*="filename" i],[class*="file-name" i],[class*="fileName"],' +
+            '[aria-label],[title]'
+        );
+        for (const c of candidates) {
+            const a = tryAttrs(c);
+            if (a) return a;
+            const t = (c.innerText || c.textContent || '').trim();
+            if (t && t.length < 240) {
+                const m = t.match(filenameRegex);
+                if (m) return m[1].trim();
+            }
+        }
+        return null;
+    };
+
+    let el = startEl;
+    for (let i = 0; i < 16 && el; i++, el = el.parentElement) {
+        const a = tryAttrs(el);
+        if (a) return a;
+        const text = (el.innerText || el.textContent || '').trim();
+        if (text && text.length < 400) {
             const m = text.match(filenameRegex);
             if (m) return m[1].trim();
         }
+        const atBoundary = el.matches && el.matches(BOUNDARY);
+        if (i >= 2 || atBoundary) {
+            const d = tryDescendants(el);
+            if (d) return d;
+        }
+        if (atBoundary) break;
     }
     return null;
 }
@@ -825,7 +886,8 @@ document.createElement = function(tag, ...args) {
       if (el.hasAttribute('data-daisy-bypass') || shouldBypass(true) || !el.href) { _click(); return; }
       const isDownloadUrl = ['.mp4', '.mkv', '.avi', '.webm', '.mov', '.wmv', '.flv', '.ts', '.m3u8', '.mpd'].some(ext => { try { return new URL(el.href).pathname.toLowerCase().endsWith(ext); } catch { return false; } });
       if (el.href.startsWith("blob:") || el.hasAttribute("download") || isDownloadUrl) {
-          sendToDispatch(el.href, el.getAttribute("download") || extractFilename(el.href, el));
+          const name = el.getAttribute("download") || _recentClickFilename() || extractFilename(el.href, el);
+          sendToDispatch(el.href, name);
       } else { _click(); }
     };
   }
@@ -892,6 +954,7 @@ document.createElement = function(tag, ...args) {
             .daisydm-overlay-container.scroll-hidden { opacity: 0 !important; pointer-events: none !important; transform: translateY(12px) scale(0.95) !important; visibility: hidden !important; }
             .daisydm-overlay-header { padding: 12px 16px; font-size: 14px; font-weight: 500; cursor: pointer; display: flex; align-items: center; gap: 10px; color: #f4f4f5; user-select: none; -webkit-user-select: none; }
             .daisydm-header-icon { font-size: 15px; line-height: 1; flex-shrink: 0; }
+            img.daisydm-header-icon { width: 18px; height: 18px; object-fit: contain; -webkit-user-drag: none; user-drag: none; }
             .daisydm-header-label { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
             .daisydm-chevron { font-size: 10px; color: #8e8e93; flex-shrink: 0; transition: transform 0.2s ease; }
             .daisydm-overlay-container.expanded .daisydm-chevron { transform: rotate(180deg); }
@@ -984,9 +1047,15 @@ document.createElement = function(tag, ...args) {
             globalOverlay.className = 'daisydm-overlay-container';
             globalOverlay.style.position = 'absolute';
             
+            const _runtime = (typeof browser !== "undefined" ? browser : chrome);
+            let _bundleIconURL = "";
+            try { _bundleIconURL = _runtime && _runtime.runtime && _runtime.runtime.getURL ? _runtime.runtime.getURL('BundleIcon.png') : ""; } catch (_) {}
+            const _iconMarkup = _bundleIconURL
+                ? `<img src="${_bundleIconURL}" alt="" class="daisydm-header-icon" draggable="false">`
+                : `<span class="daisydm-header-icon">🌼</span>`;
             globalOverlay.innerHTML = `
                 <div class="daisydm-overlay-header">
-                    <span class="daisydm-header-icon">🌼</span>
+                    ${_iconMarkup}
                     <span class="daisydm-header-label">Daisy Download</span>
                     <span class="daisydm-chevron">▼</span>
                     <button class="daisydm-close-btn" title="Dismiss">✕</button>
