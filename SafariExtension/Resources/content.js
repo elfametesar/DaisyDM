@@ -735,10 +735,15 @@ function _cleanDaisyTitle(text) {
 // user is hovering. Tries (in order):
 //   1. `aria-label` / `title` directly on the media element
 //   2. Heading-like elements found within each ancestor as we walk up
-//      (semantic landmarks like article/main/section get richer treatment)
-//   3. Page-level `og:title`, `twitter:title`, and the first visible h1
-// This covers everything from social-media post captions to vanilla
-// article pages where the h1 sits in a sibling subtree of the video.
+//   3. When we hit a "post boundary" element (a wrapper that delimits a
+//      single piece of content like a Reddit post, an article, a tweet),
+//      we also read title-bearing attributes off it and stop walking.
+//      This is critical on feed pages — without the boundary check we
+//      would walk past the post wrapper and `querySelector('h1')` on a
+//      feed-level container returns the wrong post's title.
+//   4. Page-level `og:title` / `twitter:title` / first h1 — but ONLY when
+//      no post boundary was detected. On feed pages those identifiers
+//      describe a different piece of content than the one being hovered.
 function getContextualVideoName(el) {
     const HEADING_SELECTORS = [
         '[itemprop="headline"]',
@@ -747,6 +752,7 @@ function getContextualVideoName(el) {
         '[data-ad-comet-preview="message"]',
         '[data-ad-preview="message"]',
         '._5pbx', '._1mwp',
+        '[slot="title"]',
         'h1',
         '[role="heading"][aria-level="1"]',
         'h2',
@@ -758,6 +764,30 @@ function getContextualVideoName(el) {
         '[class*="heading" i]:not(input):not(textarea):not(button):not(select)'
     ];
 
+    // Elements that wrap a single piece of content. When we hit one of
+    // these we stop walking up so we don't accidentally pick a sibling
+    // post's title from the surrounding feed.
+    const POST_BOUNDARY_SELECTORS = [
+        'shreddit-post',
+        'article',
+        '[role="article"]',
+        '[data-testid="post-container"]',
+        '[data-testid="post"]',
+        '[data-test-id="post-container"]',
+        '[data-testid="cellInnerDiv"]',
+        '[data-testid="tweet"]',
+        '[data-pagelet^="FeedUnit"]'
+    ];
+    const POST_TITLE_ATTRS = ['post-title', 'data-post-title', 'data-title', 'aria-label', 'title'];
+
+    function _matchesAny(node, selectors) {
+        if (!node || !node.matches) return false;
+        for (const s of selectors) {
+            try { if (node.matches(s)) return true; } catch (_) {}
+        }
+        return false;
+    }
+
     if (el && el.getAttribute) {
         const direct = el.getAttribute('aria-label') || el.getAttribute('title');
         const cleaned = _cleanDaisyTitle(direct);
@@ -766,7 +796,10 @@ function getContextualVideoName(el) {
 
     let curr = el ? el.parentElement : null;
     let depth = 0;
+    let foundBoundary = false;
     while (curr && curr !== document.body && depth < 16) {
+        const isBoundary = _matchesAny(curr, POST_BOUNDARY_SELECTORS);
+
         for (const sel of HEADING_SELECTORS) {
             let cand = null;
             try { cand = curr.querySelector(sel); } catch (_) {}
@@ -775,25 +808,40 @@ function getContextualVideoName(el) {
             const cleaned = _cleanDaisyTitle(raw);
             if (cleaned.length > 2 && cleaned.length < 200) return cleaned;
         }
+
+        if (isBoundary) {
+            foundBoundary = true;
+            for (const attr of POST_TITLE_ATTRS) {
+                const v = curr.getAttribute && curr.getAttribute(attr);
+                const cleaned = _cleanDaisyTitle(v);
+                if (cleaned.length > 2 && cleaned.length < 200) return cleaned;
+            }
+            // We've fully searched the post container; never escape to
+            // feed/page level — that would surface a sibling post's title.
+            break;
+        }
         curr = curr.parentElement;
         depth += 1;
     }
 
-    // Page-level fallbacks
-    const ogMeta = document.querySelector('meta[property="og:title"], meta[name="og:title"]');
-    if (ogMeta && ogMeta.content) {
-        const c = _cleanDaisyTitle(ogMeta.content);
-        if (c.length > 2) return c;
-    }
-    const twMeta = document.querySelector('meta[name="twitter:title"], meta[property="twitter:title"]');
-    if (twMeta && twMeta.content) {
-        const c = _cleanDaisyTitle(twMeta.content);
-        if (c.length > 2) return c;
-    }
-    const pageH1 = document.querySelector('article h1, main h1, [role="main"] h1, h1');
-    if (pageH1) {
-        const c = _cleanDaisyTitle(pageH1.innerText || pageH1.textContent);
-        if (c.length > 2) return c;
+    // Page-level fallbacks ONLY when we didn't see a post boundary —
+    // otherwise the page's og:title/h1 describes a different post.
+    if (!foundBoundary) {
+        const ogMeta = document.querySelector('meta[property="og:title"], meta[name="og:title"]');
+        if (ogMeta && ogMeta.content) {
+            const c = _cleanDaisyTitle(ogMeta.content);
+            if (c.length > 2) return c;
+        }
+        const twMeta = document.querySelector('meta[name="twitter:title"], meta[property="twitter:title"]');
+        if (twMeta && twMeta.content) {
+            const c = _cleanDaisyTitle(twMeta.content);
+            if (c.length > 2) return c;
+        }
+        const pageH1 = document.querySelector('article h1, main h1, [role="main"] h1, h1');
+        if (pageH1) {
+            const c = _cleanDaisyTitle(pageH1.innerText || pageH1.textContent);
+            if (c.length > 2) return c;
+        }
     }
     return null;
 }
