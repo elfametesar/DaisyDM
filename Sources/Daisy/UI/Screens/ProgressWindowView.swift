@@ -72,6 +72,11 @@ struct ProgressWindowView: View {
             if let monitor = eventMonitor {
                 NSEvent.removeMonitor(monitor)
             }
+            // If the WindowGroup swaps us out for FailedDownloadDialog
+            // mid-session (e.g. download transitioned to .failed) the
+            // NSWindow is reused; scrub the tray button so it doesn't
+            // linger into the next view.
+            if let win = window { removeCustomTrayButton(from: win) }
         }
         .onReceive(timer) { _ in
             now = Date()

@@ -100,7 +100,34 @@ struct FailedDownloadDialog: View {
             if let win = newWindow {
                 win.isOpaque = false
                 win.backgroundColor = .clear
+                removeCustomTrayButton(from: win)
             }
+        }
+        .onAppear {
+            if let win = window { removeCustomTrayButton(from: win) }
+        }
+    }
+
+    /// When a download transitions to .failed the WindowGroup body
+    /// swaps ProgressWindowView for this dialog, but the underlying
+    /// NSWindow is reused — including any "Hide to Menu Bar" traffic-
+    /// light button ProgressWindowView previously injected into the
+    /// titlebar. Tear it down here so it doesn't linger into the
+    /// failed-state UI.
+    private func removeCustomTrayButton(from win: NSWindow) {
+        let customId = NSUserInterfaceItemIdentifier("CustomMenuTrafficLight")
+        func sweep(_ view: NSView) {
+            for subview in Array(view.subviews) {
+                if subview.identifier == customId {
+                    subview.removeFromSuperview()
+                } else {
+                    sweep(subview)
+                }
+            }
+        }
+        if let content = win.contentView { sweep(content) }
+        if let titlebar = win.standardWindowButton(.zoomButton)?.superview {
+            sweep(titlebar)
         }
     }
 }
