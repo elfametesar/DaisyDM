@@ -1,6 +1,9 @@
 // inject.js
 (function() {
-    const MEDIA_RE = /\.m3u8|stream\.mpd|\.mpd|dash|hls|\.mp4|\.webm|\.mov|\.ts|manifest/i;
+    // Tightened so substrings like "dash" / "hls" / ".ts" don't match every
+    // bundled-module URL on modern sites. Extension boundaries are anchored
+    // with a lookahead, and path-style indicators require slashes.
+    const MEDIA_RE = /(?:\.m3u8(?=[?#]|$)|\.mpd(?=[?#]|$)|\.mp4(?=[?#]|$)|\.webm(?=[?#]|$)|\.mov(?=[?#]|$)|\.mkv(?=[?#]|$)|\.flv(?=[?#]|$)|\.avi(?=[?#]|$)|\/hls\/|\/dash\/|\/m3u8(?:[\/?]|$)|\/manifest(?=[\/?#]|$))/i;
     const OBVIOUS_DOWNLOAD_RE = /\.mp4|\.mkv|\.avi|\.webm|\.mov|\.wmv|\.flv|\.ts|\.m3u8|\.mpd|\.zip|\.rar|\.pdf|\.dmg|\.iso|\.pkg|\.tar|\.gz|\.bin/i;
     const DOWNLOAD_PATH_RE = /\/download\/|\?download=/i;
 

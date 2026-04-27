@@ -248,7 +248,15 @@ window.addEventListener("message", (e) => {
             try {
                 _api.runtime.sendMessage({ type: "PUSH_MEDIA_HEADERS", headers: { [url]: headers } }).catch(() => {});
             } catch(err) {}
-            bubbleMediaToTop({ url, mediaType: 'unknown', frameOrigin: window.location.origin });
+            // Only register as a download candidate if the URL actually
+            // looks like media. The fetch/XHR interceptor in inject.js
+            // intentionally fires for any request with custom headers or
+            // a Range header (so we don't miss cookied media), but most
+            // of those are auth/RPC calls — surfacing them in the popup
+            // produced the "extension grabs irrelevant stuff" reports.
+            if (typeof isStrictMediaUrl === 'function' && isStrictMediaUrl(url)) {
+                bubbleMediaToTop({ url, mediaType: 'unknown', frameOrigin: window.location.origin });
+            }
         }
     }
 });
@@ -341,17 +349,62 @@ function getActualYtFormatsAsync() {
     });
 }
 
+// Stricter post-validator. The script-tag regex casts a wide net to keep
+// up with sites that obfuscate URLs (template strings, JSON-encoded
+// inside scripts, etc.), but a lot of what it catches is *not* a media
+// URL — sourcemaps, TypeScript modules, fonts, images, HTML pages, and
+// random analytics endpoints sometimes land in the same scripts. This
+// guard runs after the regex and rejects URLs that clearly aren't a
+// downloadable media stream so the popup doesn't show garbage rows.
+function isStrictMediaUrl(urlStr) {
+    if (!urlStr) return false;
+    let path = '', href = '';
+    try {
+        const u = new URL(urlStr, document.baseURI);
+        if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+        path = u.pathname.toLowerCase();
+        href = u.href.toLowerCase();
+    } catch {
+        href = String(urlStr).toLowerCase();
+        path = href.split('?')[0].split('#')[0];
+    }
+    // Reject obvious non-media file types up front
+    const reject = ['.js', '.mjs', '.cjs', '.ts.map', '.js.map', '.css', '.html', '.htm',
+                    '.json', '.xml', '.svg', '.png', '.jpg', '.jpeg', '.gif', '.webp',
+                    '.ico', '.woff', '.woff2', '.ttf', '.otf', '.eot', '.txt'];
+    for (const r of reject) {
+        if (path.endsWith(r)) return false;
+    }
+    // Accept: ends with a known media extension (optionally followed by query/fragment)
+    const mediaExts = ['.m3u8', '.mpd', '.mp4', '.webm', '.mov', '.mkv', '.flv', '.avi', '.wmv', '.m4a', '.mp3'];
+    for (const ext of mediaExts) {
+        if (path.endsWith(ext)) return true;
+    }
+    // Accept: streaming-style path indicators
+    const streamHints = ['/hls/', '/dash/', '/m3u8/', '/manifest', '/playlist', 'master.m3u8', 'index.m3u8'];
+    for (const hint of streamHints) {
+        if (href.includes(hint)) return true;
+    }
+    return false;
+}
+
 function sniffScriptUrls(root) {
     const found = [];
     try {
         const scripts = (root || document).querySelectorAll('script');
-        const mediaRe = /(?:https?:)?\/\/[^\s'"\\]+?(?:\.m3u8|\.mp4|\.webm|\.mov|\.ts|\.mpd|\/m3u8|\/hls\/|\/stream\/|\/m3\/|\/dash\/)[^\s'"\\,;}\]))]*/gi;
+        // Anchor each accept to a real path-segment boundary so we don't
+        // gobble up `foo.mp4-handler.js` or similar accidental substrings,
+        // and drop `.ts` from the bare-extension list (it matches every
+        // TypeScript module URL on modern bundled sites). HLS segment
+        // collection still works through the `/hls/` / `/m3u8` path hints.
+        const mediaRe = /(?:https?:)?\/\/[^\s'"\\]+?(?:\.m3u8(?=[?#"'\s]|$)|\.mpd(?=[?#"'\s]|$)|\.mp4(?=[?#"'\s]|$)|\.webm(?=[?#"'\s]|$)|\.mov(?=[?#"'\s]|$)|\.mkv(?=[?#"'\s]|$)|\.flv(?=[?#"'\s]|$)|\.avi(?=[?#"'\s]|$)|\.m4a(?=[?#"'\s]|$)|\/m3u8(?:[\/?]|$)|\/hls\/|\/dash\/|\/m3\/|\/manifest(?=[\/?#"'\s]|$))[^\s'"\\,;}\]]*/gi;
         for (let s of scripts) {
             const text = s.textContent || "";
             let match;
             while ((match = mediaRe.exec(text)) !== null) {
                 let url = match[0].replace(/[,;}\]]+$/, "");
                 if (url.startsWith('//')) url = window.location.protocol + url;
+                if (!isStrictMediaUrl(url)) continue;
                 found.push({url: url, type: 'unknown', frameOrigin: window.location.origin});
             }
         }
@@ -372,7 +425,10 @@ function sniffJsonBlobs(root) {
             ];
             for (const re of patterns) {
                 let m;
-                while ((m = re.exec(text)) !== null) found.push({url: m[1], type: 'unknown', frameOrigin: window.location.origin});
+                while ((m = re.exec(text)) !== null) {
+                    if (!isStrictMediaUrl(m[1])) continue;
+                    found.push({url: m[1], type: 'unknown', frameOrigin: window.location.origin});
+                }
             }
         }
     } catch(_) {}
@@ -388,9 +444,12 @@ function sniffWindowState() {
                 const val = window[key];
                 if (!val) continue;
                 const str = typeof val === 'string' ? val : JSON.stringify(val);
-                const mediaRe = /https?:\/\/[^\s"'\\]+?(?:\.m3u8|\.mpd|HLSPlaylist\.m3u8|DASHPlaylist\.mpd|\/m3\/|\/dash\/)[^\s"'\\,;}\]))]*/g;
+                const mediaRe = /https?:\/\/[^\s"'\\]+?(?:\.m3u8(?=[?#"'\s]|$)|\.mpd(?=[?#"'\s]|$)|HLSPlaylist\.m3u8|DASHPlaylist\.mpd|\/m3\/|\/dash\/)[^\s"'\\,;}\]]*/g;
                 let m;
-                while ((m = mediaRe.exec(str)) !== null) found.push({url: m[0], type: 'unknown', frameOrigin: window.location.origin});
+                while ((m = mediaRe.exec(str)) !== null) {
+                    if (!isStrictMediaUrl(m[0])) continue;
+                    found.push({url: m[0], type: 'unknown', frameOrigin: window.location.origin});
+                }
             } catch(_) {}
         }
     } catch(_) {}
@@ -664,24 +723,77 @@ async function handleBlob(blobUrl, filename) {
     handleCredentialedFetch(blobUrl, filename);
 }
 
+function _cleanDaisyTitle(text) {
+    if (!text) return '';
+    const single = String(text).replace(/\s+/g, ' ').trim();
+    // Strip filesystem-illegal chars; the dispatch path will strip again,
+    // but doing it here makes the title we surface to the user match.
+    return single.replace(/[\/:*?"<>|]/g, '').slice(0, 200).trim();
+}
+
+// Walks the DOM looking for a human-meaningful title for the video the
+// user is hovering. Tries (in order):
+//   1. `aria-label` / `title` directly on the media element
+//   2. Heading-like elements found within each ancestor as we walk up
+//      (semantic landmarks like article/main/section get richer treatment)
+//   3. Page-level `og:title`, `twitter:title`, and the first visible h1
+// This covers everything from social-media post captions to vanilla
+// article pages where the h1 sits in a sibling subtree of the video.
 function getContextualVideoName(el) {
-    if (!el) return null;
-    let label = el.getAttribute('aria-label') || el.getAttribute('title');
-    if (label && label.length > 2) return label;
-    
-    let curr = el;
-    for (let i = 0; i < 12 && curr && curr !== document.body; i++) {
-        let socialCaption = curr.querySelector('[data-ad-comet-preview="message"], [data-ad-preview="message"], [data-testid="post_message"], ._5pbx, ._1mwp, h1');
-        if (socialCaption && socialCaption.innerText) {
-            let clean = socialCaption.innerText.trim().split('\n')[0].substring(0, 60);
-            if (clean.length > 2) return clean;
-        }
-        let heading = curr.querySelector('h2, h3, [role="heading"]');
-        if (heading && heading.innerText) {
-            let clean = heading.innerText.trim().split('\n')[0].substring(0, 60);
-            if (clean.length > 2) return clean;
+    const HEADING_SELECTORS = [
+        '[itemprop="headline"]',
+        '[itemprop="name"]',
+        '[data-testid="post_message"]',
+        '[data-ad-comet-preview="message"]',
+        '[data-ad-preview="message"]',
+        '._5pbx', '._1mwp',
+        'h1',
+        '[role="heading"][aria-level="1"]',
+        'h2',
+        '[role="heading"][aria-level="2"]',
+        'h3',
+        '[role="heading"][aria-level="3"]',
+        '[class*="title" i]:not(input):not(textarea):not(button):not(select)',
+        '[class*="headline" i]:not(input):not(textarea):not(button):not(select)',
+        '[class*="heading" i]:not(input):not(textarea):not(button):not(select)'
+    ];
+
+    if (el && el.getAttribute) {
+        const direct = el.getAttribute('aria-label') || el.getAttribute('title');
+        const cleaned = _cleanDaisyTitle(direct);
+        if (cleaned.length > 2) return cleaned;
+    }
+
+    let curr = el ? el.parentElement : null;
+    let depth = 0;
+    while (curr && curr !== document.body && depth < 16) {
+        for (const sel of HEADING_SELECTORS) {
+            let cand = null;
+            try { cand = curr.querySelector(sel); } catch (_) {}
+            if (!cand) continue;
+            const raw = cand.innerText || cand.textContent || '';
+            const cleaned = _cleanDaisyTitle(raw);
+            if (cleaned.length > 2 && cleaned.length < 200) return cleaned;
         }
         curr = curr.parentElement;
+        depth += 1;
+    }
+
+    // Page-level fallbacks
+    const ogMeta = document.querySelector('meta[property="og:title"], meta[name="og:title"]');
+    if (ogMeta && ogMeta.content) {
+        const c = _cleanDaisyTitle(ogMeta.content);
+        if (c.length > 2) return c;
+    }
+    const twMeta = document.querySelector('meta[name="twitter:title"], meta[property="twitter:title"]');
+    if (twMeta && twMeta.content) {
+        const c = _cleanDaisyTitle(twMeta.content);
+        if (c.length > 2) return c;
+    }
+    const pageH1 = document.querySelector('article h1, main h1, [role="main"] h1, h1');
+    if (pageH1) {
+        const c = _cleanDaisyTitle(pageH1.innerText || pageH1.textContent);
+        if (c.length > 2) return c;
     }
     return null;
 }
@@ -1006,16 +1118,26 @@ document.addEventListener('mouseover', (e) => {
             }
 
             const urlTypeMap = new Map();
+            // URLs that came directly off a real <video>/<source> element
+            // are inherently media (the browser already accepted them as a
+            // playable source) so we exempt them from the strict-URL
+            // filter that runs further down. Without this exemption an
+            // unusually-named source like `https://cdn/foo.bin` from a
+            // legitimate `<video>` would be filtered out of the popup.
+            const domMediaUrls = new Set();
             const mediaNodes = [targetEl, ...Array.from(targetEl.querySelectorAll ? targetEl.querySelectorAll('video, iframe') : [])];
             
             mediaNodes.forEach(v => {
                 if (!v) return;
                 [v.src, v.currentSrc, ...Array.from(v.querySelectorAll ? v.querySelectorAll('source') : []).map(s => s.src)]
                     .filter(u => u && !u.startsWith('blob:') && !u.startsWith('data:'))
-                    .forEach(u => urlTypeMap.set(u, 'unknown'));
+                    .forEach(u => { urlTypeMap.set(u, 'unknown'); domMediaUrls.add(u); });
                     
                 if (playerUrlMap.has(v)) {
-                    for (const [u, t] of playerUrlMap.get(v).entries()) urlTypeMap.set(u, t);
+                    for (const [u, t] of playerUrlMap.get(v).entries()) {
+                        urlTypeMap.set(u, t);
+                        domMediaUrls.add(u);
+                    }
                 }
             });
 
@@ -1055,6 +1177,13 @@ document.addEventListener('mouseover', (e) => {
                     if (spamSigs.some(s => lower.includes(s))) continue;
                     if (fakeExts.some(e => lower.includes(e))) continue;
                 }
+                // Final guard: never surface a URL that doesn't look like
+                // a media stream as a download option, regardless of how it
+                // got into `urlTypeMap` (sniffer, header-capture relay, an
+                // overzealous player call, etc.). Direct video/source URLs
+                // are tracked in `domMediaUrls` and exempted because the
+                // browser already accepted them as a playable source.
+                if (finalType === 'unknown' && !domMediaUrls.has(rawUrl) && !isStrictMediaUrl(rawUrl)) continue;
                 
                 const siteQuality = sniffedEntry && sniffedEntry.mailRuKey ? sniffedEntry.mailRuKey : null;
                 const siteTitle   = sniffedEntry && sniffedEntry.mailRuTitle ? sniffedEntry.mailRuTitle : null;
