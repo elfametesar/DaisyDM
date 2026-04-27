@@ -73,7 +73,14 @@ struct ProgressWindowView: View {
                 NSEvent.removeMonitor(monitor)
             }
         }
-        .onReceive(timer) { _ in now = Date() }
+        .onReceive(timer) { _ in
+            now = Date()
+            // Sync the tray button every tick in case SwiftUI's
+            // onChange misses a status transition (e.g. when the
+            // engine replaces items wholesale rather than mutating an
+            // existing item's status in place).
+            updateTrayButtonVisibility()
+        }
         .onChange(of: window) { _, _ in setupWindowSettings() }
         // Hide the "Hide to Menu Bar" traffic-light button whenever the
         // download reaches a terminal state — there's nothing to keep
@@ -101,11 +108,31 @@ struct ProgressWindowView: View {
         if canHideToTray {
             injectTrafficLight(into: win)
         } else {
-            let customId = NSUserInterfaceItemIdentifier("CustomMenuTrafficLight")
-            if let titlebar = win.standardWindowButton(.zoomButton)?.superview,
-               let btn = titlebar.subviews.first(where: { $0.identifier == customId }) {
-                btn.removeFromSuperview()
+            removeCustomTrayButton(from: win)
+        }
+    }
+
+    /// Walks every window descendant and removes any stray
+    /// CustomMenuTrafficLight view. Belt-and-suspenders cleanup:
+    /// traffic-light buttons can be re-parented by AppKit during
+    /// fullscreen transitions, so checking only the zoom button's
+    /// superview sometimes misses the instance.
+    private func removeCustomTrayButton(from win: NSWindow) {
+        let customId = NSUserInterfaceItemIdentifier("CustomMenuTrafficLight")
+        func sweep(_ view: NSView) {
+            for subview in Array(view.subviews) {
+                if subview.identifier == customId {
+                    subview.removeFromSuperview()
+                } else {
+                    sweep(subview)
+                }
             }
+        }
+        if let content = win.contentView { sweep(content) }
+        // The titlebar lives outside contentView on modern macOS. Walk
+        // from the zoom button's superview too.
+        if let titlebar = win.standardWindowButton(.zoomButton)?.superview {
+            sweep(titlebar)
         }
     }
     
