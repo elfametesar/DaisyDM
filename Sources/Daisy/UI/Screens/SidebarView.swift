@@ -8,8 +8,26 @@ struct SidebarView: View {
     @AppStorage("accentColorHex") private var accentColorHex = "#0A84FF"
     @AppStorage("enableBackgroundTint") private var enableBackgroundTint = false
 
+    /// Pre-compute all filter counts in a single pass over engine.items so
+    /// the sidebar body does not run N filter predicates * M items on every
+    /// SwiftUI evaluation. Recomputing on every frame during the split-view
+    /// width animation was the main source of jank.
+    private var counts: [SidebarFilter: Int] {
+        var result: [SidebarFilter: Int] = [:]
+        for filter in SidebarFilter.allCases { result[filter] = 0 }
+        for item in engine.items {
+            for filter in SidebarFilter.allCases where filter.matches(item) {
+                result[filter, default: 0] += 1
+            }
+        }
+        return result
+    }
+
     var body: some View {
-        VStack(spacing: 0) {
+        let counts = self.counts
+        let tintBackground = enableBackgroundTint ? Color(hex: accentColorHex).opacity(0.04) : Color.clear
+
+        return VStack(spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("LIBRARY")
@@ -18,11 +36,11 @@ struct SidebarView: View {
                         .padding(.horizontal, 10)
                         .padding(.top, 16)
                         .padding(.bottom, 4)
-                    
+
                     ForEach(SidebarFilter.allCases) { filter in
                         SidebarRow(
                             filter: filter,
-                            count: count(for: filter),
+                            count: counts[filter, default: 0],
                             isSelected: selected == filter,
                             accentColorHex: accentColorHex
                         )
@@ -33,7 +51,7 @@ struct SidebarView: View {
                 }
                 .padding(.horizontal, 8)
             }
-            .background(enableBackgroundTint ? Color(hex: accentColorHex).opacity(0.04) : Color.clear)
+            .background(tintBackground)
 
             Divider()
 
@@ -44,9 +62,9 @@ struct SidebarView: View {
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
                 .font(.system(size: 12))
-                
+
                 Spacer()
-                
+
                 if engine.globalDownloadSpeed > 512 {
                     HStack(spacing: 4) {
                         Image(systemName: "arrow.down")
@@ -59,12 +77,8 @@ struct SidebarView: View {
             }
             .padding(12)
             .background(.ultraThinMaterial)
-            .background(enableBackgroundTint ? Color(hex: accentColorHex).opacity(0.04) : Color.clear)
+            .background(tintBackground)
         }
-    }
-
-    private func count(for filter: SidebarFilter) -> Int {
-        engine.items.filter { filter.matches($0) }.count
     }
 }
 
