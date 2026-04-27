@@ -100,7 +100,7 @@ struct ContentView: View {
                     addDownloadPayload = nil
                 })
             }
-            .sheet(isPresented: $showingSettings) { SettingsView().interactiveDismissDisabled() }
+            .sheet(isPresented: $showingSettings) { SettingsView() }
             .sheet(item: $itemsToRemove) { context in
                 RemoveDialog(items: context.items) { trash, remember in
                     if remember {

@@ -130,7 +130,17 @@ struct SettingsView: View {
                 .strokeBorder(Color(NSColor.separatorColor), lineWidth: 0.5)
         )
         .tint(Color(hex: accentColorHex)) // Colors standard controls & focus rings
-        .interactiveDismissDisabled()
+        // Hidden button intercepts Esc ("cancelAction" is the standard
+        // keyboard shortcut wired to Escape on macOS) and dismisses the
+        // sheet. Without this, SwiftUI's default Esc handling on a sheet
+        // without a designated cancel button was a no-op.
+        .background(
+            Button("") { dismiss() }
+                .keyboardShortcut(.cancelAction)
+                .frame(width: 0, height: 0)
+                .opacity(0)
+                .accessibilityHidden(true)
+        )
         .onAppear { syncLiveColorsFromHex(force: true) }
         .onChange(of: accentColorHex)       { _, _ in syncLiveColorsFromHex() }
         .onChange(of: progressBarColorHex)  { _, _ in syncLiveColorsFromHex() }
