@@ -70,7 +70,28 @@ extension DownloadEngine {
         if needsTorrentFetch {
             let result = await fetchTorrentInfo(item: item, executable: executable, targetPath: targetPath)
             await MainActor.run {
-                if !result.files.isEmpty { item.subFiles = result.files; item.totalBytes = result.files.map { $0.totalBytes }.reduce(0, +) }
+                if !result.files.isEmpty {
+                    item.subFiles = result.files
+                    item.totalBytes = result.files.map { $0.totalBytes }.reduce(0, +)
+                    // Use the torrent's actual top-level content name (the
+                    // shared first path component for multi-file torrents,
+                    // or the file name for single-file torrents) as the
+                    // destination. aria2 will write directly to
+                    // `<parentDir>/<contentName>` which matches the
+                    // torrent's metainfo, so we no longer wrap the
+                    // download in an extra folder named after the magnet's
+                    // `dn=` parameter. For the rare mixed-root torrent
+                    // (multiple files at root with no shared folder) we
+                    // keep the `dn=` folder as a wrapper so loose files
+                    // don't litter the user's Downloads directory.
+                    if let contentName = self.torrentContentName(from: result.files) {
+                        let parentDir = item.destinationURL.deletingLastPathComponent()
+                        item.destinationURL = parentDir.appendingPathComponent(contentName)
+                        item.filename = contentName
+                    } else {
+                        try? FileManager.default.createDirectory(at: item.destinationURL, withIntermediateDirectories: true)
+                    }
+                }
             }
             let stillEmpty = await MainActor.run { item.subFiles.isEmpty }
             if stillEmpty {
@@ -120,17 +141,22 @@ extension DownloadEngine {
 
         let type         = await MainActor.run { item.type }
         let fileName     = await MainActor.run { item.filename }
-        
-        var destDir = await MainActor.run {
-            type == .torrent ? item.destinationURL.path : item.tempDirURL.path
+
+        // For single-content torrents `item.destinationURL` already points
+        // at the torrent's own content folder/file, so aria2 needs the
+        // *parent* directory and will recreate that exact name. For the
+        // rare mixed-root torrent we kept the `dn=` wrapper folder as the
+        // destination, so aria2 writes directly into it.
+        let destDir = await MainActor.run { () -> String in
+            if type == .torrent {
+                let usesParent = !item.subFiles.isEmpty && self.torrentContentName(from: item.subFiles) != nil
+                return usesParent
+                    ? item.destinationURL.deletingLastPathComponent().path
+                    : item.destinationURL.path
+            }
+            return item.tempDirURL.path
         }
-        
-        if item.url.scheme == "magnet" {
-            item.destinationURL = URL(string: downloadsDir().path() + item.destinationURL.deletingLastPathComponent().lastPathComponent) ?? item.destinationURL
-            destDir = item.destinationURL.path
-            
-        }
-        
+
         // 2. Hide the messy .aria2 AND the 100% sparse file in Application Support (Skipped for torrents)
         await MainActor.run {
             if item.type != .torrent {
@@ -335,11 +361,26 @@ extension DownloadEngine {
             }
         }
         
+        // Hide the `.aria2` resume sidecar so Finder doesn't show it next
+        // to the actual download. For torrents we know the exact sidecar
+        // path (`<destinationURL>.aria2`, sibling of the content folder);
+        // for everything else aria2 writes inside `tempDir` which the user
+        // never sees, but we still hide any sidecar in the directory for
+        // safety.
         let hideAriaTask = Task { [weak item, destDir] in
-            guard item != nil else { return }
-            
+            guard let item = item else { return }
+            let target = await MainActor.run { item.destinationURL }
+            let isTorrent = await MainActor.run { item.type == .torrent }
+            let specificSidecar = isTorrent ? target.appendingPathExtension("aria2") : nil
+
             while !Task.isCancelled {
-                if let files = try? FileManager.default.contentsOfDirectory(atPath: destDir) {
+                if let sidecar = specificSidecar,
+                   FileManager.default.fileExists(atPath: sidecar.path) {
+                    var fileURL = sidecar
+                    var rv = URLResourceValues()
+                    rv.isHidden = true
+                    try? fileURL.setResourceValues(rv)
+                } else if let files = try? FileManager.default.contentsOfDirectory(atPath: destDir) {
                     for file in files where file.hasSuffix(".aria2") {
                         var fileURL = URL(fileURLWithPath: destDir).appendingPathComponent(file)
                         var rv = URLResourceValues()
@@ -708,6 +749,26 @@ extension DownloadEngine {
         return (files, stderr.trimmingCharacters(in: .whitespacesAndNewlines))
     }
     
+    /// Returns the torrent's top-level content name. For multi-file torrents
+    /// this is the shared first path component (e.g.
+    /// `Resident Evil Requiem [FitGirl Repack]`). For single-file torrents
+    /// it's just the filename. Returns `nil` when the files don't share a
+    /// common root, in which case the caller should fall back to whatever
+    /// name was chosen earlier (typically the magnet `dn=` value).
+    nonisolated func torrentContentName(from files: [SubFile]) -> String? {
+        let firstSegments = files.compactMap { sub -> String? in
+            let path = sub.path.trimmingCharacters(in: .init(charactersIn: "/"))
+            guard !path.isEmpty else { return nil }
+            return path.split(separator: "/", maxSplits: 1).first.map(String.init)
+        }
+        guard let first = firstSegments.first, !first.isEmpty else { return nil }
+        // Single file at root: use the filename verbatim
+        if files.count == 1 && !files[0].path.contains("/") { return files[0].path }
+        // Multi-file with a shared content folder: use that folder name
+        if firstSegments.allSatisfy({ $0 == first }) { return first }
+        return nil
+    }
+
     nonisolated func parseShowFiles(_ output: String) -> [SubFile] {
         var files: [SubFile] = []
         let lines = output.components(separatedBy: .newlines)

@@ -220,9 +220,26 @@ public final class DownloadEngine {
         try? FileManager.default.removeItem(at: item.tempDirURL)
         try? FileManager.default.removeItem(at: item.destinationURL.appendingPathExtension("dysy"))
 
-        if item.url.scheme == "magnet" {
-            print(item.destinationURL.path)
-            try? FileManager.default.removeItem(atPath: item.destinationURL.path)
+        let isTorrent = item.url.scheme == "magnet" || item.type == .torrent
+        if isTorrent {
+            // Torrents always remove the on-disk content. The destination is
+            // now the torrent's content folder/file directly (no outer
+            // wrapper), so we delete it AND the sibling `.aria2` resume
+            // sidecar that aria2 leaves alongside it. Honor the trash
+            // preference here too.
+            let dest = item.destinationURL
+            let sidecar = dest.appendingPathExtension("aria2")
+            for url in [dest, sidecar] {
+                guard FileManager.default.fileExists(atPath: url.path) else { continue }
+                if trashFile {
+                    if (try? FileManager.default.trashItem(at: url, resultingItemURL: nil)) == nil {
+                        try? FileManager.default.removeItem(at: url)
+                    }
+                } else {
+                    try? FileManager.default.removeItem(at: url)
+                }
+            }
+            return
         }
 
         if trashFile || item.status != .completed {
