@@ -694,12 +694,13 @@ struct DownloadListView: View {
                 .foregroundStyle(.secondary)
                 .font(.system(size: 16, weight: .medium))
             
-            TextField("Search Downloads...", text: $search)
+            TextField("", text: $search, prompt: Text("Search Downloads...").foregroundColor(.secondary))
                 .textFieldStyle(.plain)
                 .font(.system(size: 14))
                 .focused($isSearchFocused)
                 .onChange(of: search) { _, new in
-                    if new.contains("\t") { search = new.replacingOccurrences(of: "\t", with: "") }
+                    guard new.contains("\t") else { return }
+                    search = new.replacingOccurrences(of: "\t", with: "")
                 }
             
             searchActionButtons
@@ -714,18 +715,23 @@ struct DownloadListView: View {
 
     @ViewBuilder
     private var searchActionButtons: some View {
-        if !search.isEmpty {
+        ZStack {
+            dictationButton
+                .opacity(search.isEmpty ? 1 : 0)
+                .allowsHitTesting(search.isEmpty)
+
             Button { search = "" } label: {
                 Image(systemName: "xmark.circle.fill")
                     .foregroundStyle(.secondary)
                     .font(.system(size: 16))
             }
             .buttonStyle(.plain)
-        } else {
-            dictationButton
+            .opacity(search.isEmpty ? 0 : 1)
+            .allowsHitTesting(!search.isEmpty)
         }
+        .frame(width: 20, height: 20)
     }
-
+    
     private var dictationButton: some View {
         Button {
             isSearchFocused = true

@@ -11,9 +11,9 @@
 		0A1B2C3D4E5F60718293A402 /* content.js in Resources */ = {isa = PBXBuildFile; fileRef = 0A1B2C3D4E5F60718293A302 /* content.js */; };
 		0A1B2C3D4E5F60718293A403 /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = 0A1B2C3D4E5F60718293A303 /* manifest.json */; };
 		0A1B2C3D4E5F60718293A404 /* popup.html in Resources */ = {isa = PBXBuildFile; fileRef = 0A1B2C3D4E5F60718293A304 /* popup.html */; };
-		0A1B2C3D4E5F60718293A4B0 /* BundleIcon.png in Resources */ = {isa = PBXBuildFile; fileRef = 0A1B2C3D4E5F60718293A3B0 /* BundleIcon.png */; };
 		53F624789BAF9FB2DB63EDBB /* SafariExtensionHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02FA831F84964C6E30740ED4 /* SafariExtensionHandler.swift */; };
 		712C631C2F8A952D00504612 /* LocalServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 712C631B2F8A952800504612 /* LocalServer.swift */; };
+		71360C8A2FA0752E00C9752C /* HLSDownloader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71360C892FA0752B00C9752C /* HLSDownloader.swift */; };
 		714070032F88B43700875649 /* popup.js in Resources */ = {isa = PBXBuildFile; fileRef = 714070022F88B43400875649 /* popup.js */; };
 		714913882F96081800167751 /* DownloadEngineUtilities.swift in Sources */ = {isa = PBXBuildFile; fileRef = 714913872F96081500167751 /* DownloadEngineUtilities.swift */; };
 		7149138A2F9609D700167751 /* DownloadEngineAria2.swift in Sources */ = {isa = PBXBuildFile; fileRef = 714913892F9609D400167751 /* DownloadEngineAria2.swift */; };
@@ -22,7 +22,6 @@
 		714913902F960A2300167751 /* DownloadEngineDASH.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7149138F2F960A1E00167751 /* DownloadEngineDASH.swift */; };
 		714913922F960A3700167751 /* DownloadEngineHLS.swift in Sources */ = {isa = PBXBuildFile; fileRef = 714913912F960A3400167751 /* DownloadEngineHLS.swift */; };
 		714913942F960AE800167751 /* DownloadModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 714913932F960AE600167751 /* DownloadModels.swift */; };
-		714913962F960B0500167751 /* HLSBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 714913952F960B0100167751 /* HLSBridge.swift */; };
 		714913982F960B3800167751 /* Utilities.swift in Sources */ = {isa = PBXBuildFile; fileRef = 714913972F960B3400167751 /* Utilities.swift */; };
 		7161C5EB2F8D4DC800FFB581 /* ProgressWindowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7161C5EA2F8D4DBC00FFB581 /* ProgressWindowView.swift */; };
 		7161C5ED2F8D4FB900FFB581 /* FailedDownloadDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7161C5EC2F8D4FB800FFB581 /* FailedDownloadDialog.swift */; };
@@ -90,13 +89,13 @@
 		0A1B2C3D4E5F60718293A302 /* content.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = content.js; sourceTree = "<group>"; };
 		0A1B2C3D4E5F60718293A303 /* manifest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = manifest.json; sourceTree = "<group>"; };
 		0A1B2C3D4E5F60718293A304 /* popup.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = popup.html; sourceTree = "<group>"; };
-		0A1B2C3D4E5F60718293A3B0 /* BundleIcon.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = BundleIcon.png; sourceTree = "<group>"; };
 		17671D7F8AB5C98F683D0703 /* URLSchemeHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = URLSchemeHandler.swift; sourceTree = "<group>"; };
 		2238E812354119FCD1EFFAC1 /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
 		24DFD2C04C85C517992B2C81 /* DownloadDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadDetailView.swift; sourceTree = "<group>"; };
 		253F5E76243124E291EBAB75 /* Daisy.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Daisy.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		7108AF5B2F8974030059958D /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		712C631B2F8A952800504612 /* LocalServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalServer.swift; sourceTree = "<group>"; };
+		71360C892FA0752B00C9752C /* HLSDownloader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HLSDownloader.swift; sourceTree = "<group>"; };
 		714070022F88B43400875649 /* popup.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = popup.js; sourceTree = "<group>"; };
 		714913872F96081500167751 /* DownloadEngineUtilities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadEngineUtilities.swift; sourceTree = "<group>"; };
 		714913892F9609D400167751 /* DownloadEngineAria2.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadEngineAria2.swift; sourceTree = "<group>"; };
@@ -105,14 +104,12 @@
 		7149138F2F960A1E00167751 /* DownloadEngineDASH.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadEngineDASH.swift; sourceTree = "<group>"; };
 		714913912F960A3400167751 /* DownloadEngineHLS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadEngineHLS.swift; sourceTree = "<group>"; };
 		714913932F960AE600167751 /* DownloadModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadModels.swift; sourceTree = "<group>"; };
-		714913952F960B0100167751 /* HLSBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HLSBridge.swift; sourceTree = "<group>"; };
 		714913972F960B3400167751 /* Utilities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Utilities.swift; sourceTree = "<group>"; };
 		7161C5EA2F8D4DBC00FFB581 /* ProgressWindowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProgressWindowView.swift; sourceTree = "<group>"; };
 		7161C5EC2F8D4FB800FFB581 /* FailedDownloadDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FailedDownloadDialog.swift; sourceTree = "<group>"; };
 		7161C5EE2F8D769600FFB581 /* SharedUIComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedUIComponents.swift; sourceTree = "<group>"; };
 		7161C5F02F8D7A9600FFB581 /* RemoveDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoveDialog.swift; sourceTree = "<group>"; };
 		7161C5F22F8D7AAF00FFB581 /* PropertiesSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PropertiesSheet.swift; sourceTree = "<group>"; };
-		71C1BBEB2F90C347004C7F1A /* HLSBridge-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "HLSBridge-Bridging-Header.h"; sourceTree = "<group>"; };
 		71C1BC3F2F921442004C7F1A /* background.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = background.js; sourceTree = "<group>"; };
 		71C1BC402F921442004C7F1A /* content.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = content.js; sourceTree = "<group>"; };
 		71C1BC412F921442004C7F1A /* manifest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = manifest.json; sourceTree = "<group>"; };
@@ -131,30 +128,6 @@
 		ECF7392741EE1B516970CA7B /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
-/* Begin PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
-		714913802F95762900167751 /* Exceptions for "external" folder in "Copy Files" phase from "DaisyApp" target */ = {
-			isa = PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet;
-			attributesByRelativePath = {
-				library/libhls_downloader.dylib = (CodeSignOnCopy, );
-			};
-			buildPhase = 71C1BC0E2F9164CF004C7F1A /* CopyFiles */;
-			membershipExceptions = (
-				library/libhls_downloader.dylib,
-			);
-		};
-/* End PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
-
-/* Begin PBXFileSystemSynchronizedRootGroup section */
-		71C1BBEC2F90C62D004C7F1A /* external */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-				714913802F95762900167751 /* Exceptions for "external" folder in "Copy Files" phase from "DaisyApp" target */,
-			);
-			path = external;
-			sourceTree = "<group>";
-		};
-/* End PBXFileSystemSynchronizedRootGroup section */
-
 /* Begin PBXGroup section */
 		0A1B2C3D4E5F60718293A305 /* Resources */ = {
 			isa = PBXGroup;
@@ -165,7 +138,6 @@
 				0A1B2C3D4E5F60718293A303 /* manifest.json */,
 				0A1B2C3D4E5F60718293A304 /* popup.html */,
 				71C764422F9C6F0A00972F96 /* inject.js */,
-				0A1B2C3D4E5F60718293A3B0 /* BundleIcon.png */,
 			);
 			name = Resources;
 			path = SafariExtension/Resources;
@@ -196,8 +168,6 @@
 		746B01343AD58FE591E8AC47 /* Daisy */ = {
 			isa = PBXGroup;
 			children = (
-				71C1BBEC2F90C62D004C7F1A /* external */,
-				71C1BBEB2F90C347004C7F1A /* HLSBridge-Bridging-Header.h */,
 				E77115DB637571F77701CAF2 /* App */,
 				C75B2CAB48984D2934A96A32 /* Core */,
 				F8B3F4C4AA7F386726B0C2B8 /* UI */,
@@ -230,8 +200,8 @@
 		C75B2CAB48984D2934A96A32 /* Core */ = {
 			isa = PBXGroup;
 			children = (
+				71360C892FA0752B00C9752C /* HLSDownloader.swift */,
 				714913972F960B3400167751 /* Utilities.swift */,
-				714913952F960B0100167751 /* HLSBridge.swift */,
 				714913932F960AE600167751 /* DownloadModels.swift */,
 				714913912F960A3400167751 /* DownloadEngineHLS.swift */,
 				7149138F2F960A1E00167751 /* DownloadEngineDASH.swift */,
@@ -317,9 +287,6 @@
 			dependencies = (
 				419F39BB7FEB5AAF71E3D40A /* PBXTargetDependency */,
 			);
-			fileSystemSynchronizedGroups = (
-				71C1BBEC2F90C62D004C7F1A /* external */,
-			);
 			name = DaisyApp;
 			packageProductDependencies = (
 			);
@@ -367,7 +334,6 @@
 				0A1B2C3D4E5F60718293A403 /* manifest.json in Resources */,
 				0A1B2C3D4E5F60718293A404 /* popup.html in Resources */,
 				71C764432F9C6F0A00972F96 /* inject.js in Resources */,
-				0A1B2C3D4E5F60718293A4B0 /* BundleIcon.png in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -394,6 +360,7 @@
 			files = (
 				712C631C2F8A952D00504612 /* LocalServer.swift in Sources */,
 				714913942F960AE800167751 /* DownloadModels.swift in Sources */,
+				71360C8A2FA0752E00C9752C /* HLSDownloader.swift in Sources */,
 				94239571324F1E220C2EDA5A /* AddDownloadSheet.swift in Sources */,
 				AA11BB22CC33DD44EE55FF66 /* ConfirmDownloadView.swift in Sources */,
 				E6466915463132C126752D64 /* AppDelegate.swift in Sources */,
@@ -415,7 +382,6 @@
 				714913882F96081800167751 /* DownloadEngineUtilities.swift in Sources */,
 				FE3349E82E4588853A8EEABD /* URLSchemeHandler.swift in Sources */,
 				7149138A2F9609D700167751 /* DownloadEngineAria2.swift in Sources */,
-				714913962F960B0500167751 /* HLSBridge.swift in Sources */,
 				714913982F960B3800167751 /* Utilities.swift in Sources */,
 				7149138E2F9609FB00167751 /* DownloadEngineYouTube.swift in Sources */,
 			);
