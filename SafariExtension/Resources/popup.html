@@ -21,36 +21,19 @@
     margin-bottom: 16px;
   }
 
-  .logo {
-    width: 36px;
-    height: 36px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-  }
-
-  .logo img {
-    width: 100%;
-    height: 100%;
-    object-fit: contain;
-    -webkit-user-drag: none;
-  }
+  .logo { width: 36px; height: 36px; flex-shrink: 0; }
+  .logo img { width: 100%; height: 100%; object-fit: contain; -webkit-user-drag: none; }
 
   .title { font-size: 15px; font-weight: 600; }
   .subtitle { font-size: 11px; color: #8e8e93; margin-top: 1px; }
 
-  .divider {
-    height: 1px;
-    background: rgba(255,255,255,0.08);
-    margin: 12px 0;
-  }
+  .divider { height: 1px; background: rgba(255,255,255,0.08); margin: 10px 0; }
 
   .toggle-row {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 8px 0;
+    padding: 7px 0;
   }
 
   .toggle-label { font-size: 13px; color: #f2f2f7; }
@@ -76,10 +59,8 @@
 
   .toggle-thumb {
     position: absolute;
-    top: 2px;
-    left: 2px;
-    width: 18px;
-    height: 18px;
+    top: 2px; left: 2px;
+    width: 18px; height: 18px;
     background: white;
     border-radius: 50%;
     transition: transform 0.2s;
@@ -91,14 +72,12 @@
   .toggle input:checked ~ .toggle-thumb { transform: translateX(18px); }
 
   .status-dot {
-    width: 7px;
-    height: 7px;
+    width: 7px; height: 7px;
     border-radius: 50%;
     background: #30d158;
     display: inline-block;
     margin-right: 4px;
   }
-
   .status-dot.inactive { background: #8e8e93; }
 
   .status-line {
@@ -106,24 +85,125 @@
     color: #8e8e93;
     display: flex;
     align-items: center;
-    margin-top: 4px;
+    margin-top: 3px;
+  }
+
+  .section-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: #636366;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin: 12px 0 5px;
+  }
+
+  select {
+    width: 100%;
+    padding: 7px 28px 7px 10px;
+    background: #2c2c2e;
+    color: #f2f2f7;
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 8px;
+    font-size: 13px;
+    font-family: inherit;
+    cursor: pointer;
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%238e8e93' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+    background-color: #2c2c2e;
+  }
+  select:focus { outline: none; border-color: #0a84ff; }
+
+  /* Blacklist */
+  .blacklist-area {
+    margin-top: 8px;
+    display: none;
+  }
+  .blacklist-area.visible { display: block; }
+
+  .blacklist-input-row {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 6px;
+  }
+
+  .blacklist-input-row input {
+    flex: 1;
+    padding: 6px 8px;
+    background: #2c2c2e;
+    color: #f2f2f7;
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 7px;
+    font-size: 12px;
+    font-family: inherit;
+    outline: none;
+  }
+  .blacklist-input-row input:focus { border-color: #0a84ff; }
+  .blacklist-input-row input::placeholder { color: #636366; }
+
+  .add-btn {
+    padding: 6px 10px;
+    background: rgba(10,132,255,0.15);
+    color: #0a84ff;
+    border: 1px solid rgba(10,132,255,0.3);
+    border-radius: 7px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .add-btn:hover { background: rgba(10,132,255,0.25); }
+
+  .blacklist-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+  }
+
+  .blacklist-tag {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    background: #2c2c2e;
+    border-radius: 20px;
+    font-size: 11px;
+    color: #d1d1d6;
+  }
+
+  .blacklist-tag button {
+    background: none;
+    border: none;
+    color: #636366;
+    cursor: pointer;
+    font-size: 11px;
+    padding: 0;
+    line-height: 1;
+  }
+  .blacklist-tag button:hover { color: #ff453a; }
+
+  .empty-hint {
+    font-size: 11px;
+    color: #48484a;
+    font-style: italic;
   }
 
   .open-btn {
     width: 100%;
     margin-top: 12px;
     padding: 8px;
-    background: rgba(10, 132, 255, 0.15);
+    background: rgba(10,132,255,0.15);
     color: #0a84ff;
-    border: 1px solid rgba(10, 132, 255, 0.3);
+    border: 1px solid rgba(10,132,255,0.3);
     border-radius: 8px;
     font-size: 13px;
     font-weight: 500;
     cursor: pointer;
     transition: background 0.15s;
   }
-
-  .open-btn:hover { background: rgba(10, 132, 255, 0.25); }
+  .open-btn:hover { background: rgba(10,132,255,0.25); }
 
   .tip {
     margin-top: 12px;
@@ -134,15 +214,14 @@
     color: #8e8e93;
     line-height: 1.5;
   }
-
   .tip b { color: #ebebf5; }
 </style>
 </head>
 <body>
   <div class="header">
-    <div class="logo"><img src="BundleIcon.png" alt="Daisy"></div>
+    <div class="logo"><img src="AppIcon.png" alt="Daisy"></div>
     <div>
-      <div class="title">Dispatch</div>
+      <div class="title">Daisy</div>
       <div class="subtitle">Download Manager</div>
     </div>
   </div>
@@ -150,7 +229,7 @@
   <div class="toggle-row">
     <div>
       <div class="toggle-label">Intercept Downloads</div>
-      <div class="toggle-desc">Send file downloads to Dispatch</div>
+      <div class="toggle-desc">Send file downloads to Daisy</div>
     </div>
     <label class="toggle">
       <input type="checkbox" id="enableToggle">
@@ -166,10 +245,42 @@
 
   <div class="divider"></div>
 
-  <button class="open-btn" id="openApp">Open Dispatch App</button>
+  <div class="toggle-row">
+    <div>
+      <div class="toggle-label">Video Grabber</div>
+      <div class="toggle-desc">Show download overlay on videos</div>
+    </div>
+    <label class="toggle">
+      <input type="checkbox" id="videoGrabToggle">
+      <div class="toggle-track"></div>
+      <div class="toggle-thumb"></div>
+    </label>
+  </div>
+
+  <div class="blacklist-area" id="blacklistArea">
+    <div class="blacklist-input-row">
+      <input type="text" id="blacklistInput" placeholder="example.com">
+      <button class="add-btn" id="blacklistAdd">Add</button>
+    </div>
+    <div class="blacklist-tags" id="blacklistTags">
+      <span class="empty-hint">No sites blocked</span>
+    </div>
+  </div>
+
+  <div class="divider"></div>
+
+  <div class="section-label">Bypass Key</div>
+  <select id="bypassKey">
+    <option value="Alt">Option / Alt</option>
+    <option value="Shift">Shift</option>
+    <option value="Control">Control</option>
+    <option value="Meta">Command / Windows</option>
+  </select>
+
+  <button class="open-btn" id="openApp">Open Daisy</button>
 
   <div class="tip">
-    <b>Tip:</b> Right-click any link and choose <b>"Download with Dispatch"</b> to send it manually.
+    <b>Tip:</b> Right-click any link and choose <b>"Download with Daisy"</b> to send it manually.
   </div>
 
   <script src="popup.js"></script>

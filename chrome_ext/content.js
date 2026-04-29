@@ -15,17 +15,28 @@ const IS_TOP_FRAME = window === window.top;
 
 let bypassKey = "Alt";
 let isExtensionDisabled = false;
+let isVideoGrabEnabled = true;
+let videoGrabBlacklist = [];
 let isKeyCurrentlyHeld = false;
 let lastBypassInteractionTime = 0;
 
-_api.storage.local.get(['bypassKey', 'isExtensionDisabled'], (res) => {
+function currentHostBlacklisted() {
+    const host = window.location.hostname.replace(/^www\./, '');
+    return videoGrabBlacklist.some(h => host === h || host.endsWith('.' + h));
+}
+
+_api.storage.local.get(['bypassKey', 'isExtensionDisabled', 'videoGrabEnabled', 'videoGrabBlacklist'], (res) => {
   if (res && res.bypassKey) bypassKey = res.bypassKey;
   if (res && res.isExtensionDisabled !== undefined) isExtensionDisabled = res.isExtensionDisabled;
+  if (res && res.videoGrabEnabled !== undefined) isVideoGrabEnabled = res.videoGrabEnabled !== false;
+  if (res && Array.isArray(res.videoGrabBlacklist)) videoGrabBlacklist = res.videoGrabBlacklist;
 });
 
 _api.storage.onChanged.addListener((changes) => {
   if (changes.bypassKey) bypassKey = changes.bypassKey.newValue;
   if (changes.isExtensionDisabled) isExtensionDisabled = changes.isExtensionDisabled.newValue;
+  if (changes.videoGrabEnabled) isVideoGrabEnabled = changes.videoGrabEnabled.newValue !== false;
+  if (changes.videoGrabBlacklist) videoGrabBlacklist = changes.videoGrabBlacklist.newValue || [];
 });
 
 function isBypassKeyPressed(e) {
@@ -1048,7 +1059,7 @@ document.createElement = function(tag, ...args) {
             
             const _runtime = (typeof browser !== "undefined" ? browser : chrome);
             let _bundleIconURL = "";
-            try { _bundleIconURL = _runtime && _runtime.runtime && _runtime.runtime.getURL ? _runtime.runtime.getURL('BundleIcon.png') : ""; } catch (_) {}
+            try { _bundleIconURL = _runtime && _runtime.runtime && _runtime.runtime.getURL ? _runtime.runtime.getURL('AppIcon.png') : ""; } catch (_) {}
             const _iconMarkup = `<span class="daisydm-header-icon">🌼</span>`;
             globalOverlay.innerHTML = `
                 <div class="daisydm-overlay-header">
@@ -1123,7 +1134,7 @@ document.createElement = function(tag, ...args) {
             if (el.dataset.daisyBound) return;
             el.dataset.daisyBound = "true";
             el.addEventListener('mouseenter', () => {
-                if (pageDismissed || dismissedEls.has(el) || !hasDownloadableMedia(el)) return;
+                if (!isVideoGrabEnabled || currentHostBlacklisted() || pageDismissed || dismissedEls.has(el) || !hasDownloadableMedia(el)) return;
                 initGlobalOverlay();
                 clearTimeout(hideTimeout);
                 hideTimeout = null;

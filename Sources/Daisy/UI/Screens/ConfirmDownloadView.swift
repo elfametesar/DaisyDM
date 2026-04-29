@@ -34,6 +34,7 @@ struct ConfirmDownloadView: View {
     
     @State private var isResolving  = false
     @State private var resolvedSize: Int64 = 0
+    @State private var resolvedDuration: Double = 0
     @State private var isDetectedHLS: Bool = false
     @State private var isDetectedDASH: Bool = false
     @State private var forceDirectDownload: Bool
@@ -145,10 +146,17 @@ struct ConfirmDownloadView: View {
                         if isResolving {
                             ProgressView().controlSize(.small).scaleEffect(0.6)
                         } else {
-                            Text(resolvedSize > 0 ? "Size: \(formatBytes(resolvedSize))" : "Size: Unknown")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(.secondary)
-                                .monospacedDigit()
+                            if isDetectedHLS {
+                                Text(resolvedDuration > 0 ? "Length: \(formatDuration(resolvedDuration))" : "Length: Unknown")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(.secondary)
+                                    .monospacedDigit()
+                            } else {
+                                Text(resolvedSize > 0 ? "Size: \(formatBytes(resolvedSize))" : "Size: Unknown")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(.secondary)
+                                    .monospacedDigit()
+                            }
                         }
                     }
                 }
@@ -486,6 +494,9 @@ struct ConfirmDownloadView: View {
             
             if let httpResp = response as? HTTPURLResponse {
                 let ct = (httpResp.value(forHTTPHeaderField: "Content-Type") ?? httpResp.value(forHTTPHeaderField: "content-type"))?.lowercased() ?? ""
+                let finalURL = httpResp.url ?? request.url
+                let isHLS = isHLSUrl || ct.contains("mpegurl") || ct.contains("m3u8") || ct.contains("apple.mpegurl")
+                let isDASH = isDASHUrl || ct.contains("dash+xml")
                 
                 await MainActor.run {
                     var foundName: String? = nil
@@ -519,7 +530,6 @@ struct ConfirmDownloadView: View {
                     }
 
                     if foundName == nil {
-                        let finalURL = httpResp.url ?? request.url
                         let lastComponent = finalURL.lastPathComponent.removingPercentEncoding ?? finalURL.lastPathComponent
                         if lastComponent.contains(".") && lastComponent != "/" {
                             foundName = lastComponent
@@ -545,9 +555,6 @@ struct ConfirmDownloadView: View {
                             self.filename = fn
                         }
                     }
-                    
-                    let isHLS = isHLSUrl || ct.contains("mpegurl") || ct.contains("m3u8") || ct.contains("apple.mpegurl")
-                    let isDASH = isDASHUrl || ct.contains("dash+xml")
                     
                     if isHLS {
                         self.isDetectedHLS = true
@@ -583,8 +590,67 @@ struct ConfirmDownloadView: View {
                         }
                     }
                 }
+                
+                // Fetch HLS duration if applicable (done outside MainActor to prevent blocking)
+                if isHLS {
+                    let duration = await fetchHLSDuration(url: finalURL, requestInfo: request)
+                    await MainActor.run {
+                        self.resolvedDuration = duration
+                    }
+                }
             }
         } catch { }
+    }
+    
+    private func fetchHLSDuration(url: URL, requestInfo: ConfirmDownloadRequest, depth: Int = 0) async -> Double {
+        guard depth < 3 else { return 0 } // Prevent infinite recursion for nested playlists
+        
+        var req = URLRequest(url: url)
+        if !requestInfo.ua.isEmpty { req.setValue(requestInfo.ua, forHTTPHeaderField: "User-Agent") }
+        if !requestInfo.referer.isEmpty { req.setValue(requestInfo.referer, forHTTPHeaderField: "Referer") }
+        if !requestInfo.cookies.isEmpty { req.setValue(requestInfo.cookies, forHTTPHeaderField: "Cookie") }
+        if let hdrs = requestInfo.headers {
+            for (k, v) in hdrs {
+                let lower = k.lowercased()
+                if lower != "host" && lower != "accept-encoding" && lower != "range" {
+                    req.setValue(v, forHTTPHeaderField: k)
+                }
+            }
+        }
+        
+        guard let (data, resp) = try? await URLSession.shared.data(for: req),
+              let httpResp = resp as? HTTPURLResponse,
+              (200...299).contains(httpResp.statusCode),
+              let manifest = String(data: data, encoding: .utf8) else {
+            return 0
+        }
+        
+        var totalDuration: Double = 0
+        let lines = manifest.components(separatedBy: .newlines)
+        
+        for i in 0..<lines.count {
+            let line = lines[i].trimmingCharacters(in: .whitespaces)
+            if line.hasPrefix("#EXT-X-STREAM-INF") {
+                // It's a master playlist, look for the sub-playlist URL on subsequent lines
+                for j in (i+1)..<lines.count {
+                    let nextLine = lines[j].trimmingCharacters(in: .whitespaces)
+                    if !nextLine.isEmpty && !nextLine.hasPrefix("#") {
+                        if let subURL = URL(string: nextLine, relativeTo: url) {
+                            return await fetchHLSDuration(url: subURL, requestInfo: requestInfo, depth: depth + 1)
+                        }
+                        break
+                    }
+                }
+                break // Only parse the first variant stream for simplicity
+            } else if line.hasPrefix("#EXTINF:") {
+                let valStr = line.dropFirst(8).components(separatedBy: ",").first ?? ""
+                if let val = Double(valStr) {
+                    totalDuration += val
+                }
+            }
+        }
+        
+        return totalDuration
     }
 
     private func getInstalledYTDlpPath() -> String? {

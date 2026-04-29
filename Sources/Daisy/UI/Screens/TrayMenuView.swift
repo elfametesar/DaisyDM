@@ -32,6 +32,8 @@ class TrayViewModel: ObservableObject {
     @Published var trayedDownloads: [DownloadItem] = []
     @AppStorage("pinnedTrayItemId") var pinnedItemId: String = ""
 
+    let openItemSubject = PassthroughSubject<UUID, Never>()
+
     @Published var layout: MenuBarLayout = {
         let val = UserDefaults.standard.integer(forKey: "trayLayout")
         return MenuBarLayout(rawValue: val) ?? .barSpeed
@@ -258,14 +260,19 @@ class TrayController: NSObject, ObservableObject {
             statusItem?.button?.performClick(nil)
             statusItem?.menu = nil
         } else {
-            if popover.isShown {
-                closePopover()
+            let items = TrayViewModel.shared.trayedDownloads
+            if items.count == 1, let item = items.first {
+                TrayViewModel.shared.openItemSubject.send(item.id)
             } else {
-                popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
-                startPopoverMonitor()
-                if let win = popover.contentViewController?.view.window {
-                    win.makeKeyAndOrderFront(nil)
-                    NSApp.activate(ignoringOtherApps: true)
+                if popover.isShown {
+                    closePopover()
+                } else {
+                    popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
+                    startPopoverMonitor()
+                    if let win = popover.contentViewController?.view.window {
+                        win.makeKeyAndOrderFront(nil)
+                        NSApp.activate(ignoringOtherApps: true)
+                    }
                 }
             }
         }
@@ -302,6 +309,11 @@ struct TrayLabelView: View {
                 openWindow(value: item.id)
                 viewModel.removeFromTray(item.id)
             }
+        }
+        .onReceive(viewModel.openItemSubject) { id in
+            NSApp.activate(ignoringOtherApps: true)
+            openWindow(value: id)
+            viewModel.removeFromTray(id)
         }
     }
 

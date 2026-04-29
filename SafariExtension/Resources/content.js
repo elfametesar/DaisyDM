@@ -1,6 +1,6 @@
 // content.js - Daisy Extension (Chrome & Safari)
 
-// INJECT XHR/FETCH/NAV INTERCEPTOR
+// INJECT XHR/FETCH INTERCEPTOR TO CAPTURE AUTH HEADERS SENT BY CLIENT JS
 try {
     const interceptorScript = document.createElement('script');
     interceptorScript.src = (typeof browser !== "undefined" ? browser : chrome).runtime.getURL('inject.js');
@@ -15,17 +15,28 @@ const IS_TOP_FRAME = window === window.top;
 
 let bypassKey = "Alt";
 let isExtensionDisabled = false;
+let isVideoGrabEnabled = true;
+let videoGrabBlacklist = [];
 let isKeyCurrentlyHeld = false;
 let lastBypassInteractionTime = 0;
 
-_api.storage.local.get(['bypassKey', 'isExtensionDisabled'], (res) => {
+function currentHostBlacklisted() {
+    const host = window.location.hostname.replace(/^www\./, '');
+    return videoGrabBlacklist.some(h => host === h || host.endsWith('.' + h));
+}
+
+_api.storage.local.get(['bypassKey', 'isExtensionDisabled', 'videoGrabEnabled', 'videoGrabBlacklist'], (res) => {
   if (res && res.bypassKey) bypassKey = res.bypassKey;
   if (res && res.isExtensionDisabled !== undefined) isExtensionDisabled = res.isExtensionDisabled;
+  if (res && res.videoGrabEnabled !== undefined) isVideoGrabEnabled = res.videoGrabEnabled !== false;
+  if (res && Array.isArray(res.videoGrabBlacklist)) videoGrabBlacklist = res.videoGrabBlacklist;
 });
 
 _api.storage.onChanged.addListener((changes) => {
   if (changes.bypassKey) bypassKey = changes.bypassKey.newValue;
   if (changes.isExtensionDisabled) isExtensionDisabled = changes.isExtensionDisabled.newValue;
+  if (changes.videoGrabEnabled) isVideoGrabEnabled = changes.videoGrabEnabled.newValue !== false;
+  if (changes.videoGrabBlacklist) videoGrabBlacklist = changes.videoGrabBlacklist.newValue || [];
 });
 
 function isBypassKeyPressed(e) {
@@ -47,11 +58,14 @@ document.addEventListener("keydown", (e) => {
     }
 }, { capture: true, passive: true });
 
-document.addEventListener("keyup", (e) => { updateBypassState(e); }, { capture: true, passive: true });
+document.addEventListener("keyup", (e) => {
+    updateBypassState(e);
+}, { capture: true, passive: true });
 
 document.addEventListener("mousedown", (e) => {
     updateBypassState(e);
     if (isKeyCurrentlyHeld) {
+        // Only trigger a grace period token if interacting with page elements
         const isInteractive = e.target.closest('a, button, [role="button"], input, .btn, video, img');
         if (isInteractive) {
             lastBypassInteractionTime = Date.now();
@@ -69,8 +83,11 @@ function shouldBypass(isProgrammatic = false) {
     if (isExtensionDisabled) return true;
     if (isKeyCurrentlyHeld) return true;
     
+    // 60-second grace period for asynchronous programmatic blob downloads
     if (isProgrammatic && (Date.now() - lastBypassInteractionTime < 60000)) {
-        lastBypassInteractionTime = 0;
+        // Do NOT consume the background script's token here. The background script
+        // needs that active token so it knows to release the native download.
+        lastBypassInteractionTime = 0; // Consume local token only
         return true;
     }
     return false;
@@ -80,6 +97,7 @@ function shouldBypass(isProgrammatic = false) {
 let sniffedMediaUrls = [];
 let _lastSeenUrl = window.location.href;
 const capturedMediaRequestHeaders = new Map();
+
 const playerUrlMap = new WeakMap();
 const iframeSrcMap = new WeakMap();
 
@@ -98,6 +116,7 @@ setInterval(() => {
 
 function getLikelyTargetMediaElements() {
     const elements = Array.from(document.querySelectorAll('video, iframe'));
+    
     const playing = elements.filter(v => v.tagName === 'VIDEO' && !v.paused && v.readyState > 0);
     if (playing.length > 0) return playing;
     
@@ -192,6 +211,7 @@ function bubbleMediaToTop(data) {
     
     if (IS_TOP_FRAME) {
         const now = Date.now();
+        // Maintain list memory for a 2-hour sliding window, capped at 200 URLs to solve missing videos that ended fetching.
         sniffedMediaUrls = sniffedMediaUrls.filter(m => now - m.timestamp < 7200000).slice(-200);
 
         if (!sniffedMediaUrls.some(m => normalizeUrl(m.url) === normalizeUrl(url))) {
@@ -215,33 +235,14 @@ function bubbleMediaToTop(data) {
     }
 }
 
-// Unified URL Check Function
-function isLikelyDownloadUrl(urlStr) {
-    if (!urlStr) return false;
-    const exts = ['.mp4', '.mkv', '.avi', '.webm', '.mov', '.wmv', '.flv', '.ts', '.m3u8', '.mpd', '.zip', '.rar', '.pdf', '.dmg', '.pkg', '.iso', '.bin', '.tar', '.gz'];
-    try {
-        const u = new URL(urlStr, document.baseURI);
-        const path = u.pathname.toLowerCase();
-        const href = u.href.toLowerCase();
-        return exts.some(ext => path.endsWith(ext)) || href.includes('/download/') || href.includes('?download=');
-    } catch {
-        const lower = urlStr.toLowerCase();
-        return exts.some(ext => lower.endsWith(ext)) || lower.includes('/download/') || lower.includes('?download=');
-    }
-}
-
 // Tracks the most recent user gesture on a download-like element so that
 // we can recover a real filename when a site (Claude, Notion, Drive, …)
 // fetches the file and calls a synthetic `<a download>` whose element
-// is detached from the DOM before we inspect it. The scraper below only
-// walks ancestors of the clicked element — that's useless once the
-// element has been removed.
+// is detached from the DOM before we inspect it.
 let lastDownloadClickContext = { filename: null, at: 0 };
 
 function _rememberDownloadClick(target) {
     if (!target || !(target instanceof Element)) return;
-    // Walk up a short chain — the user may have clicked on an icon
-    // inside the download button.
     let el = target;
     for (let i = 0; i < 4 && el; i++, el = el.parentElement) {
         const candidate = scrapeFilenameFromDOM(el);
@@ -252,32 +253,16 @@ function _rememberDownloadClick(target) {
     }
 }
 
-// Capture phase so we see the click before any site-level handler can
-// stop propagation. `pointerdown` is also covered because some UIs
-// (Claude, Linear) download on pointerdown rather than click.
 document.addEventListener('pointerdown', (e) => { _rememberDownloadClick(e.target); }, true);
 document.addEventListener('click', (e) => { _rememberDownloadClick(e.target); }, true);
 
 function _recentClickFilename() {
     if (!lastDownloadClickContext.filename) return null;
-    // 4 s is long enough for a fetch → blob → click cycle but short
-    // enough that we never reuse an old click's context for a fresh
-    // user gesture.
     if (Date.now() - lastDownloadClickContext.at > 4000) return null;
     return lastDownloadClickContext.filename;
 }
 
 window.addEventListener("message", (e) => {
-    if (e.data && e.data.__daisyTriggerDownload) {
-        if (shouldBypass(true)) return;
-        const url = e.data.__daisyTriggerDownload;
-        let filename = e.data.__daisyFilename;
-        if (!filename) filename = _recentClickFilename();
-        if (!filename) filename = extractFilename(url);
-        sendToDispatch(url, filename);
-        return;
-    }
-
     if (e.data && e.data.__daisyMedia) bubbleMediaToTop(e.data.__daisyMedia);
     if (e.data && e.data.__daisyMediaHeaders) {
         const { url, headers } = e.data.__daisyMediaHeaders;
@@ -288,12 +273,12 @@ window.addEventListener("message", (e) => {
             try {
                 _api.runtime.sendMessage({ type: "PUSH_MEDIA_HEADERS", headers: { [url]: headers } }).catch(() => {});
             } catch(err) {}
-            // Only register as a download candidate if the URL actually
+            // Only register as a download candidate when the URL actually
             // looks like media. The fetch/XHR interceptor in inject.js
             // intentionally fires for any request with custom headers or
             // a Range header (so we don't miss cookied media), but most
-            // of those are auth/RPC calls — surfacing them in the popup
-            // produced the "extension grabs irrelevant stuff" reports.
+            // of those are auth/RPC calls — surfacing them produced the
+            // "extension grabs irrelevant stuff" reports.
             if (typeof isStrictMediaUrl === 'function' && isStrictMediaUrl(url)) {
                 bubbleMediaToTop({ url, mediaType: 'unknown', frameOrigin: window.location.origin });
             }
@@ -322,70 +307,25 @@ function getActualYtFormats() {
 
 function getActualYtFormatsAsync() {
     return new Promise(resolve => {
-        const reqId = Math.random().toString(36).slice(2);
-        
+        // Has to outlive inject.js's own retry window (~1500ms) so we don't
+        // time out before the page-context harvester finishes waiting for
+        // YouTube's player to finish initializing after an SPA navigation.
         const timeout = setTimeout(() => {
             window.removeEventListener("message", listener);
             resolve(getActualYtFormats());
         }, 2000);
 
         const listener = (e) => {
-            let incoming = null;
             if (e.data && e.data.__daisyYtFormatsResp) {
-                incoming = e.data.__daisyYtFormatsResp;
-            } else if (e.data && e.data.__daisyInlineYtResp === reqId) {
-                incoming = e.data.formats || [];
-            }
-            
-            if (incoming !== null) {
-                let formats = new Set(incoming);
+                clearTimeout(timeout);
+                window.removeEventListener("message", listener);
+                let formats = new Set(e.data.__daisyYtFormatsResp);
                 getActualYtFormats().forEach(h => formats.add(h));
-                
-                // Prevent early resolution with empty arrays caused by stale listeners.
-                // We resolve immediately only if formats are found. Otherwise, let it
-                // wait for the inline script response or the timeout.
-                if (formats.size > 0) {
-                    clearTimeout(timeout);
-                    window.removeEventListener("message", listener);
-                    resolve(Array.from(formats).sort((a, b) => b - a));
-                }
+                resolve(Array.from(formats).sort((a, b) => b - a));
             }
         };
-        
         window.addEventListener("message", listener);
         window.postMessage({ __daisyReqYtFormats: true }, "*");
-
-        // Ephemeral script injection directly queries the active YouTube player
-        // bypassing stale SPA script tags.
-        try {
-            const script = document.createElement('script');
-            script.textContent = `
-                (function() {
-                    let formats = new Set();
-                    try {
-                        let player = document.getElementById('movie_player') || document.querySelector('ytd-player');
-                        let resp = null;
-                        if (player && typeof player.getPlayerResponse === 'function') {
-                            resp = player.getPlayerResponse();
-                        }
-                        if (!resp && window.ytInitialPlayerResponse) {
-                            resp = window.ytInitialPlayerResponse;
-                        }
-                        if (resp && resp.streamingData) {
-                            let allFormats = (resp.streamingData.formats || []).concat(resp.streamingData.adaptiveFormats || []);
-                            allFormats.forEach(f => {
-                                if (f.height && f.height >= 144 && f.height <= 4320) {
-                                    formats.add(f.height);
-                                }
-                            });
-                        }
-                    } catch(e) {}
-                    window.postMessage({ __daisyInlineYtResp: "${reqId}", formats: Array.from(formats) }, "*");
-                })();
-            `;
-            (document.head || document.documentElement).appendChild(script);
-            script.remove();
-        } catch(e) {}
     });
 }
 
@@ -408,19 +348,16 @@ function isStrictMediaUrl(urlStr) {
         href = String(urlStr).toLowerCase();
         path = href.split('?')[0].split('#')[0];
     }
-    // Reject obvious non-media file types up front
     const reject = ['.js', '.mjs', '.cjs', '.ts.map', '.js.map', '.css', '.html', '.htm',
                     '.json', '.xml', '.svg', '.png', '.jpg', '.jpeg', '.gif', '.webp',
                     '.ico', '.woff', '.woff2', '.ttf', '.otf', '.eot', '.txt'];
     for (const r of reject) {
         if (path.endsWith(r)) return false;
     }
-    // Accept: ends with a known media extension (optionally followed by query/fragment)
     const mediaExts = ['.m3u8', '.mpd', '.mp4', '.webm', '.mov', '.mkv', '.flv', '.avi', '.wmv', '.m4a', '.mp3'];
     for (const ext of mediaExts) {
         if (path.endsWith(ext)) return true;
     }
-    // Accept: streaming-style path indicators
     const streamHints = ['/hls/', '/dash/', '/m3u8/', '/manifest', '/playlist', 'master.m3u8', 'index.m3u8'];
     for (const hint of streamHints) {
         if (href.includes(hint)) return true;
@@ -432,11 +369,6 @@ function sniffScriptUrls(root) {
     const found = [];
     try {
         const scripts = (root || document).querySelectorAll('script');
-        // Anchor each accept to a real path-segment boundary so we don't
-        // gobble up `foo.mp4-handler.js` or similar accidental substrings,
-        // and drop `.ts` from the bare-extension list (it matches every
-        // TypeScript module URL on modern bundled sites). HLS segment
-        // collection still works through the `/hls/` / `/m3u8` path hints.
         const mediaRe = /(?:https?:)?\/\/[^\s'"\\]+?(?:\.m3u8(?=[?#"'\s]|$)|\.mpd(?=[?#"'\s]|$)|\.mp4(?=[?#"'\s]|$)|\.webm(?=[?#"'\s]|$)|\.mov(?=[?#"'\s]|$)|\.mkv(?=[?#"'\s]|$)|\.flv(?=[?#"'\s]|$)|\.avi(?=[?#"'\s]|$)|\.m4a(?=[?#"'\s]|$)|\/m3u8(?:[\/?]|$)|\/hls\/|\/dash\/|\/m3\/|\/manifest(?=[\/?#"'\s]|$))[^\s'"\\,;}\]]*/gi;
         for (let s of scripts) {
             const text = s.textContent || "";
@@ -503,6 +435,7 @@ function runScriptSniffer(root) {
     if (IS_TOP_FRAME) sniffMailRu(root);
 }
 
+// mail.ru / my.mail.ru video support.
 async function sniffMailRu(root) {
     try {
         const host = window.location.hostname;
@@ -614,7 +547,7 @@ async function fetchHlsQualities(masterUrl) {
 
         let manifestTitle = null;
         const titleMatch = text.match(/#EXT-X-SESSION-DATA:[^\n]*DATA-ID="[^"]*title[^"]*"[^\n]*VALUE="([^"]+)"/i)
-                         || text.match(/#EXT-X-TITLE:([^\n]+)/i);
+                        || text.match(/#EXT-X-TITLE:([^\n]+)/i);
         if (titleMatch) manifestTitle = titleMatch[1].trim();
 
         if (!text.includes('#EXT-X-STREAM-INF')) {
@@ -705,18 +638,12 @@ function getExtFromUrl(url) {
 }
 
 function extractFilename(url, el) {
-    // Try URL-derived name first.
     let urlName = "download";
     try {
         const parts = new URL(url).pathname.split("/");
         urlName = decodeURIComponent(parts[parts.length - 1]) || "download";
     } catch {}
 
-    // If the URL-derived name is clearly generic (no extension, or is
-    // an API endpoint like `/content`, `/download`, `/blob/...`), look
-    // for a real filename in the clicked element's surroundings. App-
-    // style pages (Claude, Notion, Gmail, Dropbox) render the real
-    // file name as text next to the download button.
     const looksGeneric = !urlName ||
         urlName === "download" || urlName === "content" ||
         urlName === "attachment" || urlName === "file" ||
@@ -732,16 +659,11 @@ function extractFilename(url, el) {
 /**
  * Walk up from a clicked element looking for a text node or attribute
  * that looks like "name.ext" — the pattern every app UI uses for file
- * labels. Checks common `aria-label` / `title` / `data-filename`
- * attributes, descendant nodes within each ancestor, and text content.
- * Stops at semantic boundaries (dialog, listitem, article) so we don't
- * drift across unrelated parts of the page.
+ * labels (Claude, Notion, Gmail, Dropbox ...). Also inspects
+ * descendants so filename spans that are siblings of the download
+ * button are reached.
  */
 function scrapeFilenameFromDOM(startEl) {
-    // Permissive name charset (anything that isn't a filesystem
-    // separator or wildly unusual) followed by a 1–6 char extension.
-    // No trailing word-boundary assertion so we match inside longer
-    // aria-labels like "Download filename.pdf, 3 pages".
     const filenameRegex = /([^\/\\<>|"?*\s][^\/\\<>|"?*]{0,150}\.[a-z0-9]{1,6})\b/i;
     const ATTR_NAMES = [
         'data-filename', 'data-file-name', 'data-name',
@@ -761,7 +683,6 @@ function scrapeFilenameFromDOM(startEl) {
     };
 
     const tryDescendants = (root) => {
-        // Search obvious filename-bearing nodes inside the container.
         if (!root.querySelectorAll) return null;
         const candidates = root.querySelectorAll(
             '[data-filename],[data-file-name],[data-name],' +
@@ -784,22 +705,16 @@ function scrapeFilenameFromDOM(startEl) {
     for (let i = 0; i < 16 && el; i++, el = el.parentElement) {
         const a = tryAttrs(el);
         if (a) return a;
-        // Peek at the container's text first — cheap and usually
-        // sufficient for file rows in Claude / Notion / Drive.
         const text = (el.innerText || el.textContent || '').trim();
         if (text && text.length < 400) {
             const m = text.match(filenameRegex);
             if (m) return m[1].trim();
         }
         const atBoundary = el.matches && el.matches(BOUNDARY);
-        // Full descendant sweep once we've reached a plausible
-        // container (3+ levels up) or a semantic boundary.
         if (i >= 2 || atBoundary) {
             const d = tryDescendants(el);
             if (d) return d;
         }
-        // Stop walking once we hit a semantic boundary — anything
-        // outside this wrapper belongs to a different piece of UI.
         if (atBoundary) break;
     }
     return null;
@@ -860,8 +775,6 @@ async function handleBlob(blobUrl, filename) {
 function _cleanDaisyTitle(text) {
     if (!text) return '';
     const single = String(text).replace(/\s+/g, ' ').trim();
-    // Strip filesystem-illegal chars; the dispatch path will strip again,
-    // but doing it here makes the title we surface to the user match.
     return single.replace(/[\/:*?"<>|]/g, '').slice(0, 200).trim();
 }
 
@@ -872,9 +785,9 @@ function _cleanDaisyTitle(text) {
 //   3. When we hit a "post boundary" element (a wrapper that delimits a
 //      single piece of content like a Reddit post, an article, a tweet),
 //      we also read title-bearing attributes off it and stop walking.
-//      This is critical on feed pages — without the boundary check we
-//      would walk past the post wrapper and `querySelector('h1')` on a
-//      feed-level container returns the wrong post's title.
+//      Without this, on feed pages we'd walk past the post wrapper and
+//      `querySelector('h1')` on the feed container would return the
+//      wrong post's title.
 //   4. Page-level `og:title` / `twitter:title` / first h1 — but ONLY when
 //      no post boundary was detected. On feed pages those identifiers
 //      describe a different piece of content than the one being hovered.
@@ -898,9 +811,6 @@ function getContextualVideoName(el) {
         '[class*="heading" i]:not(input):not(textarea):not(button):not(select)'
     ];
 
-    // Elements that wrap a single piece of content. When we hit one of
-    // these we stop walking up so we don't accidentally pick a sibling
-    // post's title from the surrounding feed.
     const POST_BOUNDARY_SELECTORS = [
         'shreddit-post',
         'article',
@@ -950,16 +860,12 @@ function getContextualVideoName(el) {
                 const cleaned = _cleanDaisyTitle(v);
                 if (cleaned.length > 2 && cleaned.length < 200) return cleaned;
             }
-            // We've fully searched the post container; never escape to
-            // feed/page level — that would surface a sibling post's title.
             break;
         }
         curr = curr.parentElement;
         depth += 1;
     }
 
-    // Page-level fallbacks ONLY when we didn't see a post boundary —
-    // otherwise the page's og:title/h1 describes a different post.
     if (!foundBoundary) {
         const ogMeta = document.querySelector('meta[property="og:title"], meta[name="og:title"]');
         if (ogMeta && ogMeta.content) {
@@ -980,48 +886,24 @@ function getContextualVideoName(el) {
     return null;
 }
 
-// Intercept Dynamically Generated Clicks
+// Intercept Dynamically Generated Clicks (Programmatic Downloads)
 const _createElement = document.createElement.bind(document);
 document.createElement = function(tag, ...args) {
   const el = _createElement(tag, ...args);
   if (tag.toLowerCase() === "a") {
     const _click = el.click.bind(el);
     el.click = function() {
+      // Pass `true` because this is a programmatic JS click
       if (el.hasAttribute('data-daisy-bypass') || shouldBypass(true) || !el.href) { _click(); return; }
-      
-      if (el.href.startsWith("blob:") || el.hasAttribute("download") || isLikelyDownloadUrl(el.href) || el.dataset.daisyDownload === "true") {
-          const name = el.dataset.daisyFilename
-              || el.getAttribute("download")
-              || _recentClickFilename()
-              || extractFilename(el.href, el);
+      const isDownloadUrl = ['.mp4', '.mkv', '.avi', '.webm', '.mov', '.wmv', '.flv', '.ts', '.m3u8', '.mpd'].some(ext => { try { return new URL(el.href).pathname.toLowerCase().endsWith(ext); } catch { return false; } });
+      if (el.href.startsWith("blob:") || el.hasAttribute("download") || isDownloadUrl) {
+          const name = el.getAttribute("download") || _recentClickFilename() || extractFilename(el.href, el);
           sendToDispatch(el.href, name);
       } else { _click(); }
     };
   }
   return el;
 };
-
-// --- PRE-FLIGHT HOVER INTERCEPTOR ---
-document.addEventListener('mouseover', (e) => {
-    const a = e.target.closest('a');
-    if (!a || !a.href || a.dataset.daisyChecked || a.href.startsWith('javascript:') || a.href.startsWith('blob:') || a.href.startsWith('data:')) return;
-
-    a.dataset.daisyChecked = "true";
-
-    if (isLikelyDownloadUrl(a.href) || a.hasAttribute('download')) {
-         a.dataset.daisyDownload = "true";
-         return;
-    }
-
-    try {
-        _api.runtime.sendMessage({ type: "PREFLIGHT_LINK", url: a.href }).then(response => {
-            if (response && response.isDownload) {
-                a.dataset.daisyDownload = "true";
-                if (response.filename) a.dataset.daisyFilename = response.filename;
-            }
-        }).catch(() => {});
-    } catch (err) {}
-}, { passive: true });
 
 (function() {
     if (!IS_TOP_FRAME) {
@@ -1045,6 +927,7 @@ document.addEventListener('mouseover', (e) => {
         }
         const subObs = new MutationObserver(() => { watchSubframeVideos(document); });
         
+        // Ensure script sniffers actively run inside subframes (crucial for Reddit embeds)
         if (document.body) {
             subObs.observe(document.body, { childList: true, subtree: true });
             watchSubframeVideos(document);
@@ -1068,25 +951,10 @@ document.addEventListener('mouseover', (e) => {
         document.querySelectorAll('.daisydm-overlay-container').forEach(el => el.remove());
         window.__daisydm_video_injected = true;
         startDetection();
-        
-        // --- HIDDEN IFRAME DOWNLOAD SNIFFER ---
-        const iframeObserver = new MutationObserver((mutations) => {
-            mutations.forEach(m => {
-                m.addedNodes.forEach(node => {
-                    if (node.tagName === 'IFRAME' && node.src) {
-                        if (isLikelyDownloadUrl(node.src)) {
-                            const targetSrc = node.src;
-                            node.removeAttribute('src'); // Stop browser from executing native download
-                            sendToDispatch(targetSrc, extractFilename(targetSrc));
-                        }
-                    }
-                });
-            });
-        });
-        iframeObserver.observe(document.documentElement, { childList: true, subtree: true });
     };
 
     function startDetection() {
+
         const style = document.createElement('style');
         style.textContent = `
             @keyframes daisy-shimmer { 0% { background-position: -200% center; } 100% { background-position: 200% center; } }
@@ -1189,14 +1057,9 @@ document.addEventListener('mouseover', (e) => {
             globalOverlay.className = 'daisydm-overlay-container';
             globalOverlay.style.position = 'absolute';
             
-            // Resolve the BundleIcon asset via runtime.getURL so the
-            // extension's manifest web_accessible_resources entry is
-            // honored. Fall back to the flower emoji if the runtime
-            // isn't available (defensive — content scripts should
-            // always have it).
             const _runtime = (typeof browser !== "undefined" ? browser : chrome);
             let _bundleIconURL = "";
-            try { _bundleIconURL = _runtime && _runtime.runtime && _runtime.runtime.getURL ? _runtime.runtime.getURL('BundleIcon.png') : ""; } catch (_) {}
+            try { _bundleIconURL = _runtime && _runtime.runtime && _runtime.runtime.getURL ? _runtime.runtime.getURL('AppIcon.png') : ""; } catch (_) {}
             const _iconMarkup = `<span class="daisydm-header-icon">🌼</span>`;
             globalOverlay.innerHTML = `
                 <div class="daisydm-overlay-header">
@@ -1228,6 +1091,7 @@ document.addEventListener('mouseover', (e) => {
             globalOverlay.querySelector('.daisydm-overlay-header').onclick = (e) => {
                 if (e.target.closest('.daisydm-close-btn')) return;
                 e.stopPropagation();
+                // We keep the click event to prevent bubbling, but expansion is now handled by hover
             };
 
             globalOverlay.addEventListener('mouseenter', () => {
@@ -1270,7 +1134,7 @@ document.addEventListener('mouseover', (e) => {
             if (el.dataset.daisyBound) return;
             el.dataset.daisyBound = "true";
             el.addEventListener('mouseenter', () => {
-                if (pageDismissed || dismissedEls.has(el) || !hasDownloadableMedia(el)) return;
+                if (!isVideoGrabEnabled || currentHostBlacklisted() || pageDismissed || dismissedEls.has(el) || !hasDownloadableMedia(el)) return;
                 initGlobalOverlay();
                 clearTimeout(hideTimeout);
                 hideTimeout = null;
@@ -1288,6 +1152,8 @@ document.addEventListener('mouseover', (e) => {
                 <div class="daisydm-shimmer" style="width:72%;margin-top:5px"></div>
                 <div class="daisydm-shimmer" style="width:44%;margin-top:5px;margin-bottom:8px"></div>
             `;
+            
+            console.log('[Daisy] populateDropdown called. sniffedMediaUrls:', JSON.stringify(sniffedMediaUrls.map(m => ({url: m.url, type: m.mediaType}))));
             
             const pageUrl = window.location.href;
             let contextualName = getContextualVideoName(targetEl);
@@ -1313,12 +1179,9 @@ document.addEventListener('mouseover', (e) => {
             }
 
             const urlTypeMap = new Map();
-            // URLs that came directly off a real <video>/<source> element
-            // are inherently media (the browser already accepted them as a
-            // playable source) so we exempt them from the strict-URL
-            // filter that runs further down. Without this exemption an
-            // unusually-named source like `https://cdn/foo.bin` from a
-            // legitimate `<video>` would be filtered out of the popup.
+            // URLs from real <video>/<source> elements are inherently media
+            // (the browser already accepted them) so they're exempt from
+            // the strict-URL filter further down.
             const domMediaUrls = new Set();
             const mediaNodes = [targetEl, ...Array.from(targetEl.querySelectorAll ? targetEl.querySelectorAll('video, iframe') : [])];
             
@@ -1336,6 +1199,7 @@ document.addEventListener('mouseover', (e) => {
                 }
             });
 
+            // Ensure we always merge heavily sniffed network files, don't let a dummy blob override
             if (sniffedMediaUrls.length > 0) {
                 sniffedMediaUrls.forEach(m => {
                     if (!urlTypeMap.has(m.url)) {
@@ -1372,12 +1236,10 @@ document.addEventListener('mouseover', (e) => {
                     if (spamSigs.some(s => lower.includes(s))) continue;
                     if (fakeExts.some(e => lower.includes(e))) continue;
                 }
-                // Final guard: never surface a URL that doesn't look like
-                // a media stream as a download option, regardless of how it
-                // got into `urlTypeMap` (sniffer, header-capture relay, an
-                // overzealous player call, etc.). Direct video/source URLs
-                // are tracked in `domMediaUrls` and exempted because the
-                // browser already accepted them as a playable source.
+                // Final guard: drop unknown-type URLs that don't pass the
+                // strict-media check, unless they came from a real <video>
+                // element. This prevents auth/RPC URLs captured by the
+                // header-relay from showing up as download options.
                 if (finalType === 'unknown' && !domMediaUrls.has(rawUrl) && !isStrictMediaUrl(rawUrl)) continue;
                 
                 const siteQuality = sniffedEntry && sniffedEntry.mailRuKey ? sniffedEntry.mailRuKey : null;
@@ -1490,19 +1352,23 @@ document.addEventListener('mouseover', (e) => {
     document.addEventListener('click', (e) => {
         updateBypassState(e);
         
+        // Find the closest anchor tag that was clicked
         const a = e.target.closest('a');
         if (a && a.href) {
+            // 1. Check if it's a magnet link
             if (a.href.toLowerCase().startsWith('magnet:')) {
+                // Pass false: Direct physical click, don't consume programmatic grace tokens
                 if (shouldBypass(false)) return;
                 e.preventDefault();
                 e.stopPropagation();
                 sendToDispatch(a.href, "Torrent Download");
             }
-            else if (a.dataset.daisyDownload === "true" || a.hasAttribute('download') || isLikelyDownloadUrl(a.href)) {
+            // 2. Catch standard static download links (Crucial for Safari)
+            else if (a.hasAttribute('download') || ['.mp4', '.mkv', '.webm', '.mov', '.ts', '.m3u8', '.mpd'].some(ext => { try { return new URL(a.href).pathname.toLowerCase().endsWith(ext); } catch { return false; } })) {
                 if (shouldBypass(false)) return;
                 e.preventDefault();
                 e.stopPropagation();
-                sendToDispatch(a.href, a.dataset.daisyFilename || a.getAttribute("download") || extractFilename(a.href, a));
+                sendToDispatch(a.href, a.getAttribute("download") || extractFilename(a.href, a));
             }
         }
     }, { capture: true });
