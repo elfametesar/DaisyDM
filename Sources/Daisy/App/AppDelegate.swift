@@ -12,12 +12,9 @@ struct DaisyApp: App {
             ContentView()
                 .frame(minWidth: 1300, minHeight: 550)
                 .onOpenURL { url in
-                    // 1. Handle daisy:// links
                     if url.scheme == URLSchemeHandler.scheme {
                         URLSchemeHandler.handle(url)
-                    }
-                    // 2. Handle double-clicked .torrent files
-                    else if url.isFileURL && url.pathExtension.lowercased() == "torrent" {
+                    } else if url.isFileURL && url.pathExtension.lowercased() == "torrent" {
                         Task { @MainActor in
                             let engine = DownloadEngine.shared
                             let defaults = UserDefaults.standard
@@ -74,9 +71,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var confirmObserver: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Initialize the native AppKit Tray Controller
         TrayController.shared.setup()
-        
         LocalServer.shared.start()
         
         NSAppleEventManager.shared().setEventHandler(
@@ -158,22 +153,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         confirmPanel?.close()
         confirmPanel = nil
 
-        // Make sure the app itself is foregrounded before we even create the
-        // panel — without this, NSPanel.makeKeyAndOrderFront silently fails to
-        // pull focus when triggered from the browser extension while Daisy is
-        // hidden / in the background (notably for YouTube + HLS flows).
         if NSApp.isHidden { NSApp.unhide(nil) }
         NSApp.activate(ignoringOtherApps: true)
 
         let panel = NSPanel(
-            contentRect:  NSRect(x: 0, y: 0, width: 460, height: 1),
+            contentRect:  NSRect(x: 0, y: 0, width: 480, height: 500),
             styleMask:    [.titled, .closable, .fullSizeContentView],
             backing:      .buffered,
             defer:        false
         )
-        panel.title                       = "Download"
+        panel.titleVisibility             = .hidden
         panel.titlebarAppearsTransparent  = true
-        panel.isMovableByWindowBackground = false
+        panel.isMovableByWindowBackground = true
         panel.level                       = .floating
         panel.isReleasedWhenClosed        = false
         panel.backgroundColor             = .clear
@@ -188,12 +179,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 panel?.close()
                 Task { @MainActor in
                     let engine = DownloadEngine.shared
-                    let dest   = destination
-                    let url    = confirmedRequest.url
-
                     engine.addDownload(
-                        urls:        [url],
-                        destination: dest,
+                        urls:        [confirmedRequest.url],
+                        destination: destination,
                         connections: connections,
                         cookies:     confirmedRequest.cookies.isEmpty  ? nil : confirmedRequest.cookies,
                         userAgent:   confirmedRequest.ua.isEmpty       ? nil : confirmedRequest.ua,
@@ -206,10 +194,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         forceDirectDownload: confirmedRequest.forceDirectDownload
                     )
                     
-                    if let newestItem = engine.items.last(where: { $0.url == url }) {
+                    if let newestItem = engine.items.last(where: { $0.url == confirmedRequest.url }) {
                         newestItem.headers = confirmedRequest.headers
                     }
-
                     NSApp.activate(ignoringOtherApps: true)
                 }
             },
@@ -218,26 +205,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         )
 
-        let hostingView = NSHostingView(rootView: confirmView)
-        // Allow the hosting view to push the panel to grow when async content
-        // (e.g. fetched YouTube quality list) lands after the initial layout.
-        if #available(macOS 13.0, *) {
-            hostingView.sizingOptions = [.preferredContentSize]
-        }
-        panel.contentView = hostingView
-        panel.setContentSize(hostingView.fittingSize)
+        let hostingController = NSHostingController(rootView: confirmView)
+        // No preferredContentSize here to stop infinite crash loop
+        panel.contentViewController = hostingController
         panel.center()
-        // orderFrontRegardless guarantees the panel is shown above other apps'
-        // windows even if the activation race below loses; makeKeyAndOrderFront
-        // promotes it to key so keyboard input lands here.
         panel.orderFrontRegardless()
         panel.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
 
-        // Re-assert focus on the next runloop tick. AppKit sometimes drops the
-        // first activation request when the call originates from a background
-        // network handler (Local server -> NotificationCenter), which is the
-        // path used by YouTube and HLS downloads.
         DispatchQueue.main.async { [weak panel] in
             guard let panel else { return }
             NSApp.activate(ignoringOtherApps: true)
@@ -249,7 +224,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 extension Notification.Name {
-    static let showAddDownload             = Notification.Name("showAddDownload")
+    static let showAddDownload            = Notification.Name("showAddDownload")
     static let openProgressWindow         = Notification.Name("openProgressWindow")
     static let openSelectedProgressWindow = Notification.Name("openSelectedProgressWindow")
     static let requestAddDownload         = Notification.Name("requestAddDownload")

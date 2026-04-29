@@ -43,12 +43,19 @@ extension DownloadEngine {
             return
         }
 
+        // Determine if this is a Google Drive link first so we don't ruin the extension
+        let url = await MainActor.run { item.url.absoluteString }
+        let isGoogleDrive: Bool = {
+            guard let host = URL(string: url)?.host else { return false }
+            return host == "drive.google.com" || host.hasSuffix(".drive.google.com")
+        }()
+
         await MainActor.run {
             item._managesOwnSpeed = true
             if !item.isPrepared {
                 let policy = UserDefaults.standard.string(forKey: "fileCollisionBehavior") ?? "rename"
                 var dest = item.destinationURL
-                if dest.pathExtension.lowercased() != "mp4" { dest = dest.deletingPathExtension().appendingPathExtension("mp4") }
+                
                 if policy == "replace" {
                     try? FileManager.default.removeItem(at: dest)
                     try? FileManager.default.removeItem(at: dest.appendingPathExtension("dysy"))
@@ -65,9 +72,16 @@ extension DownloadEngine {
             }
         }
 
-        let url = await MainActor.run { item.url.absoluteString }
         let formatID = await MainActor.run { item.youtubeQuality ?? "bestvideo+bestaudio/best" }
-        let browser = await MainActor.run { item.browser ?? "chrome" }
+        let browser = await MainActor.run { item.browser ?? "safari" }
+
+        // Google Drive: yt-dlp cannot extract a bare URL via --get-url because Drive
+        // uses a multi-redirect confirmed-source flow that only works end-to-end inside
+        // yt-dlp. Run yt-dlp directly to download instead of feeding aria2c.
+        if isGoogleDrive {
+            await runYtDlpDirectDownload(item, url: url, formatID: formatID, browser: browser, exe: exe)
+            return
+        }
 
         await Task.detached(priority: .userInitiated) {
             let proc = Process(); proc.executableURL = URL(fileURLWithPath: exe)
@@ -97,6 +111,76 @@ extension DownloadEngine {
             } catch {
                 let isDownloading = await MainActor.run { item.status == .downloading }
                 if isDownloading { await MainActor.run { item.status = .failed; item.error = "yt-dlp extract error: \(error.localizedDescription)"; self.persist(); self.scheduleNext() } }
+            }
+        }.value
+    }
+
+    // Runs yt-dlp directly for sources (e.g. Google Drive) where --get-url
+    // cannot produce a usable bare URL. yt-dlp downloads and muxes internally.
+    func runYtDlpDirectDownload(_ item: DownloadItem, url: String, formatID: String, browser: String, exe: String) async {
+        let finalDest = await MainActor.run { item.destinationURL }
+
+        await Task.detached(priority: .userInitiated) {
+            let proc = Process()
+            proc.executableURL = URL(fileURLWithPath: exe)
+            var env = ProcessInfo.processInfo.environment
+            env["PATH"] = "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+            proc.environment = env
+            
+            // Removed mp4 forcing. Let it output directly to the destination URL.
+            proc.arguments = [
+                "-f", formatID,
+                "--cookies-from-browser", browser,
+                "--no-playlist",
+                "--newline",
+                "-o", finalDest.path,
+                url
+            ]
+
+            let stdoutPipe = Pipe()
+            let stderrPipe = Pipe()
+            proc.standardOutput = stdoutPipe
+            proc.standardError  = stderrPipe
+
+            await MainActor.run { item.processes.append(proc) }
+
+            do {
+                try proc.run()
+
+                for try await line in stdoutPipe.fileHandleForReading.bytes.lines {
+                    let isDownloading = await MainActor.run { item.status == .downloading }
+                    guard isDownloading else { break }
+                    self.parseYtDlpLine(line, for: item)
+                }
+
+                proc.waitUntilExit()
+
+                await MainActor.run {
+                    guard item.status == .downloading else { return }
+                    if proc.terminationStatus == 0 {
+                        // Clean up the bundle proxy and set to complete
+                        let bundleURL = finalDest.appendingPathExtension("dysy")
+                        try? FileManager.default.removeItem(at: bundleURL)
+                        
+                        item.status = .completed
+                        item.dateCompleted = Date()
+                        item.speed = 0
+                    } else {
+                        item.status = .failed
+                        item.error = "yt-dlp exited with code \(proc.terminationStatus)"
+                    }
+                    self.persist()
+                    self.scheduleNext()
+                }
+            } catch {
+                await MainActor.run {
+                    if item.status == .downloading {
+                        item.status = .failed
+                        item.error = error.localizedDescription
+                        self.persist()
+                        self.scheduleNext()
+                    }
+                }
             }
         }.value
     }

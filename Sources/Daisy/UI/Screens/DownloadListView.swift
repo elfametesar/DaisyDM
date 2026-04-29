@@ -2,6 +2,21 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 
+// MARK: - Glass Search Bar Modifier (macOS 26 availability guard)
+private struct GlassSearchBarModifier: ViewModifier {
+    let accentColorHex: String
+
+    func body(content: Content) -> some View {
+        if #available(macOS 26.0, *) {
+            content
+                .glassEffect(.clear.tint(Color(hex: accentColorHex).opacity(0.20)).interactive())
+        } else {
+            content
+                .clipShape(.capsule)
+        }
+    }
+}
+
 // MARK: - Global Icon Cache (Prevents Main-Thread Freezes)
 class SharedIconCache {
     static let shared = SharedIconCache()
@@ -275,7 +290,7 @@ struct DownloadListView: View {
     private var scrollableList: some View {
         let emptyRowHeight: CGFloat = 28
         let rowSpacing: CGFloat = 4
-        let color1 = Color(NSColor.controlBackgroundColor)
+        let color1 = Color(NSColor.controlBackgroundColor).opacity(0.6)
         let color2 = enableBackgroundTint
             ? Color(hex: accentColorHex).opacity(0.06)
             : Color.primary.opacity(0.04)
@@ -707,7 +722,12 @@ struct DownloadListView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
-        .glassEffect(.clear.tint(Color(hex: accentColorHex).opacity(0.20)).interactive())
+        .background {
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(hex: accentColorHex).opacity(0.12))
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+        }
+        .modifier(GlassSearchBarModifier(accentColorHex: accentColorHex))
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .padding(.horizontal, 40)
         .padding(.bottom, 24)

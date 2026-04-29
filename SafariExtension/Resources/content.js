@@ -200,6 +200,8 @@ function bubbleMediaToTop(data) {
     let mediaType = typeof data === 'object' && data.mediaType ? data.mediaType : 'unknown';
     
     if (!rawUrl || rawUrl.startsWith('blob:') || rawUrl.startsWith('data:')) return;
+    // Reject Google Drive subtitle/caption endpoints — they superficially look like media
+    if (rawUrl.includes('drive.google.com/timedtext') || rawUrl.includes('drive.google.com/subtitles')) return;
     const url = cleanMediaUrl(rawUrl);
     
     let lower = url.toLowerCase();
@@ -351,6 +353,9 @@ function isStrictMediaUrl(urlStr) {
     const reject = ['.js', '.mjs', '.cjs', '.ts.map', '.js.map', '.css', '.html', '.htm',
                     '.json', '.xml', '.svg', '.png', '.jpg', '.jpeg', '.gif', '.webp',
                     '.ico', '.woff', '.woff2', '.ttf', '.otf', '.eot', '.txt'];
+    // Google Drive non-media endpoints that match media heuristics
+    const driveNonMedia = ['drive.google.com/timedtext', 'drive.google.com/subtitles'];
+    for (const r of driveNonMedia) { if (href.includes(r)) return false; }
     for (const r of reject) {
         if (path.endsWith(r)) return false;
     }
@@ -1027,7 +1032,9 @@ document.createElement = function(tag, ...args) {
                 return;
             }
             let inTarget = false;
-            if (currentTarget && currentTarget.getBoundingClientRect) {
+            if (currentTarget === document.body) {
+                inTarget = true; // whole page is the target; never auto-hide on mousemove
+            } else if (currentTarget && currentTarget.getBoundingClientRect) {
                 inTarget = isPointerInside(currentTarget.getBoundingClientRect(), e.clientX, e.clientY);
             }
             if (!inTarget && hideTimeout === null) {
@@ -1108,17 +1115,52 @@ document.createElement = function(tag, ...args) {
         }
 
         function positionOverlay(el) {
-            const rect = el.getBoundingClientRect();
             const margin = 12, ow = 520;
-            let left = rect.left + window.scrollX + margin, top = rect.top + window.scrollY + margin;
-            if (rect.left + margin + ow > window.innerWidth) { left = (rect.right + window.scrollX) - ow - margin; }
+            let left, top;
+            // document.body as target means the whole page is the player (e.g. Google Drive).
+            // Pin the overlay to the top-left of the viewport instead of using its rect.
+            if (el === document.body) {
+                left = window.scrollX + margin;
+                top  = window.scrollY + margin;
+            } else {
+                const rect = el.getBoundingClientRect();
+                left = rect.left + window.scrollX + margin;
+                top  = rect.top  + window.scrollY + margin;
+                if (rect.left + margin + ow > window.innerWidth) { left = (rect.right + window.scrollX) - ow - margin; }
+            }
             globalOverlay.style.left = left + 'px';
             globalOverlay.style.top  = top + 'px';
         }
         
+        function isGoogleDriveVideoPage() {
+            const h = window.location.hostname;
+            const p = window.location.pathname;
+            return (h === 'drive.google.com' || h.endsWith('.drive.google.com')) &&
+                   (p.startsWith('/file/d/') || p.startsWith('/open') || p.startsWith('/preview'));
+        }
+
+        function getDriveIframeSrc(el) {
+            // Returns the Drive /file/d/ or /preview URL if el is a Drive embed iframe.
+            if (!el || el.tagName !== 'IFRAME') return null;
+            try {
+                const src = el.src || '';
+                const u = new URL(src);
+                if ((u.hostname === 'drive.google.com' || u.hostname.endsWith('.drive.google.com')) &&
+                    (u.pathname.startsWith('/file/d/') || u.pathname.startsWith('/open') || u.pathname.startsWith('/preview'))) {
+                    // Normalise to /file/d/ID/view for yt-dlp
+                    const m = u.pathname.match(/\/file\/d\/([^/]+)/);
+                    if (m) return 'https://drive.google.com/file/d/' + m[1] + '/view';
+                    return src;
+                }
+            } catch (_) {}
+            return null;
+        }
+
         function hasDownloadableMedia(el) {
             const pageUrl = window.location.href;
             if (pageUrl.includes('youtube.com')) { return window.location.pathname.startsWith('/watch') || window.location.pathname.startsWith('/shorts'); }
+            if (isGoogleDriveVideoPage()) return true;
+            if (getDriveIframeSrc(el)) return true;
             if (sniffedMediaUrls.length > 0) return true;
             let found = false;
             const check = (url) => { if (url && !url.startsWith('blob:') && !url.startsWith('data:')) found = true; };
@@ -1175,6 +1217,16 @@ document.createElement = function(tag, ...args) {
                 } else {
                     renderOption(dropdownEl, { vidName: vidName, quality: "Original", ext: ".mp4", url: pageUrl, ytQuality: "bestvideo+bestaudio/best", type: 'yt' });
                 }
+                return;
+            }
+
+            // Google Drive — works on both the /file/d/.../view page directly
+            // and when Drive is embedded as an iframe on another site.
+            const driveEmbedSrc = getDriveIframeSrc(targetEl);
+            if (isGoogleDriveVideoPage() || driveEmbedSrc) {
+                const driveUrl = driveEmbedSrc || pageUrl;
+                dropdownEl.innerHTML = '';
+                renderOption(dropdownEl, { vidName: vidName, quality: "Best", ext: ".mp4", url: driveUrl, ytQuality: "bestvideo+bestaudio/best", type: 'yt' });
                 return;
             }
 
@@ -1318,6 +1370,31 @@ document.createElement = function(tag, ...args) {
         ].join(', ');
 
         function scanForMedia() {
+            // Google Drive file viewer: the entire page IS the player.
+            // There are no <video> or <iframe> elements in the top frame.
+            // mouseenter on body never fires (cursor is always inside it),
+            // so we wire a one-time mousemove on document instead.
+            if (isGoogleDriveVideoPage()) {
+                if (!document.__daisyDriveWired) {
+                    document.__daisyDriveWired = true;
+                    document.addEventListener('mousemove', () => {
+                        if (!isVideoGrabEnabled || currentHostBlacklisted() || pageDismissed) return;
+                        // Cancel any pending hide when cursor moves anywhere on the page
+                        if (currentTarget === document.body) {
+                            clearTimeout(hideTimeout);
+                            hideTimeout = null;
+                        }
+                        if (globalOverlay && globalOverlay.classList.contains('visible')) return;
+                        initGlobalOverlay();
+                        currentTarget = document.body;
+                        globalOverlay.classList.remove('expanded');
+                        positionOverlay(document.body);
+                        globalOverlay.classList.add('visible');
+                    });
+                }
+                return;
+            }
+
             document.querySelectorAll(VIDEO_CONTAINER_SELECTORS).forEach(el => {
                 const r = el.getBoundingClientRect();
                 if (r.width > 60 && r.height > 50) attachToElement(el);

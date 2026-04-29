@@ -340,7 +340,10 @@ public final class DownloadEngine {
             Task { await writeDataURL(item) }
             return
         }
-        if item.url.host?.contains("youtube.com") == true || item.url.host?.contains("youtu.be") == true {
+        let _ytHost = item.url.host ?? ""
+        let isYtDlpManaged = _ytHost.contains("youtube.com") || _ytHost.contains("youtu.be")
+            || _ytHost == "drive.google.com" || _ytHost.hasSuffix(".drive.google.com")
+        if isYtDlpManaged {
             Task { await runYoutubeDownload(item) }
             return
         }

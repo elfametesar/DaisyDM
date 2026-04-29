@@ -209,8 +209,11 @@ _api.webRequest.onHeadersReceived.addListener(
         const isMedia = ["video/", "audio/", "mpegurl", "m3u8", "video/mp2t", "application/x-mpegurl", "application/vnd.apple.mpegurl", "application/dash+xml", "application/xml", "text/xml"].some(m => ct.includes(m));
         const urlLower = details.url.toLowerCase();
         const isMediaByUrl = ['.m3u8', '.ts', '.mp4', '.webm', '.mov', '.mkv', '/hls/', '/m3u8', 'manifest.m3u8', 'master.m3u8', '.mpd', '/dash/', 'dashplaylist', 'dash.xml', '/manifest', 'video.ism', 'application/dash', '/stream/', 'playlist', 'quality=', 'bitrate=', 'resolution='].some(p => urlLower.includes(p));
+        // Reject Google Drive subtitle/caption endpoints — they match '/manifest' and 'playlist'
+        // but are not downloadable media streams.
+        const isDriveNonMedia = urlLower.includes('drive.google.com/timedtext') || urlLower.includes('drive.google.com/subtitles');
 
-        if ((isMedia || isMediaByUrl) && details.tabId !== -1) {
+        if ((isMedia || isMediaByUrl) && !isDriveNonMedia && details.tabId !== -1) {
             _api.tabs.sendMessage(details.tabId, { type: 'NEW_MEDIA_FOUND', mediaInfo: { url: details.url, frameId: details.frameId } }, { frameId: 0 }).catch(() => {});
             if (details.frameId !== 0) {
                 _api.tabs.sendMessage(details.tabId, { type: 'NEW_MEDIA_FOUND', mediaInfo: { url: details.url, frameId: details.frameId } }, { frameId: details.frameId }).catch(() => {});

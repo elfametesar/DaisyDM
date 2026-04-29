@@ -49,10 +49,23 @@ struct ConfirmDownloadView: View {
     @State private var window: NSWindow?
 
     var isYouTube: Bool {
-        request.url.host?.contains("youtube.com") == true || request.url.host?.contains("youtu.be") == true
+        let host = request.url.host ?? ""
+        return host.contains("youtube.com") || host.contains("youtu.be")
     }
-    
+
+    var isGoogleDrive: Bool {
+        let host = request.url.host ?? ""
+        let path = request.url.path
+        return (host == "drive.google.com" || host.hasSuffix(".drive.google.com"))
+            && (path.hasPrefix("/file/d/") || path.hasPrefix("/open") || path.hasPrefix("/preview"))
+    }
+
+    /// True for any URL that yt-dlp handles natively (YouTube extractor or Drive extractor).
+    var isYtDlpManaged: Bool { isYouTube || isGoogleDrive }
+
     var showQualityPicker: Bool {
+        // Show picker only for YouTube when no quality was pre-selected by the extension.
+        // Drive has no enumerable quality list so we skip the picker there.
         isYouTube && (request.youtubeQuality == nil || request.youtubeQuality!.isEmpty)
     }
 
@@ -92,9 +105,6 @@ struct ConfirmDownloadView: View {
     }
 
     private var fileIcon: NSImage {
-        // For magnets and .torrent files show the composite document-with-
-        // bundle icon since these are multi-file containers, not single
-        // files of a specific UTType.
         let isMagnet = request.url.scheme?.lowercased() == "magnet"
         let isTorrentFile = request.url.pathExtension.lowercased() == "torrent"
         if isMagnet || isTorrentFile {
@@ -432,7 +442,6 @@ struct ConfirmDownloadView: View {
     // MARK: - Helpers
     
     private func performBackgroundSniff() async {
-        // --- FIXED: BLOCK SNIFFER FOR MAGNETS AND TORRENTS ---
         if request.url.scheme?.lowercased() == "magnet" ||
            request.url.pathExtension.lowercased() == "torrent" ||
            filename.lowercased().hasSuffix(".torrent") {
@@ -444,16 +453,29 @@ struct ConfirmDownloadView: View {
         isResolving = true
         defer { isResolving = false }
         
-        if isYouTube {
-            await MainActor.run { isFetchingQualities = true }
+        if isYtDlpManaged {
+            await MainActor.run { isFetchingQualities = isYouTube }
             async let titleTask = fetchYouTubeTitle(url: request.url)
-            async let formatsTask = fetchYouTubeFormats(url: request.url)
+            async let formatsTask: [YouTubeFormatOption] = isYouTube
+                ? fetchYouTubeFormats(url: request.url)
+                : []
             let title = await titleTask
             let formats = await formatsTask
-            
+
             await MainActor.run {
-                if let t = title { self.filename = t }
-                else if self.filename.isEmpty || self.filename == "download" { self.filename = "YouTube_Video.mp4" }
+                if let t = title {
+                    self.filename = t
+                    
+                    // Add .mp4 to YouTube downloads since yt-dlp doesn't return an extension for them.
+                    // Leave Google Drive alone, as it returns the exact native filename and extension.
+                    if self.isYouTube && !self.filename.lowercased().hasSuffix(".mp4") {
+                        self.filename += ".mp4"
+                    }
+                }
+                else if self.filename.isEmpty || self.filename == "download" {
+                    self.filename = self.isGoogleDrive ? "Drive_File" : "YouTube_Video.mp4"
+                }
+                
                 if !formats.isEmpty {
                     self.availableYouTubeQualities = formats
                     if self.youtubeQuality.isEmpty || !formats.contains(where: { $0.query == self.youtubeQuality }) {
@@ -501,17 +523,10 @@ struct ConfirmDownloadView: View {
                 await MainActor.run {
                     var foundName: String? = nil
                     if let disposition = httpResp.value(forHTTPHeaderField: "Content-Disposition") ?? httpResp.value(forHTTPHeaderField: "content-disposition") {
-                        // Prefer RFC 5987 `filename*=UTF-8''encoded.ext` over
-                        // the legacy `filename=...` because servers (Claude,
-                        // S3, Google Cloud, etc.) often send both and the
-                        // starred variant is the real, correctly-encoded
-                        // name while the unstarred one is a safe-ASCII
-                        // fallback.
                         if let starRange = disposition.range(of: "filename*=", options: .caseInsensitive) {
                             var raw = String(disposition[starRange.upperBound...]).trimmingCharacters(in: .whitespaces)
                             if let endSemi = raw.firstIndex(of: ";") { raw = String(raw[..<endSemi]) }
                             raw = raw.trimmingCharacters(in: .init(charactersIn: "\"' \r\n"))
-                            // Strip the `charset''` prefix (e.g. "UTF-8''").
                             if let sep = raw.range(of: "''") { raw = String(raw[sep.upperBound...]) }
                             let decoded = raw.removingPercentEncoding ?? raw
                             if !decoded.isEmpty { foundName = decoded }
@@ -536,10 +551,6 @@ struct ConfirmDownloadView: View {
                         }
                     }
 
-                    // Bias toward taking the server-provided name whenever
-                    // the current filename is generic — the extension hands
-                    // us a URL-derived placeholder like "content" or
-                    // "download.mp4" for Claude and similar app URLs.
                     let currentLower = self.filename.lowercased()
                     let isCurrentGeneric = self.filename.isEmpty
                         || currentLower == "download"
@@ -591,7 +602,6 @@ struct ConfirmDownloadView: View {
                     }
                 }
                 
-                // Fetch HLS duration if applicable (done outside MainActor to prevent blocking)
                 if isHLS {
                     let duration = await fetchHLSDuration(url: finalURL, requestInfo: request)
                     await MainActor.run {
@@ -603,7 +613,7 @@ struct ConfirmDownloadView: View {
     }
     
     private func fetchHLSDuration(url: URL, requestInfo: ConfirmDownloadRequest, depth: Int = 0) async -> Double {
-        guard depth < 3 else { return 0 } // Prevent infinite recursion for nested playlists
+        guard depth < 3 else { return 0 }
         
         var req = URLRequest(url: url)
         if !requestInfo.ua.isEmpty { req.setValue(requestInfo.ua, forHTTPHeaderField: "User-Agent") }
@@ -631,7 +641,6 @@ struct ConfirmDownloadView: View {
         for i in 0..<lines.count {
             let line = lines[i].trimmingCharacters(in: .whitespaces)
             if line.hasPrefix("#EXT-X-STREAM-INF") {
-                // It's a master playlist, look for the sub-playlist URL on subsequent lines
                 for j in (i+1)..<lines.count {
                     let nextLine = lines[j].trimmingCharacters(in: .whitespaces)
                     if !nextLine.isEmpty && !nextLine.hasPrefix("#") {
@@ -641,7 +650,7 @@ struct ConfirmDownloadView: View {
                         break
                     }
                 }
-                break // Only parse the first variant stream for simplicity
+                break
             } else if line.hasPrefix("#EXTINF:") {
                 let valStr = line.dropFirst(8).components(separatedBy: ",").first ?? ""
                 if let val = Double(valStr) {
@@ -687,7 +696,7 @@ struct ConfirmDownloadView: View {
                 let data = pipe.fileHandleForReading.readDataToEndOfFile()
                 proc.waitUntilExit()
                 if proc.terminationStatus == 0, let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines), !output.isEmpty {
-                    return output.replacingOccurrences(of: "/", with: "_") + ".mp4"
+                    return output.replacingOccurrences(of: "/", with: "_")
                 }
             } catch {}
             return nil
@@ -760,7 +769,6 @@ struct ConfirmDownloadView: View {
     }
 }
 
-// --- FIXED: FETCH REAL NAME FROM MAGNET PARAMETERS ---
 private func suggestName(_ url: URL) -> String {
     if url.scheme?.lowercased() == "magnet" {
         if let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
