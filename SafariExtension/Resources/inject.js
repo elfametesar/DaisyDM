@@ -4,11 +4,28 @@
     // bundled-module URL on modern sites. Extension boundaries are anchored
     // with a lookahead, and path-style indicators require slashes.
     const MEDIA_RE = /(?:\.m3u8(?=[?#]|$)|\.mpd(?=[?#]|$)|\.mp4(?=[?#]|$)|\.webm(?=[?#]|$)|\.mov(?=[?#]|$)|\.mkv(?=[?#]|$)|\.flv(?=[?#]|$)|\.avi(?=[?#]|$)|\/hls\/|\/dash\/|\/m3u8(?:[\/?]|$)|\/manifest(?=[\/?#]|$))/i;
-    const OBVIOUS_DOWNLOAD_RE = /\.mp4|\.mkv|\.avi|\.webm|\.mov|\.wmv|\.flv|\.ts|\.m3u8|\.mpd|\.zip|\.rar|\.pdf|\.dmg|\.iso|\.pkg|\.tar|\.gz|\.bin/i;
-    const DOWNLOAD_PATH_RE = /\/download\/|\?download=/i;
+    // Anchored at end-of-pathname so substrings like ".mp4" inside
+    // "/foo.mp4.html" or "/maps/...mp4-thumb.png" don't false-positive.
+    // Covers the vast majority of files Safari users actually download:
+    // video/audio, archives, office docs, e-books, OS installers,
+    // disk images, dev/IDE bundles, raw photo formats, subtitles, etc.
+    const OBVIOUS_DOWNLOAD_RE = /\.(?:mp4|mkv|avi|webm|mov|wmv|flv|m4v|mpg|mpeg|3gp|3g2|ogv|m2ts|mts|vob|asf|rm|rmvb|ts|m3u8|mpd|mp3|m4a|m4b|m4r|aac|flac|wav|ogg|oga|opus|wma|aif|aiff|ape|alac|amr|au|zip|rar|7z|tar|tgz|tbz|tbz2|txz|tlz|gz|bz2|xz|lz|lzma|cab|ace|arj|sit|sitx|hqx|cpio|jar|war|ear|pdf|epub|mobi|azw|azw3|kfx|cbz|cbr|cb7|djvu|fb2|chm|lit|prc|doc|docx|docm|dot|dotx|odt|rtf|wpd|pages|wps|xls|xlsx|xlsm|xlsb|xlt|xltx|ods|csv|tsv|numbers|ppt|pptx|pptm|pps|ppsx|odp|key|dmg|iso|img|nrg|cue|toast|mds|mdf|vmdk|vdi|qcow2|qcow|vhd|vhdx|ova|ovf|pkg|deb|rpm|msi|msix|msu|exe|com|apk|aab|ipa|xapk|appx|appimage|run|bin|safariextz|crx|xpi|sketch|psd|psb|ai|indd|fig|xd|skp|stl|obj|fbx|3ds|blend|c4d|max|dwg|dxf|step|stp|igs|iges|prt|sldprt|sldasm|raw|cr2|nef|arw|dng|orf|rw2|raf|srw|heic|heif|srt|vtt|ass|ssa|sup|sub|idx|torrent|nfo|sfv|asc|sig|gpg|pgp|crt|cer|pem|p12|pfx|der|sqlite|sqlite3|mdb|accdb|hex|dat|dump)(?=[?#]|$)/i;
+    // Path / query patterns used by sites that hide the real filename
+    // behind an opaque endpoint (S3 presigned URLs, Drive, Dropbox,
+    // GitHub release assets, Mediafire, file hosts, ...).
+    const DOWNLOAD_PATH_RE = /\/(?:download|downloads|attachment|attachments|export|dl|getfile|getattachment|raw)(?:\/|\?|$)|[?&](?:download|attachment|export|dl|file|filename|response-content-disposition)=/i;
 
     function isObviousDownload(urlStr) {
-        if (!urlStr) return false;
+        if (!urlStr || typeof urlStr !== 'string') return false;
+        if (urlStr.startsWith('blob:')) return true;
+        if (urlStr.startsWith('data:')) {
+            // data: URIs only count as downloads when the consumer
+            // explicitly says so via the `download` attribute, which
+            // callers already check. Treat the bare URL as "not
+            // obvious" so we don't accidentally swallow inline base64
+            // images that pages set on `location.href`.
+            return false;
+        }
         try {
             const url = new URL(urlStr, document.baseURI);
             return OBVIOUS_DOWNLOAD_RE.test(url.pathname) || DOWNLOAD_PATH_RE.test(url.href);

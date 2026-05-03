@@ -193,6 +193,33 @@ if (_api.webRequest && _api.webRequest.OnHeadersReceivedOptions && _api.webReque
     resExtraInfo.push("extraHeaders");
 }
 
+// Tracks URLs we've already routed through Daisy in the recent past so that
+// `webRequest.onHeadersReceived` (which fires when the server emits the
+// download response) and `downloads.onCreated` (which fires when the
+// browser starts the native download a moment later) don't both
+// dispatch the same file. The window has to comfortably outlive the
+// gap between those two events on slow networks.
+const recentDispatchedUrls = new Map();
+const DISPATCH_DEDUP_MS = 15000;
+
+function markDispatched(url) {
+    if (!url) return;
+    recentDispatchedUrls.set(url, Date.now());
+    // Drop entries older than the dedup window so the map doesn't grow
+    // unboundedly during a long-lived background-page session.
+    const cutoff = Date.now() - DISPATCH_DEDUP_MS;
+    for (const [u, ts] of recentDispatchedUrls) {
+        if (ts < cutoff) recentDispatchedUrls.delete(u);
+    }
+}
+
+function wasRecentlyDispatched(url) {
+    if (!url) return false;
+    const ts = recentDispatchedUrls.get(url);
+    if (!ts) return false;
+    return (Date.now() - ts) < DISPATCH_DEDUP_MS;
+}
+
 _api.webRequest.onHeadersReceived.addListener(
     function(details) {
         const respHeaders = {};
@@ -216,6 +243,45 @@ _api.webRequest.onHeadersReceived.addListener(
                 _api.tabs.sendMessage(details.tabId, { type: 'NEW_MEDIA_FOUND', mediaInfo: { url: details.url, frameId: details.frameId } }, { frameId: details.frameId }).catch(() => {});
             }
         }
+
+        // ---- Generic download safety net ----
+        // Any time a server returns Content-Disposition: attachment on a
+        // top-level navigation (or an iframe load), the browser will
+        // cancel the navigation and start a native download. On Chrome
+        // we also catch that via `downloads.onCreated`, but Safari's
+        // implementation of that event has historically been flaky for
+        // navigations triggered by a link click, programmatic
+        // `location.href` assignment, hidden-iframe tricks, or
+        // server-issued attachments without a recognizable filename
+        // extension. By dispatching directly here we cover those
+        // cases — the dedup map keeps `downloads.onCreated` from
+        // re-dispatching the same URL.
+        const cd = respHeaders["content-disposition"] || "";
+        const isAttachment = cd.toLowerCase().includes("attachment");
+        const isNavigationType = details.type === "main_frame" || details.type === "sub_frame";
+        if (
+            isAttachment &&
+            isNavigationType &&
+            dispatchEnabled &&
+            Date.now() >= bypassGraceUntil &&
+            details.tabId !== -1 &&
+            !wasRecentlyDispatched(details.url) &&
+            !details.url.startsWith("blob:") &&
+            !details.url.startsWith("data:")
+        ) {
+            markDispatched(details.url);
+            const filenameFromCD = parseDispositionFilename(cd);
+
+            (async () => {
+                let referer = "";
+                try {
+                    const tab = await _api.tabs.get(details.tabId);
+                    if (tab && tab.url) referer = tab.url;
+                } catch (_) {}
+                const filename = filenameFromCD || extractFilename(details.url);
+                triggerDownload(details.url, filename, referer, null, null, false, false, {});
+            })();
+        }
     },
     { urls: ["<all_urls>"] },
     resExtraInfo
@@ -233,16 +299,28 @@ if (_api.downloads && typeof _api.downloads.onCreated !== 'undefined') {
         
         if (item.url.startsWith("blob:") || item.url.startsWith("data:")) return;
 
+        // The webRequest CD-attachment branch above may have already
+        // dispatched this URL. We still need to cancel/erase the native
+        // download item so Safari doesn't end up writing to disk in
+        // parallel with Daisy.
+        const alreadyDispatched = wasRecentlyDispatched(item.url);
+        if (!alreadyDispatched) markDispatched(item.url);
+
+        const finishCancel = () => {
+            if (alreadyDispatched) return;
+            triggerDownload(item.url, item.filename, item.referrer || "", null, null, false, false, {});
+        };
+
         try {
             _api.downloads.cancel(item.id).then(() => {
                 _api.downloads.erase({id: item.id}).catch(()=>{});
-                triggerDownload(item.url, item.filename, item.referrer || "", null, null, false, false, {});
+                finishCancel();
             }).catch(()=>{});
         } catch (e) {
             if (_api.downloads.cancel) {
                 _api.downloads.cancel(item.id, () => {
                     _api.downloads.erase({id: item.id}, () => {});
-                    triggerDownload(item.url, item.filename, item.referrer || "", null, null, false, false, {});
+                    finishCancel();
                 });
             }
         }
