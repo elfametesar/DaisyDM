@@ -192,6 +192,31 @@ if (_api.webRequest && _api.webRequest.OnHeadersReceivedOptions && _api.webReque
     resExtraInfo.push("extraHeaders");
 }
 
+// Tracks URLs we've already routed through Daisy in the recent past so that
+// `webRequest.onHeadersReceived` (which fires when the server emits the
+// download response) and `downloads.onCreated` (which fires when the
+// browser starts the native download a moment later) don't both
+// dispatch the same file. The window has to comfortably outlive the
+// gap between those two events on slow networks.
+const recentDispatchedUrls = new Map();
+const DISPATCH_DEDUP_MS = 15000;
+
+function markDispatched(url) {
+    if (!url) return;
+    recentDispatchedUrls.set(url, Date.now());
+    const cutoff = Date.now() - DISPATCH_DEDUP_MS;
+    for (const [u, ts] of recentDispatchedUrls) {
+        if (ts < cutoff) recentDispatchedUrls.delete(u);
+    }
+}
+
+function wasRecentlyDispatched(url) {
+    if (!url) return false;
+    const ts = recentDispatchedUrls.get(url);
+    if (!ts) return false;
+    return (Date.now() - ts) < DISPATCH_DEDUP_MS;
+}
+
 _api.webRequest.onHeadersReceived.addListener(
     function(details) {
         const respHeaders = {};
@@ -215,6 +240,41 @@ _api.webRequest.onHeadersReceived.addListener(
                 _api.tabs.sendMessage(details.tabId, { type: 'NEW_MEDIA_FOUND', mediaInfo: { url: details.url, frameId: details.frameId } }, { frameId: details.frameId }).catch(() => {});
             }
         }
+
+        // ---- Generic download safety net ----
+        // When a server returns Content-Disposition: attachment on a
+        // top-level navigation or iframe load, the browser cancels the
+        // navigation and starts a native download. `downloads.onCreated`
+        // catches that on Chrome, but firing here too lets us dispatch
+        // a moment earlier and keeps the code path identical to the
+        // Safari extension. The dedup map prevents the two paths from
+        // double-dispatching the same URL.
+        const cd = respHeaders["content-disposition"] || "";
+        const isAttachment = cd.toLowerCase().includes("attachment");
+        const isNavigationType = details.type === "main_frame" || details.type === "sub_frame";
+        if (
+            isAttachment &&
+            isNavigationType &&
+            dispatchEnabled &&
+            Date.now() >= bypassGraceUntil &&
+            details.tabId !== -1 &&
+            !wasRecentlyDispatched(details.url) &&
+            !details.url.startsWith("blob:") &&
+            !details.url.startsWith("data:")
+        ) {
+            markDispatched(details.url);
+            const filenameFromCD = parseDispositionFilename(cd);
+
+            (async () => {
+                let referer = "";
+                try {
+                    const tab = await _api.tabs.get(details.tabId);
+                    if (tab && tab.url) referer = tab.url;
+                } catch (_) {}
+                const filename = filenameFromCD || extractFilename(details.url);
+                triggerDownload(details.url, filename, referer, null, null, false, false, {});
+            })();
+        }
     },
     { urls: ["<all_urls>"] },
     resExtraInfo
@@ -233,9 +293,14 @@ if (typeof chrome !== 'undefined' && chrome.downloads) {
         
         if (item.url.startsWith("blob:") || item.url.startsWith("data:")) return;
 
+        const alreadyDispatched = wasRecentlyDispatched(item.url);
+        if (!alreadyDispatched) markDispatched(item.url);
+
         chrome.downloads.cancel(item.id, () => {
             chrome.downloads.erase({id: item.id}, () => {});
-            triggerDownload(item.url, item.filename, item.referrer || "", null, null, false, false, {});
+            if (!alreadyDispatched) {
+                triggerDownload(item.url, item.filename, item.referrer || "", null, null, false, false, {});
+            }
         });
     });
 }

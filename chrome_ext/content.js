@@ -1349,27 +1349,77 @@ document.createElement = function(tag, ...args) {
     }
 
     // --- STATIC AND MAGNET LINK INTERCEPTOR ---
+    // Mirrors inject.js's OBVIOUS_DOWNLOAD_RE so Safari catches the same
+    // file types whether the click is intercepted at the page level
+    // (inject.js, programmatic clicks) or the isolated-world level
+    // (content.js, plain user clicks). Anchored at end-of-pathname so
+    // ".mp4" inside a non-download URL like "/maps/foo.mp4-thumb.png"
+    // doesn't false-positive.
+    const STATIC_DOWNLOAD_EXT_RE = /\.(?:mp4|mkv|avi|webm|mov|wmv|flv|m4v|mpg|mpeg|3gp|3g2|ogv|m2ts|mts|vob|asf|rm|rmvb|ts|m3u8|mpd|mp3|m4a|m4b|m4r|aac|flac|wav|ogg|oga|opus|wma|aif|aiff|ape|alac|amr|au|zip|rar|7z|tar|tgz|tbz|tbz2|txz|tlz|gz|bz2|xz|lz|lzma|cab|ace|arj|sit|sitx|hqx|cpio|jar|war|ear|pdf|epub|mobi|azw|azw3|kfx|cbz|cbr|cb7|djvu|fb2|chm|lit|prc|doc|docx|docm|dot|dotx|odt|rtf|wpd|pages|wps|xls|xlsx|xlsm|xlsb|xlt|xltx|ods|csv|tsv|numbers|ppt|pptx|pptm|pps|ppsx|odp|key|dmg|iso|img|nrg|cue|toast|mds|mdf|vmdk|vdi|qcow2|qcow|vhd|vhdx|ova|ovf|pkg|deb|rpm|msi|msix|msu|exe|com|apk|aab|ipa|xapk|appx|appimage|run|bin|safariextz|crx|xpi|sketch|psd|psb|ai|indd|fig|xd|skp|stl|obj|fbx|3ds|blend|c4d|max|dwg|dxf|step|stp|igs|iges|prt|sldprt|sldasm|raw|cr2|nef|arw|dng|orf|rw2|raf|srw|heic|heif|srt|vtt|ass|ssa|sup|sub|idx|torrent|nfo|sfv|asc|sig|gpg|pgp|crt|cer|pem|p12|pfx|der|sqlite|sqlite3|mdb|accdb|hex|dat|dump)(?=[?#]|$)/i;
+
+    function _staticIsDownloadUrl(url) {
+        if (!url || typeof url !== 'string') return false;
+        if (url.startsWith('blob:')) return true;
+        if (url.startsWith('data:')) return false;
+        try {
+            const u = new URL(url, document.baseURI);
+            return STATIC_DOWNLOAD_EXT_RE.test(u.pathname);
+        } catch {
+            return STATIC_DOWNLOAD_EXT_RE.test(url);
+        }
+    }
+
+    function _isLikelyDownloadAnchor(a) {
+        if (!a || !a.href) return false;
+        if (a.hasAttribute('download')) return true;
+        return _staticIsDownloadUrl(a.href);
+    }
+
+    function _interceptAnchorDownload(e, a) {
+        if (shouldBypass(false)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (a.href.toLowerCase().startsWith('magnet:')) {
+            sendToDispatch(a.href, "Torrent Download");
+        } else {
+            sendToDispatch(a.href, a.getAttribute('download') || extractFilename(a.href, a));
+        }
+    }
+
     document.addEventListener('click', (e) => {
         updateBypassState(e);
-        
-        // Find the closest anchor tag that was clicked
+
         const a = e.target.closest('a');
-        if (a && a.href) {
-            // 1. Check if it's a magnet link
-            if (a.href.toLowerCase().startsWith('magnet:')) {
-                // Pass false: Direct physical click, don't consume programmatic grace tokens
-                if (shouldBypass(false)) return;
-                e.preventDefault();
-                e.stopPropagation();
-                sendToDispatch(a.href, "Torrent Download");
-            }
-            // 2. Catch standard static download links (Crucial for Safari)
-            else if (a.hasAttribute('download') || ['.mp4', '.mkv', '.webm', '.mov', '.ts', '.m3u8', '.mpd'].some(ext => { try { return new URL(a.href).pathname.toLowerCase().endsWith(ext); } catch { return false; } })) {
-                if (shouldBypass(false)) return;
-                e.preventDefault();
-                e.stopPropagation();
-                sendToDispatch(a.href, a.getAttribute("download") || extractFilename(a.href, a));
-            }
+        if (!a || !a.href) return;
+
+        // Magnet links — always intercept (they have nowhere else to go).
+        if (a.href.toLowerCase().startsWith('magnet:')) {
+            _interceptAnchorDownload(e, a);
+            return;
+        }
+
+        if (_isLikelyDownloadAnchor(a)) {
+            _interceptAnchorDownload(e, a);
+        }
+    }, { capture: true });
+
+    // Middle-click and Cmd/Ctrl-click on download links also need to be
+    // routed through Daisy. Without this, Safari opens a new tab whose
+    // load is then turned into a native download outside of our reach,
+    // and the empty new tab is left behind.
+    document.addEventListener('auxclick', (e) => {
+        updateBypassState(e);
+        // Only meaningful modifier combos: middle button (button 1), or
+        // primary button with Cmd/Ctrl held (which Safari handles as
+        // "open in background tab").
+        const isModifiedClick = e.button === 1 || e.metaKey || e.ctrlKey;
+        if (!isModifiedClick) return;
+
+        const a = e.target.closest('a');
+        if (!a || !a.href) return;
+
+        if (a.href.toLowerCase().startsWith('magnet:') || _isLikelyDownloadAnchor(a)) {
+            _interceptAnchorDownload(e, a);
         }
     }, { capture: true });
     init();
