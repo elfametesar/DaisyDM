@@ -60,8 +60,8 @@ extension DownloadEngine {
             // Setup the macOS .dysy bundle proxy for the UI
             let bundleURL = item.destinationURL.appendingPathExtension("dysy")
             try? FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
-            if let folderIcon = NSImage(named: "FolderIcon") ?? NSImage(named: NSImage.applicationIconName) {
-                NSWorkspace.shared.setIcon(folderIcon, forFile: bundleURL.path, options: [])
+            if let bundleIcon = NSImage(named: "BundleIcon") ?? NSImage(named: NSImage.applicationIconName) {
+                NSWorkspace.shared.setIcon(bundleIcon, forFile: bundleURL.path, options: [])
             }
         }
 

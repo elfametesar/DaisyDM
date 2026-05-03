@@ -964,7 +964,8 @@ document.createElement = function(tag, ...args) {
             .daisydm-overlay-container.visible { opacity: 1; transform: translateY(0) scale(1); visibility: visible; pointer-events: auto; }
             .daisydm-overlay-container.scroll-hidden { opacity: 0 !important; pointer-events: none !important; transform: translateY(12px) scale(0.95) !important; visibility: hidden !important; }
             .daisydm-overlay-header { padding: 12px 16px; font-size: 14px; font-weight: 500; cursor: pointer; display: flex; align-items: center; gap: 10px; color: #f4f4f5; user-select: none; -webkit-user-select: none; }
-            .daisydm-header-icon { font-size: 15px; line-height: 1; flex-shrink: 0; }
+            .daisydm-header-icon { width: 20px; height: 20px; object-fit: contain; flex-shrink: 0; }
+            .daisydm-header-icon-fallback { font-size: 18px; line-height: 1; flex-shrink: 0; }
             .daisydm-header-label { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
             .daisydm-chevron { font-size: 10px; color: #8e8e93; flex-shrink: 0; transition: transform 0.2s ease; }
             .daisydm-overlay-container.expanded .daisydm-chevron { transform: rotate(180deg); }
@@ -1060,7 +1061,7 @@ document.createElement = function(tag, ...args) {
             const _runtime = (typeof browser !== "undefined" ? browser : chrome);
             let _bundleIconURL = "";
             try { _bundleIconURL = _runtime && _runtime.runtime && _runtime.runtime.getURL ? _runtime.runtime.getURL('AppIcon.png') : ""; } catch (_) {}
-            const _iconMarkup = `<span class="daisydm-header-icon">🌼</span>`;
+            const _iconMarkup = _bundleIconURL ? `<img class="daisydm-header-icon" src="${_bundleIconURL}" alt="">` : `<span class="daisydm-header-icon-fallback">🌼</span>`;
             globalOverlay.innerHTML = `
                 <div class="daisydm-overlay-header">
                     ${_iconMarkup}
