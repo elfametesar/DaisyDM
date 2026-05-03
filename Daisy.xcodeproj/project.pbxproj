@@ -16,7 +16,15 @@
 		71360C8A2FA0752E00C9752C /* HLSDownloader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71360C892FA0752B00C9752C /* HLSDownloader.swift */; };
 		714070032F88B43700875649 /* popup.js in Resources */ = {isa = PBXBuildFile; fileRef = 714070022F88B43400875649 /* popup.js */; };
 		7140BA522FA0BFB100A47A52 /* AppIcon.png in Resources */ = {isa = PBXBuildFile; fileRef = 7140BA512FA0BFB100A47A52 /* AppIcon.png */; };
+		7140BA552FA0BFB100A47A52 /* AppIcon16.png in Resources */ = {isa = PBXBuildFile; fileRef = 7140BA562FA0BFB100A47A52 /* AppIcon16.png */; };
+		7140BA572FA0BFB100A47A52 /* AppIcon32.png in Resources */ = {isa = PBXBuildFile; fileRef = 7140BA582FA0BFB100A47A52 /* AppIcon32.png */; };
+		7140BA592FA0BFB100A47A52 /* AppIcon48.png in Resources */ = {isa = PBXBuildFile; fileRef = 7140BA5A2FA0BFB100A47A52 /* AppIcon48.png */; };
+		7140BA5B2FA0BFB100A47A52 /* AppIcon128.png in Resources */ = {isa = PBXBuildFile; fileRef = 7140BA5C2FA0BFB100A47A52 /* AppIcon128.png */; };
 		7140BA542FA20DD300A47A52 /* AppIcon.png in Resources */ = {isa = PBXBuildFile; fileRef = 7140BA532FA20DD300A47A52 /* AppIcon.png */; };
+		7140BA552FA20DD300A47A52 /* AppIcon16.png in Resources */ = {isa = PBXBuildFile; fileRef = 7140BA562FA20DD300A47A52 /* AppIcon16.png */; };
+		7140BA572FA20DD300A47A52 /* AppIcon32.png in Resources */ = {isa = PBXBuildFile; fileRef = 7140BA582FA20DD300A47A52 /* AppIcon32.png */; };
+		7140BA592FA20DD300A47A52 /* AppIcon48.png in Resources */ = {isa = PBXBuildFile; fileRef = 7140BA5A2FA20DD300A47A52 /* AppIcon48.png */; };
+		7140BA5B2FA20DD300A47A52 /* AppIcon128.png in Resources */ = {isa = PBXBuildFile; fileRef = 7140BA5C2FA20DD300A47A52 /* AppIcon128.png */; };
 		714913882F96081800167751 /* DownloadEngineUtilities.swift in Sources */ = {isa = PBXBuildFile; fileRef = 714913872F96081500167751 /* DownloadEngineUtilities.swift */; };
 		7149138A2F9609D700167751 /* DownloadEngineAria2.swift in Sources */ = {isa = PBXBuildFile; fileRef = 714913892F9609D400167751 /* DownloadEngineAria2.swift */; };
 		7149138C2F9609EB00167751 /* DownloadEngineCurl.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7149138B2F9609E800167751 /* DownloadEngineCurl.swift */; };
@@ -100,7 +108,15 @@
 		71360C892FA0752B00C9752C /* HLSDownloader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HLSDownloader.swift; sourceTree = "<group>"; };
 		714070022F88B43400875649 /* popup.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = popup.js; sourceTree = "<group>"; };
 		7140BA512FA0BFB100A47A52 /* AppIcon.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = AppIcon.png; sourceTree = "<group>"; };
+		7140BA562FA0BFB100A47A52 /* AppIcon16.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = AppIcon16.png; sourceTree = "<group>"; };
+		7140BA582FA0BFB100A47A52 /* AppIcon32.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = AppIcon32.png; sourceTree = "<group>"; };
+		7140BA5A2FA0BFB100A47A52 /* AppIcon48.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = AppIcon48.png; sourceTree = "<group>"; };
+		7140BA5C2FA0BFB100A47A52 /* AppIcon128.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = AppIcon128.png; sourceTree = "<group>"; };
 		7140BA532FA20DD300A47A52 /* AppIcon.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = AppIcon.png; sourceTree = "<group>"; };
+		7140BA562FA20DD300A47A52 /* AppIcon16.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = AppIcon16.png; sourceTree = "<group>"; };
+		7140BA582FA20DD300A47A52 /* AppIcon32.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = AppIcon32.png; sourceTree = "<group>"; };
+		7140BA5A2FA20DD300A47A52 /* AppIcon48.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = AppIcon48.png; sourceTree = "<group>"; };
+		7140BA5C2FA20DD300A47A52 /* AppIcon128.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = AppIcon128.png; sourceTree = "<group>"; };
 		714913872F96081500167751 /* DownloadEngineUtilities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadEngineUtilities.swift; sourceTree = "<group>"; };
 		714913892F9609D400167751 /* DownloadEngineAria2.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadEngineAria2.swift; sourceTree = "<group>"; };
 		7149138B2F9609E800167751 /* DownloadEngineCurl.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadEngineCurl.swift; sourceTree = "<group>"; };
@@ -137,6 +153,10 @@
 			isa = PBXGroup;
 			children = (
 				7140BA512FA0BFB100A47A52 /* AppIcon.png */,
+				7140BA562FA0BFB100A47A52 /* AppIcon16.png */,
+				7140BA582FA0BFB100A47A52 /* AppIcon32.png */,
+				7140BA5A2FA0BFB100A47A52 /* AppIcon48.png */,
+				7140BA5C2FA0BFB100A47A52 /* AppIcon128.png */,
 				714070022F88B43400875649 /* popup.js */,
 				0A1B2C3D4E5F60718293A301 /* background.js */,
 				0A1B2C3D4E5F60718293A302 /* content.js */,
@@ -167,6 +187,10 @@
 				71C1BC422F921442004C7F1A /* popup.html */,
 				71C1BC432F921442004C7F1A /* popup.js */,
 				7140BA532FA20DD300A47A52 /* AppIcon.png */,
+				7140BA562FA20DD300A47A52 /* AppIcon16.png */,
+				7140BA582FA20DD300A47A52 /* AppIcon32.png */,
+				7140BA5A2FA20DD300A47A52 /* AppIcon48.png */,
+				7140BA5C2FA20DD300A47A52 /* AppIcon128.png */,
 			);
 			path = chrome_ext;
 			sourceTree = "<group>";
@@ -341,6 +365,10 @@
 				0A1B2C3D4E5F60718293A404 /* popup.html in Resources */,
 				71C764432F9C6F0A00972F96 /* inject.js in Resources */,
 				7140BA522FA0BFB100A47A52 /* AppIcon.png in Resources */,
+				7140BA552FA0BFB100A47A52 /* AppIcon16.png in Resources */,
+				7140BA572FA0BFB100A47A52 /* AppIcon32.png in Resources */,
+				7140BA592FA0BFB100A47A52 /* AppIcon48.png in Resources */,
+				7140BA5B2FA0BFB100A47A52 /* AppIcon128.png in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -349,6 +377,10 @@
 			buildActionMask = 2147483647;
 			files = (
 				7140BA542FA20DD300A47A52 /* AppIcon.png in Resources */,
+				7140BA552FA20DD300A47A52 /* AppIcon16.png in Resources */,
+				7140BA572FA20DD300A47A52 /* AppIcon32.png in Resources */,
+				7140BA592FA20DD300A47A52 /* AppIcon48.png in Resources */,
+				7140BA5B2FA20DD300A47A52 /* AppIcon128.png in Resources */,
 				71C1BC452F921442004C7F1A /* popup.js in Resources */,
 				71C1BC462F921442004C7F1A /* background.js in Resources */,
 				71C1BC472F921442004C7F1A /* manifest.json in Resources */,

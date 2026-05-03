@@ -44,10 +44,6 @@ class SharedIconCache {
         return resizedImg
     }
 
-    /// Composite icon used for multi-file downloads (torrents / batches).
-    /// The macOS generic-document icon is drawn as the outer shape and the
-    /// `BundleIcon` asset is drawn inset inside it, giving a "document
-    /// that contains a bundle" visual.
     func bundleIcon(size: CGFloat = 24) -> NSImage {
         lock.lock()
         if let img = bundleCache[size] {
@@ -57,23 +53,11 @@ class SharedIconCache {
         lock.unlock()
 
         let target = NSSize(width: size, height: size)
-        let doc = NSWorkspace.shared.icon(for: .data)
-        let bundle = NSImage(named: "BundleIcon")
+        let bundle = NSImage(named: "BundleIcon") ?? NSImage(named: NSImage.applicationIconName) ?? NSWorkspace.shared.icon(for: .data)
         let composed = NSImage(size: target)
         composed.lockFocus()
         NSGraphicsContext.current?.imageInterpolation = .high
-        doc.draw(in: NSRect(origin: .zero, size: target))
-        if let bundle = bundle {
-            // Inset the bundle glyph inside the page, skewed slightly toward
-            // the bottom so it doesn't clash with the document's corner
-            // fold. ~55% of the document width keeps it visually centred
-            // when rendered small.
-            let innerW = target.width * 0.58
-            let innerH = target.height * 0.58
-            let innerX = (target.width - innerW) / 2
-            let innerY = (target.height - innerH) / 2 - target.height * 0.05
-            bundle.draw(in: NSRect(x: innerX, y: innerY, width: innerW, height: innerH))
-        }
+        bundle.draw(in: NSRect(origin: .zero, size: target))
         composed.unlockFocus()
 
         lock.lock()
