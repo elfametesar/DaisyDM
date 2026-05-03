@@ -12,6 +12,8 @@
 		0A1B2C3D4E5F60718293A403 /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = 0A1B2C3D4E5F60718293A303 /* manifest.json */; };
 		0A1B2C3D4E5F60718293A404 /* popup.html in Resources */ = {isa = PBXBuildFile; fileRef = 0A1B2C3D4E5F60718293A304 /* popup.html */; };
 		0A1B2C3D4E5F60718293A4B0 /* BundleIcon.png in Resources */ = {isa = PBXBuildFile; fileRef = 0A1B2C3D4E5F60718293A3B0 /* BundleIcon.png */; };
+		0A1B2C3D4E5F60718293A4C0 /* icons in Resources */ = {isa = PBXBuildFile; fileRef = 0A1B2C3D4E5F60718293A3C0 /* icons */; };
+		71C1BC512F921442004C7F1A /* icons in Resources */ = {isa = PBXBuildFile; fileRef = 71C1BC502F921442004C7F1A /* icons */; };
 		53F624789BAF9FB2DB63EDBB /* SafariExtensionHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02FA831F84964C6E30740ED4 /* SafariExtensionHandler.swift */; };
 		712C631C2F8A952D00504612 /* LocalServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 712C631B2F8A952800504612 /* LocalServer.swift */; };
 		714070032F88B43700875649 /* popup.js in Resources */ = {isa = PBXBuildFile; fileRef = 714070022F88B43400875649 /* popup.js */; };
@@ -91,6 +93,8 @@
 		0A1B2C3D4E5F60718293A303 /* manifest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = manifest.json; sourceTree = "<group>"; };
 		0A1B2C3D4E5F60718293A304 /* popup.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = popup.html; sourceTree = "<group>"; };
 		0A1B2C3D4E5F60718293A3B0 /* BundleIcon.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = BundleIcon.png; sourceTree = "<group>"; };
+		0A1B2C3D4E5F60718293A3C0 /* icons */ = {isa = PBXFileReference; lastKnownFileType = folder; path = icons; sourceTree = "<group>"; };
+		71C1BC502F921442004C7F1A /* icons */ = {isa = PBXFileReference; lastKnownFileType = folder; path = icons; sourceTree = "<group>"; };
 		17671D7F8AB5C98F683D0703 /* URLSchemeHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = URLSchemeHandler.swift; sourceTree = "<group>"; };
 		2238E812354119FCD1EFFAC1 /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
 		24DFD2C04C85C517992B2C81 /* DownloadDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadDetailView.swift; sourceTree = "<group>"; };
@@ -166,6 +170,7 @@
 				0A1B2C3D4E5F60718293A304 /* popup.html */,
 				71C764422F9C6F0A00972F96 /* inject.js */,
 				0A1B2C3D4E5F60718293A3B0 /* BundleIcon.png */,
+				0A1B2C3D4E5F60718293A3C0 /* icons */,
 			);
 			name = Resources;
 			path = SafariExtension/Resources;
@@ -189,6 +194,7 @@
 				71C1BC412F921442004C7F1A /* manifest.json */,
 				71C1BC422F921442004C7F1A /* popup.html */,
 				71C1BC432F921442004C7F1A /* popup.js */,
+				71C1BC502F921442004C7F1A /* icons */,
 			);
 			path = chrome_ext;
 			sourceTree = "<group>";
@@ -368,6 +374,7 @@
 				0A1B2C3D4E5F60718293A404 /* popup.html in Resources */,
 				71C764432F9C6F0A00972F96 /* inject.js in Resources */,
 				0A1B2C3D4E5F60718293A4B0 /* BundleIcon.png in Resources */,
+				0A1B2C3D4E5F60718293A4C0 /* icons in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -382,6 +389,7 @@
 				71C1BC482F921442004C7F1A /* popup.html in Resources */,
 				71C1BC492F921442004C7F1A /* content.js in Resources */,
 				AA000001BB000001CC000001 /* Assets.xcassets in Resources */,
+				71C1BC512F921442004C7F1A /* icons in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
