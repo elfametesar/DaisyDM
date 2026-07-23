@@ -15,9 +15,9 @@
 	<key>CFBundlePackageType</key>
 	<string>XPC!</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0</string>
+	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
-	<string>1</string>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>NSExtension</key>
 	<dict>
 		<key>NSExtensionPointIdentifier</key>
@@ -26,6 +26,6 @@
 		<string>SafariWebExtensionHandler</string>
 	</dict>
 	<key>NSHumanReadableDescription</key>
-	<string>Capture Safari downloads and forward them to Dispatch.</string>
+	<string>Capture Safari downloads and forward them to Daisy DM.</string>
 </dict>
 </plist>

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Daisy DM",
-  "version": "1.1",
+  "version": "1.1.0",
   "description": "Intercepts downloads and sends them directly to the Daisy Mac app.",
   "icons": {
     "16": "AppIcon16.png",
@@ -21,12 +21,16 @@
       "128": "AppIcon128.png"
     },
     "default_popup": "popup.html",
-    "default_title": "Dispatch Settings"
+    "default_title": "Daisy DM Settings"
   },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
-      "js": ["content.js"],
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content.js"
+      ],
       "run_at": "document_start",
       "all_frames": true,
       "match_about_blank": true
@@ -40,11 +44,22 @@
     "cookies",
     "webRequest"
   ],
-  "host_permissions": ["<all_urls>"],
+  "host_permissions": [
+    "<all_urls>"
+  ],
   "web_accessible_resources": [
     {
-      "resources": ["inject.js", "AppIcon.png", "AppIcon16.png", "AppIcon32.png", "AppIcon48.png", "AppIcon128.png"],
-      "matches": ["<all_urls>"]
+      "resources": [
+        "inject.js",
+        "AppIcon.png",
+        "AppIcon16.png",
+        "AppIcon32.png",
+        "AppIcon48.png",
+        "AppIcon128.png"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
     }
   ]
 }
