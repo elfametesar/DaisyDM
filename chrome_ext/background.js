@@ -65,18 +65,17 @@ function findCapturedCookieAggressive(targetUrl) {
     return "";
 }
 
-_api.storage.local.get(["dispatchEnabled"]).then(res => {
-    if (typeof res.dispatchEnabled === "boolean") dispatchEnabled = res.dispatchEnabled;
-});
+_api.storage.local.get({ isExtensionDisabled: false })
+    .then(res => {
+        dispatchEnabled = res.isExtensionDisabled !== true;
+    })
+    .catch(() => {
+        dispatchEnabled = true;
+    });
 
 _api.storage.onChanged.addListener((changes, area) => {
-    if (area === "local" && changes.dispatchEnabled) {
-        dispatchEnabled = changes.dispatchEnabled.newValue;
-        fetch(`http://127.0.0.1:6840/setenabled`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ enabled: changes.dispatchEnabled.newValue })
-        }).catch(() => {});
+    if (area === "local" && changes.isExtensionDisabled) {
+        dispatchEnabled = changes.isExtensionDisabled.newValue !== true;
     }
 });
 

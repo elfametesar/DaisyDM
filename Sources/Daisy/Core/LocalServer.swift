@@ -162,9 +162,6 @@ class LocalServer {
 
             if headers.hasPrefix("POST") {
                 do {
-                    // FIX 4: Replaced 'let rawJSON = ' with '_'
-                    let _ = String(data: bodyData, encoding: .utf8) ?? "Bozuk JSON Verisi"
-
                     let payload = try JSONDecoder().decode(DownloadPayload.self, from: bodyData)
 
                     var sanitizedUrl = payload.url
@@ -217,9 +214,12 @@ class LocalServer {
             if finalHeaders.isEmpty, let flat = payload.extraHeadersFlat, !flat.isEmpty {
                 let lines = flat.components(separatedBy: "\n")
                 for line in lines {
-                    let parts = line.components(separatedBy: ": ")
-                    if parts.count == 2 {
-                        finalHeaders[parts[0]] = parts[1]
+                    guard let separator = line.firstIndex(of: ":") else { continue }
+                    let name = line[..<separator].trimmingCharacters(in: .whitespacesAndNewlines)
+                    let valueStart = line.index(after: separator)
+                    let value = line[valueStart...].trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !name.isEmpty {
+                        finalHeaders[name] = value
                     }
                 }
             }
