@@ -149,6 +149,65 @@ jobs:
           xcodebuild -version
           xcodebuild -project Daisy.xcodeproj -scheme Dispatch -list
 
+      - name: Import signing certificate
+        shell: bash
+        env:
+          APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_KEYCHAIN_PASSWORD: ${{ secrets.APPLE_KEYCHAIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          certificate_path="$RUNNER_TEMP/apple-signing-certificate.p12"
+          keychain_path="$RUNNER_TEMP/apple-signing.keychain-db"
+
+          CERTIFICATE_PATH="$certificate_path" python3 - <<'PY'
+          import base64
+          import os
+          from pathlib import Path
+
+          encoded = ''.join(os.environ['APPLE_CERTIFICATE_P12_BASE64'].split())
+          Path(os.environ['CERTIFICATE_PATH']).write_bytes(
+              base64.b64decode(encoded, validate=True)
+          )
+          PY
+
+          security create-keychain -p "$APPLE_KEYCHAIN_PASSWORD" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$APPLE_KEYCHAIN_PASSWORD" "$keychain_path"
+          security import "$certificate_path" \
+            -k "$keychain_path" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -A \
+            -t cert \
+            -f pkcs12
+          security set-key-partition-list \
+            -S apple-tool:,apple: \
+            -s \
+            -k "$APPLE_KEYCHAIN_PASSWORD" \
+            "$keychain_path"
+
+          identity_line="$(
+            security find-identity -v -p codesigning "$keychain_path" \
+              | awk '/[0-9A-F]{40}/ { print; exit }'
+          )"
+          identity_hash="$(awk '{ print $2 }' <<< "$identity_line")"
+          identity_name="$(sed -E 's/^[[:space:]]*[0-9]+\) [0-9A-F]+ "(.*)"/\1/' <<< "$identity_line")"
+
+          if [[ ! "$identity_hash" =~ ^[0-9A-F]{40}$ ]]; then
+            echo "No usable code-signing identity was found in the P12 certificate." >&2
+            exit 1
+          fi
+
+          {
+            echo "APPLE_KEYCHAIN_PATH=$keychain_path"
+            echo "APPLE_SIGNING_IDENTITY=$identity_hash"
+            echo "APPLE_SIGNING_IDENTITY_NAME=$identity_name"
+          } >> "$GITHUB_ENV"
+
+          rm -f "$certificate_path"
+          echo "Using signing identity: $identity_name"
+
       - name: Archive universal app
         shell: bash
         run: |
@@ -171,6 +230,34 @@ jobs:
             CODE_SIGN_IDENTITY="-" \
             DEVELOPMENT_TEAM=""
 
+      - name: Sign archived app
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          app="$RUNNER_TEMP/Daisy.xcarchive/Products/Applications/Daisy.app"
+
+          sign() {
+            codesign \
+              --force \
+              --sign "$APPLE_SIGNING_IDENTITY" \
+              --keychain "$APPLE_KEYCHAIN_PATH" \
+              --options runtime \
+              --timestamp \
+              --preserve-metadata=identifier,entitlements,requirements \
+              "$1"
+          }
+
+          while IFS= read -r -d '' nested_code; do
+            sign "$nested_code"
+          done < <(
+            find "$app/Contents" -depth \
+              \( -name '*.framework' -o -name '*.dylib' -o -name '*.xpc' -o -name '*.appex' \) \
+              -print0
+          )
+
+          sign "$app"
+
       - name: Verify archive
         shell: bash
         run: |
@@ -185,6 +272,14 @@ jobs:
           test -d "$extension"
 
           codesign --verify --deep --strict --verbose=2 "$app"
+          codesign --verify --strict --verbose=2 "$extension"
+
+          signing_details="$(codesign -dv --verbose=4 "$app" 2>&1)"
+          grep -q '^Authority=' <<< "$signing_details"
+          if grep -q '^Signature=adhoc$' <<< "$signing_details"; then
+            echo "The app is still ad-hoc signed." >&2
+            exit 1
+          fi
 
           architectures="$(lipo -archs "$executable")"
           [[ "$architectures" == *arm64* ]]
@@ -215,7 +310,7 @@ jobs:
           Commit: ${GITHUB_SHA}
           Workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
           Architectures: arm64, x86_64
-          Signing: ad hoc (not notarized)
+          Signing: ${APPLE_SIGNING_IDENTITY_NAME} (not notarized)
           INFO
 
           (
@@ -243,9 +338,10 @@ jobs:
             echo "| Proposed tag | \`${DAISY_TAG}\` |"
             echo "| Commit | \`${GITHUB_SHA}\` |"
             echo "| Architectures | \`arm64\`, \`x86_64\` |"
+            echo "| Signing identity | \`${APPLE_SIGNING_IDENTITY_NAME}\` |"
             echo "| GitHub release requested | \`${{ inputs.publish_release }}\` |"
             echo
-            echo "> The macOS app is ad-hoc signed and is not notarized."
+            echo "> The macOS app is certificate-signed but is not notarized."
           } >> "$GITHUB_STEP_SUMMARY"
 
   release:
