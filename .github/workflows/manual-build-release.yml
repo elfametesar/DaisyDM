@@ -186,6 +186,8 @@ jobs:
             -s \
             -k "$APPLE_KEYCHAIN_PASSWORD" \
             "$keychain_path"
+          security list-keychains -d user -s "$keychain_path"
+          security default-keychain -d user -s "$keychain_path"
 
           identity_line="$(
             security find-identity -v -p codesigning "$keychain_path" \
@@ -198,6 +200,12 @@ jobs:
             echo "No usable code-signing identity was found in the P12 certificate." >&2
             exit 1
           fi
+
+          test_binary="$RUNNER_TEMP/codesign-identity-test"
+          cp /usr/bin/true "$test_binary"
+          codesign --force --sign "$identity_hash" --timestamp=none "$test_binary"
+          codesign --verify --strict "$test_binary"
+          rm -f "$test_binary"
 
           {
             echo "APPLE_KEYCHAIN_PATH=$keychain_path"
@@ -241,7 +249,6 @@ jobs:
             codesign \
               --force \
               --sign "$APPLE_SIGNING_IDENTITY" \
-              --keychain "$APPLE_KEYCHAIN_PATH" \
               --options runtime \
               --timestamp \
               --preserve-metadata=identifier,entitlements,requirements \
