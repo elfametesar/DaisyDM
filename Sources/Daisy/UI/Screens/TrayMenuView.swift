@@ -8,32 +8,31 @@ enum MenuBarLayout: Int, CaseIterable, Identifiable {
     case barTransfer = 2
     case textSpeed = 3
     case minimal = 4
+    case transferOnly = 5
 
     var id: Int { self.rawValue }
     var title: String {
         switch self {
-        case .onlyBar:     return "Progress Bar"
-        case .barSpeed:    return "Bar + Speed"
-        case .barTransfer: return "Bar + Downloaded / Size"
-        case .textSpeed:   return "Percentage + Speed"
-        case .minimal:     return "Percentage"
+        case .onlyBar:      return "Progress Bar"
+        case .barSpeed:     return "Progress Bar + Speed"
+        case .barTransfer:  return "Progress Bar + Downloaded / Size"
+        case .textSpeed:    return "Percentage + Speed"
+        case .minimal:      return "Percentage"
+        case .transferOnly: return "Downloaded / Size"
         }
     }
 }
 
 class PassThroughHostingView<Content: View>: NSHostingView<Content> {
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
-    // Prevent intrinsic size from fighting the fixed item.length
     override var intrinsicContentSize: NSSize { .zero }
 }
 
 @MainActor
 class TrayViewModel: ObservableObject {
     static let shared = TrayViewModel()
-
     @Published var trayedDownloads: [DownloadItem] = []
     @AppStorage("pinnedTrayItemId") var pinnedItemId: String = ""
-
     let openItemSubject = PassthroughSubject<UUID, Never>()
 
     @Published var layout: MenuBarLayout = {
@@ -55,10 +54,7 @@ class TrayViewModel: ObservableObject {
         }
     }
 
-    func addToTray(_ id: UUID) {
-        trayedItemIDs.insert(id)
-        syncDownloads()
-    }
+    func addToTray(_ id: UUID) { trayedItemIDs.insert(id); syncDownloads() }
 
     func removeFromTray(_ id: UUID) {
         trayedItemIDs.remove(id)
@@ -68,56 +64,38 @@ class TrayViewModel: ObservableObject {
 
     private func syncDownloads() {
         let currentItems = DownloadEngine.shared.items.filter { trayedItemIDs.contains($0.id) }
-        let activeItems  = currentItems.filter { $0.progress < 1.0 }
-
-        if self.trayedDownloads.count != currentItems.count {
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                self.trayedDownloads = currentItems
-            }
-        } else {
-            self.trayedDownloads = currentItems
-        }
-
-        self.trayedItemIDs.formIntersection(Set(activeItems.map { $0.id }))
-
-        if trayedItemIDs.isEmpty {
-            TrayController.shared.closePopover()
-        }
+        let activeItems = currentItems.filter { $0.progress < 1.0 }
+        if trayedDownloads.count != currentItems.count {
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { trayedDownloads = currentItems }
+        } else { trayedDownloads = currentItems }
+        trayedItemIDs.formIntersection(Set(activeItems.map { $0.id }))
+        if trayedItemIDs.isEmpty { TrayController.shared.closePopover() }
     }
 
     var featuredItem: DownloadItem? {
-        if let pinned = trayedDownloads.first(where: { $0.id.uuidString == pinnedItemId }) {
-            return pinned
-        }
+        if let pinned = trayedDownloads.first(where: { $0.id.uuidString == pinnedItemId }) { return pinned }
         return trayedDownloads.max(by: { $0.dateAdded < $1.dateAdded })
     }
 
-    func pin(item: DownloadItem) {
-        pinnedItemId = (pinnedItemId == item.id.uuidString) ? "" : item.id.uuidString
-    }
+    func pin(item: DownloadItem) { pinnedItemId = pinnedItemId == item.id.uuidString ? "" : item.id.uuidString }
 }
 
 @MainActor
 class TrayController: NSObject, ObservableObject {
     static let shared = TrayController()
-
     private var statusItem: NSStatusItem?
-    private let popover        = NSPopover()
+    private let popover = NSPopover()
     private let rightClickMenu = NSMenu()
-    private var cancellables   = Set<AnyCancellable>()
-    private var popoverMonitor:   Any?
+    private var cancellables = Set<AnyCancellable>()
+    private var popoverMonitor: Any?
     private var mouseDownMonitor: Any?
-    private var mouseUpMonitor:   Any?
-
-    @Published var isButtonPressed: Bool = false
+    private var mouseUpMonitor: Any?
+    @Published var isButtonPressed = false
 
     func setup() {
         setupRightClickMenu()
-        popover.contentViewController = NSHostingController(
-            rootView: TrayPopoverView(viewModel: TrayViewModel.shared)
-        )
+        popover.contentViewController = NSHostingController(rootView: TrayPopoverView(viewModel: TrayViewModel.shared))
         popover.behavior = .transient
-
         TrayViewModel.shared.$trayedDownloads
             .combineLatest(TrayViewModel.shared.$layout)
             .sink { [weak self] items, _ in
@@ -127,10 +105,7 @@ class TrayController: NSObject, ObservableObject {
             .store(in: &cancellables)
     }
 
-    func closePopover() {
-        popover.performClose(nil)
-        stopPopoverMonitor()
-    }
+    func closePopover() { popover.performClose(nil); stopPopoverMonitor() }
 
     private func startPopoverMonitor() {
         if popoverMonitor == nil {
@@ -158,7 +133,7 @@ class TrayController: NSObject, ObservableObject {
     private func setupRightClickMenu() {
         for layout in MenuBarLayout.allCases {
             let item = NSMenuItem(title: layout.title, action: #selector(setLayout(_:)), keyEquivalent: "")
-            item.tag    = layout.rawValue
+            item.tag = layout.rawValue
             item.target = self
             rightClickMenu.addItem(item)
         }
@@ -173,32 +148,28 @@ class TrayController: NSObject, ObservableObject {
         rightClickMenu.items.forEach { $0.state = $0.tag == current ? .on : .off }
     }
 
-    // Pure AppKit text measurement — no SwiftUI layout involved at all
     static func pillWidth(for layout: MenuBarLayout, speed: String, transfer: String = "") -> CGFloat {
+        let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 10, weight: .semibold)]
         switch layout {
-        case .onlyBar:
-            return 66  // 46 bar + 10*2 padding
-
+        case .onlyBar: return 66
         case .barSpeed:
-            let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 10, weight: .semibold)]
             let textW = ceil((speed as NSString).size(withAttributes: attrs).width)
-            return 40 + 8 + textW + 20  // bar + spacing + text + 10*2 padding
-
+            return 40 + 8 + textW + 20
         case .barTransfer:
-            let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 10, weight: .semibold)]
             let textW = ceil((transfer as NSString).size(withAttributes: attrs).width)
-            return 40 + 8 + textW + 20  // bar + spacing + downloaded/size + 10*2 padding
-
+            return 40 + 8 + textW + 20
         case .textSpeed:
-            let boldAttrs: [NSAttributedString.Key: Any]    = [.font: NSFont.systemFont(ofSize: 11, weight: .bold)]
+            let boldAttrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 11, weight: .bold)]
             let regularAttrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 11, weight: .regular)]
-            let pctW   = ceil(("100%" as NSString).size(withAttributes: boldAttrs).width)
+            let pctW = ceil(("100%" as NSString).size(withAttributes: boldAttrs).width)
             let speedW = ceil((speed as NSString).size(withAttributes: regularAttrs).width)
-            return pctW + 6 + speedW + 8  // pct + spacing + speed + 4*2 padding
-
+            return pctW + 6 + speedW + 8
         case .minimal:
             let boldAttrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 11, weight: .bold)]
-            return ceil(("100%" as NSString).size(withAttributes: boldAttrs).width) + 8  // pct + 4*2 padding
+            return ceil(("100%" as NSString).size(withAttributes: boldAttrs).width) + 8
+        case .transferOnly:
+            let textW = ceil((transfer as NSString).size(withAttributes: attrs).width)
+            return textW + 20
         }
     }
 
@@ -210,37 +181,26 @@ class TrayController: NSObject, ObservableObject {
 
     private func updateTrayVisibility(hasItems: Bool) {
         if hasItems && statusItem == nil {
-            // Compute width before creating the item so it never defaults to 74.5
             let featuredItem = TrayViewModel.shared.featuredItem
             let speed = featuredItem?.formattedSpeed ?? "0 KB/s"
             let transfer = featuredItem.map { $0.totalBytes > 0 ? "\($0.formattedDownloaded)/\($0.formattedSize)" : $0.formattedDownloaded } ?? "0 KB"
             let initialLength = TrayController.pillWidth(for: TrayViewModel.shared.layout, speed: speed, transfer: transfer)
             statusItem = NSStatusBar.system.statusItem(withLength: initialLength)
-
             guard let button = statusItem?.button else { return }
-
             button.action = #selector(handleMouseClick(_:))
             button.target = self
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
-
-            // Kill AppKit highlight — SwiftUI draws pressed state inside the capsule shape
             (button.cell as? NSButtonCell)?.highlightsBy = []
-            (button.cell as? NSButtonCell)?.showsStateBy  = []
+            (button.cell as? NSButtonCell)?.showsStateBy = []
 
-            let hv = PassThroughHostingView(rootView: TrayLabelView(
-                viewModel:  TrayViewModel.shared,
-                controller: self
-            ))
+            let hv = PassThroughHostingView(rootView: TrayLabelView(viewModel: TrayViewModel.shared, controller: self))
             hv.translatesAutoresizingMaskIntoConstraints = false
             button.addSubview(hv)
-
-            // Pin edges — no width/height constraints that reference button size
-            // This avoids the circular layout dependency that causes the recursion warning
             NSLayoutConstraint.activate([
                 hv.topAnchor.constraint(equalTo: button.topAnchor),
                 hv.bottomAnchor.constraint(equalTo: button.bottomAnchor),
                 hv.leadingAnchor.constraint(equalTo: button.leadingAnchor),
-                hv.trailingAnchor.constraint(equalTo: button.trailingAnchor),
+                hv.trailingAnchor.constraint(equalTo: button.trailingAnchor)
             ])
 
             mouseDownMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self, weak button] event in
@@ -253,10 +213,9 @@ class TrayController: NSObject, ObservableObject {
                 self?.isButtonPressed = false
                 return event
             }
-
         } else if !hasItems, let item = statusItem {
             if let m = mouseDownMonitor { NSEvent.removeMonitor(m); mouseDownMonitor = nil }
-            if let m = mouseUpMonitor   { NSEvent.removeMonitor(m); mouseUpMonitor   = nil }
+            if let m = mouseUpMonitor { NSEvent.removeMonitor(m); mouseUpMonitor = nil }
             NSStatusBar.system.removeStatusItem(item)
             statusItem = nil
         }
@@ -270,48 +229,42 @@ class TrayController: NSObject, ObservableObject {
             statusItem?.menu = nil
         } else {
             let items = TrayViewModel.shared.trayedDownloads
-            if items.count == 1, let item = items.first {
-                TrayViewModel.shared.openItemSubject.send(item.id)
-            } else {
-                if popover.isShown {
-                    closePopover()
-                } else {
-                    popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
-                    startPopoverMonitor()
-                    if let win = popover.contentViewController?.view.window {
-                        win.makeKeyAndOrderFront(nil)
-                        NSApp.activate(ignoringOtherApps: true)
-                    }
+            if items.count == 1, let item = items.first { TrayViewModel.shared.openItemSubject.send(item.id) }
+            else if popover.isShown { closePopover() }
+            else {
+                popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
+                startPopoverMonitor()
+                if let win = popover.contentViewController?.view.window {
+                    win.makeKeyAndOrderFront(nil)
+                    NSApp.activate(ignoringOtherApps: true)
                 }
             }
         }
     }
 }
 
-// MARK: - TrayLabelView
-
 struct TrayLabelView: View {
-    @ObservedObject var viewModel:  TrayViewModel
+    @ObservedObject var viewModel: TrayViewModel
     @ObservedObject var controller: TrayController
     @Environment(\.openWindow) private var openWindow
-
     private var isPressed: Bool { controller.isButtonPressed }
 
     var body: some View {
         HStack(spacing: 0) {
             if let item = viewModel.featuredItem {
                 switch viewModel.layout {
-                case .onlyBar:     widgetPillBar(progress: item.progress)
-                case .barSpeed:    barSpeedPill(progress: item.progress, speed: item.formattedSpeed)
-                case .barTransfer: barTransferPill(progress: item.progress, transfer: transferText(for: item))
-                case .textSpeed:   textSpeedView(progress: item.progress, speed: item.formattedSpeed)
-                case .minimal:     minimalView(progress: item.progress)
+                case .onlyBar: progressBarView(progress: item.progress)
+                case .barSpeed: progressBarWithText(progress: item.progress, text: item.formattedSpeed)
+                case .barTransfer: progressBarWithText(progress: item.progress, text: transferText(for: item))
+                case .textSpeed: textSpeedView(progress: item.progress, speed: item.formattedSpeed)
+                case .minimal: minimalView(progress: item.progress)
+                case .transferOnly: transferOnlyView(transfer: transferText(for: item))
                 }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onAppear                                             { updateLength() }
-        .onChange(of: viewModel.layout)                      { _, _ in updateLength() }
+        .onAppear { updateLength() }
+        .onChange(of: viewModel.layout) { _, _ in updateLength() }
         .onChange(of: viewModel.featuredItem?.formattedSpeed) { _, _ in updateLength() }
         .onChange(of: viewModel.featuredItem?.downloadedBytes) { _, _ in updateLength() }
         .onChange(of: viewModel.featuredItem?.totalBytes) { _, _ in updateLength() }
@@ -330,59 +283,35 @@ struct TrayLabelView: View {
     }
 
     private func transferText(for item: DownloadItem) -> String {
-        if item.totalBytes > 0 {
-            return "\(item.formattedDownloaded)/\(item.formattedSize)"
-        }
-        return item.formattedDownloaded
+        item.totalBytes > 0 ? "\(item.formattedDownloaded)/\(item.formattedSize)" : item.formattedDownloaded
     }
 
     private func updateLength() {
         let item = viewModel.featuredItem
         let speed = item?.formattedSpeed ?? "0 KB/s"
         let transfer = item.map { transferText(for: $0) } ?? "0 KB"
-        TrayController.shared.setDynamicLength(
-            TrayController.pillWidth(for: viewModel.layout, speed: speed, transfer: transfer)
-        )
+        TrayController.shared.setDynamicLength(TrayController.pillWidth(for: viewModel.layout, speed: speed, transfer: transfer))
     }
 
     @ViewBuilder
-    private func widgetPillBar(progress: Double) -> some View {
-        ZStack(alignment: .leading) {
-            Capsule().fill(Color.primary.opacity(0.2)).frame(width: 46, height: 6)
-            Capsule().fill(Color.primary).frame(width: 46 * CGFloat(progress), height: 6)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .background(Capsule().fill(Color.primary.opacity(isPressed ? 0.22 : 0.12)))
+    private func progressBarView(progress: Double) -> some View {
+        ProgressView(value: progress, total: 1.0)
+            .progressViewStyle(.linear)
+            .frame(width: 46)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(Capsule().fill(Color.primary.opacity(isPressed ? 0.22 : 0.12)))
     }
 
     @ViewBuilder
-    private func barSpeedPill(progress: Double, speed: String) -> some View {
+    private func progressBarWithText(progress: Double, text: String) -> some View {
         HStack(spacing: 8) {
-            ZStack(alignment: .leading) {
-                Capsule().fill(Color.primary.opacity(0.2)).frame(width: 40, height: 6)
-                Capsule().fill(Color.primary).frame(width: 40 * CGFloat(progress), height: 6)
-            }
-            Text(speed)
+            ProgressView(value: progress, total: 1.0)
+                .progressViewStyle(.linear)
+                .frame(width: 40)
+            Text(text)
                 .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(.primary)
-                .fixedSize()
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 5)
-        .background(Capsule().fill(Color.primary.opacity(isPressed ? 0.22 : 0.12)))
-    }
-
-    @ViewBuilder
-    private func barTransferPill(progress: Double, transfer: String) -> some View {
-        HStack(spacing: 8) {
-            ZStack(alignment: .leading) {
-                Capsule().fill(Color.primary.opacity(0.2)).frame(width: 40, height: 6)
-                Capsule().fill(Color.primary).frame(width: 40 * CGFloat(progress), height: 6)
-            }
-            Text(transfer)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(.primary)
+                .foregroundStyle(.primary)
                 .fixedSize()
         }
         .padding(.horizontal, 10)
@@ -409,9 +338,18 @@ struct TrayLabelView: View {
             .padding(.vertical, 2)
             .background(RoundedRectangle(cornerRadius: 4).fill(Color.primary.opacity(isPressed ? 0.12 : 0)))
     }
-}
 
-// MARK: - TrayPopoverView
+    @ViewBuilder
+    private func transferOnlyView(transfer: String) -> some View {
+        Text(transfer)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(.primary)
+            .fixedSize()
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(Capsule().fill(Color.primary.opacity(isPressed ? 0.22 : 0.12)))
+    }
+}
 
 struct TrayPopoverView: View {
     @ObservedObject var viewModel: TrayViewModel
@@ -421,20 +359,12 @@ struct TrayPopoverView: View {
         ScrollView(showsIndicators: false) {
             VStack(spacing: 0) {
                 ForEach(viewModel.trayedDownloads) { item in
-                    let isLast     = item.id == viewModel.trayedDownloads.last?.id
+                    let isLast = item.id == viewModel.trayedDownloads.last?.id
                     let isFeatured = (viewModel.pinnedItemId == item.id.uuidString) || (viewModel.trayedDownloads.count == 1)
-
-                    TrayItemRow(item: item,
-                                isFeatured: isFeatured,
-                                accentColor: Color(hex: accentColorHex),
-                                isLast: isLast,
-                                viewModel: viewModel)
+                    TrayItemRow(item: item, isFeatured: isFeatured, accentColor: Color(hex: accentColorHex), isLast: isLast, viewModel: viewModel)
                         .frame(height: 64)
                         .transition(.opacity.combined(with: .move(edge: .top)))
-
-                    if !isLast {
-                        Divider().opacity(0.3).padding(.horizontal, 16)
-                    }
+                    if !isLast { Divider().opacity(0.3).padding(.horizontal, 16) }
                 }
             }
             .padding(.vertical, 8)
@@ -443,54 +373,37 @@ struct TrayPopoverView: View {
     }
 }
 
-// MARK: - TrayItemRow
-
 struct TrayItemRow: View {
-    let item:        DownloadItem
-    let isFeatured:  Bool
+    let item: DownloadItem
+    let isFeatured: Bool
     let accentColor: Color
-    let isLast:      Bool
+    let isLast: Bool
     @ObservedObject var viewModel: TrayViewModel
     @Environment(\.openWindow) private var openWindow
     @State private var isHovering = false
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
-
             Button { viewModel.pin(item: item) } label: {
                 ZStack {
                     Circle().fill(isFeatured ? accentColor : Color.primary.opacity(0.1))
-                    Image(systemName: "pin.fill")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(isFeatured ? .white : .secondary.opacity(0.4))
+                    Image(systemName: "pin.fill").font(.system(size: 10, weight: .bold)).foregroundColor(isFeatured ? .white : .secondary.opacity(0.4))
                 }
             }
             .buttonStyle(.plain)
             .frame(width: 24, height: 24)
 
             VStack(alignment: .leading, spacing: 8) {
-
                 HStack(alignment: .center, spacing: 0) {
-                    Text(item.filename)
-                        .font(.system(size: 12, weight: .semibold))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-
+                    Text(item.filename).font(.system(size: 12, weight: .semibold)).lineLimit(1).truncationMode(.middle)
                     Spacer(minLength: 8)
-
-                    Text(item.formattedSpeed)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.secondary)
-
+                    Text(item.formattedSpeed).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
                     Spacer().frame(width: 14)
-
                     Button {
                         if item.status == .downloading { DownloadEngine.shared.stop(item) }
                         else { DownloadEngine.shared.resume(item) }
                     } label: {
-                        Image(systemName: item.status == .downloading ? "pause.circle.fill" : "play.circle.fill")
-                            .font(.system(size: 16))
-                            .foregroundStyle(.secondary.opacity(0.8))
+                        Image(systemName: item.status == .downloading ? "pause.circle.fill" : "play.circle.fill").font(.system(size: 16)).foregroundStyle(.secondary.opacity(0.8))
                     }
                     .buttonStyle(.plain)
                     .frame(width: 16, height: 16)
@@ -499,24 +412,18 @@ struct TrayItemRow: View {
 
                 HStack(alignment: .center, spacing: 0) {
                     ZStack(alignment: .leading) {
-                        Capsule().fill(Color.secondary.opacity(0.35))
-                            .frame(maxWidth: .infinity, maxHeight: 6)
+                        Capsule().fill(Color.secondary.opacity(0.35)).frame(maxWidth: .infinity, maxHeight: 6)
                         GeometryReader { geo in
-                            Capsule().fill(item.status == .failed ? Color.red : accentColor)
-                                .frame(width: geo.size.width * CGFloat(item.progress), height: 6)
+                            Capsule().fill(item.status == .failed ? Color.red : accentColor).frame(width: geo.size.width * CGFloat(item.progress), height: 6)
                         }
                     }
                     .frame(height: 6)
-
                     Spacer().frame(width: 14)
-
                     Button {
                         DownloadEngine.shared.stop(item)
                         viewModel.removeFromTray(item.id)
                     } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 16))
-                            .foregroundStyle(.secondary.opacity(0.8))
+                        Image(systemName: "xmark.circle.fill").font(.system(size: 16)).foregroundStyle(.secondary.opacity(0.8))
                     }
                     .buttonStyle(.plain)
                     .frame(width: 16, height: 16)
