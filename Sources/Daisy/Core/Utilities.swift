@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 func formatBytes(_ bytes: Int64) -> String {
     guard bytes > 0 else { return "0 B" }
@@ -19,5 +20,20 @@ func formatDuration(_ seconds: Double) -> String {
         return String(format: "%02d:%02d:%02d", hours, minutes, secs)
     } else {
         return String(format: "%02d:%02d", minutes, secs)
+    }
+}
+
+// SwiftUI's command-menu Button has no built-in checked-state modifier.
+// Keep the update-channel commands source-compatible while allowing the
+// selected channel to be represented by the command implementation later.
+enum DaisyMenuItemState {
+    case on
+    case off
+}
+
+extension Button {
+    @ViewBuilder
+    func state(_ state: DaisyMenuItemState) -> some View {
+        self
     }
 }
