@@ -422,18 +422,23 @@ final class DaisyUpdateManager {
                 let archive = temp.appendingPathComponent("update.zip")
                 try await download(candidate.downloadURL, to: archive)
 
-                let extracted = temp.appendingPathComponent("extracted", isDirectory: true)
-                try FileManager.default.createDirectory(at: extracted, withIntermediateDirectories: true)
-                try runTool("/usr/bin/ditto", arguments: ["-x", "-k", archive.path, extracted.path])
-
-                let appArchive: URL
-                guard let found = findZip(in: extracted, matching: "-macOS-universal.zip") else { throw UpdateError.assetMissing }
-                appArchive = found
-
                 let appExtracted = temp.appendingPathComponent("app", isDirectory: true)
                 try FileManager.default.createDirectory(at: appExtracted, withIntermediateDirectories: true)
-                try runTool("/usr/bin/ditto", arguments: ["-x", "-k", appArchive.path, appExtracted.path])
-                let newApp = appExtracted.appendingPathComponent("Daisy.app")
+                try runTool("/usr/bin/ditto", arguments: ["-x", "-k", archive.path, appExtracted.path])
+
+                let newApp: URL
+                let directApp = appExtracted.appendingPathComponent("Daisy.app")
+                if FileManager.default.fileExists(atPath: directApp.path) {
+                    newApp = directApp
+                } else if let nestedArchive = findZip(in: appExtracted, matching: "-macOS-universal.zip") {
+                    let nestedExtracted = temp.appendingPathComponent("nested-app", isDirectory: true)
+                    try FileManager.default.createDirectory(at: nestedExtracted, withIntermediateDirectories: true)
+                    try runTool("/usr/bin/ditto", arguments: ["-x", "-k", nestedArchive.path, nestedExtracted.path])
+                    newApp = nestedExtracted.appendingPathComponent("Daisy.app")
+                } else {
+                    throw UpdateError.appMissing
+                }
+
                 guard FileManager.default.fileExists(atPath: newApp.path) else { throw UpdateError.appMissing }
 
                 let currentApp = Bundle.main.bundleURL.standardizedFileURL
