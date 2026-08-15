@@ -15,10 +15,10 @@ enum MenuBarLayout: Int, CaseIterable, Identifiable {
         switch self {
         case .onlyBar:      return "Progress Bar"
         case .barSpeed:     return "Progress Bar + Speed"
-        case .barTransfer:  return "Progress Bar + Downloaded / Size"
+        case .barTransfer:  return "Progress Bar + Download Stats"
         case .textSpeed:    return "Percentage + Speed"
         case .minimal:      return "Percentage"
-        case .transferOnly: return "Downloaded / Size"
+        case .transferOnly: return "Download Stats"
         }
     }
 }
