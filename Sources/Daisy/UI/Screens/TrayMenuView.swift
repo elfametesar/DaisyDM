@@ -5,16 +5,18 @@ import Combine
 enum MenuBarLayout: Int, CaseIterable, Identifiable {
     case onlyBar = 0
     case barSpeed = 1
-    case textSpeed = 2
-    case minimal = 3
+    case barTransfer = 2
+    case textSpeed = 3
+    case minimal = 4
 
     var id: Int { self.rawValue }
     var title: String {
         switch self {
-        case .onlyBar:   return "Progress Bar"
-        case .barSpeed:  return "Bar + Speed"
-        case .textSpeed: return "Percentage + Speed"
-        case .minimal:   return "Percentage"
+        case .onlyBar:     return "Progress Bar"
+        case .barSpeed:    return "Bar + Speed"
+        case .barTransfer: return "Bar + Downloaded / Size"
+        case .textSpeed:   return "Percentage + Speed"
+        case .minimal:     return "Percentage"
         }
     }
 }
@@ -172,7 +174,7 @@ class TrayController: NSObject, ObservableObject {
     }
 
     // Pure AppKit text measurement — no SwiftUI layout involved at all
-    static func pillWidth(for layout: MenuBarLayout, speed: String) -> CGFloat {
+    static func pillWidth(for layout: MenuBarLayout, speed: String, transfer: String = "") -> CGFloat {
         switch layout {
         case .onlyBar:
             return 66  // 46 bar + 10*2 padding
@@ -181,6 +183,11 @@ class TrayController: NSObject, ObservableObject {
             let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 10, weight: .semibold)]
             let textW = ceil((speed as NSString).size(withAttributes: attrs).width)
             return 40 + 8 + textW + 20  // bar + spacing + text + 10*2 padding
+
+        case .barTransfer:
+            let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 10, weight: .semibold)]
+            let textW = ceil((transfer as NSString).size(withAttributes: attrs).width)
+            return 40 + 8 + textW + 20  // bar + spacing + downloaded/size + 10*2 padding
 
         case .textSpeed:
             let boldAttrs: [NSAttributedString.Key: Any]    = [.font: NSFont.systemFont(ofSize: 11, weight: .bold)]
@@ -204,8 +211,10 @@ class TrayController: NSObject, ObservableObject {
     private func updateTrayVisibility(hasItems: Bool) {
         if hasItems && statusItem == nil {
             // Compute width before creating the item so it never defaults to 74.5
-            let speed = TrayViewModel.shared.featuredItem?.formattedSpeed ?? "0 KB/s"
-            let initialLength = TrayController.pillWidth(for: TrayViewModel.shared.layout, speed: speed)
+            let featuredItem = TrayViewModel.shared.featuredItem
+            let speed = featuredItem?.formattedSpeed ?? "0 KB/s"
+            let transfer = featuredItem.map { $0.totalBytes > 0 ? "\($0.formattedDownloaded)/\($0.formattedSize)" : $0.formattedDownloaded } ?? "0 KB"
+            let initialLength = TrayController.pillWidth(for: TrayViewModel.shared.layout, speed: speed, transfer: transfer)
             statusItem = NSStatusBar.system.statusItem(withLength: initialLength)
 
             guard let button = statusItem?.button else { return }
@@ -292,10 +301,11 @@ struct TrayLabelView: View {
         HStack(spacing: 0) {
             if let item = viewModel.featuredItem {
                 switch viewModel.layout {
-                case .onlyBar:   widgetPillBar(progress: item.progress)
-                case .barSpeed:  barSpeedPill(progress: item.progress, speed: item.formattedSpeed)
-                case .textSpeed: textSpeedView(progress: item.progress, speed: item.formattedSpeed)
-                case .minimal:   minimalView(progress: item.progress)
+                case .onlyBar:     widgetPillBar(progress: item.progress)
+                case .barSpeed:    barSpeedPill(progress: item.progress, speed: item.formattedSpeed)
+                case .barTransfer: barTransferPill(progress: item.progress, transfer: transferText(for: item))
+                case .textSpeed:   textSpeedView(progress: item.progress, speed: item.formattedSpeed)
+                case .minimal:     minimalView(progress: item.progress)
                 }
             }
         }
@@ -303,6 +313,8 @@ struct TrayLabelView: View {
         .onAppear                                             { updateLength() }
         .onChange(of: viewModel.layout)                      { _, _ in updateLength() }
         .onChange(of: viewModel.featuredItem?.formattedSpeed) { _, _ in updateLength() }
+        .onChange(of: viewModel.featuredItem?.downloadedBytes) { _, _ in updateLength() }
+        .onChange(of: viewModel.featuredItem?.totalBytes) { _, _ in updateLength() }
         .onReceive(viewModel.$trayedDownloads) { items in
             for item in items where item.progress >= 1.0 {
                 NSApp.activate(ignoringOtherApps: true)
@@ -317,10 +329,19 @@ struct TrayLabelView: View {
         }
     }
 
+    private func transferText(for item: DownloadItem) -> String {
+        if item.totalBytes > 0 {
+            return "\(item.formattedDownloaded)/\(item.formattedSize)"
+        }
+        return item.formattedDownloaded
+    }
+
     private func updateLength() {
-        let speed = viewModel.featuredItem?.formattedSpeed ?? "0 KB/s"
+        let item = viewModel.featuredItem
+        let speed = item?.formattedSpeed ?? "0 KB/s"
+        let transfer = item.map { transferText(for: $0) } ?? "0 KB"
         TrayController.shared.setDynamicLength(
-            TrayController.pillWidth(for: viewModel.layout, speed: speed)
+            TrayController.pillWidth(for: viewModel.layout, speed: speed, transfer: transfer)
         )
     }
 
@@ -343,6 +364,23 @@ struct TrayLabelView: View {
                 Capsule().fill(Color.primary).frame(width: 40 * CGFloat(progress), height: 6)
             }
             Text(speed)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(.primary)
+                .fixedSize()
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(Capsule().fill(Color.primary.opacity(isPressed ? 0.22 : 0.12)))
+    }
+
+    @ViewBuilder
+    private func barTransferPill(progress: Double, transfer: String) -> some View {
+        HStack(spacing: 8) {
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.primary.opacity(0.2)).frame(width: 40, height: 6)
+                Capsule().fill(Color.primary).frame(width: 40 * CGFloat(progress), height: 6)
+            }
+            Text(transfer)
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundColor(.primary)
                 .fixedSize()
