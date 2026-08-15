@@ -79,6 +79,33 @@ struct SidebarView: View {
             .background(.ultraThinMaterial)
             .background(tintBackground)
         }
+        .modifier(FloatingSidebarAppearance())
+    }
+}
+
+private struct FloatingSidebarAppearance: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(macOS 27.0, *) {
+            content
+                .padding(.vertical, 10)
+                .padding(.leading, 8)
+                .padding(.trailing, 6)
+                .background(.clear)
+                .background(
+                    .regularMaterial,
+                    in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+                )
+                .overlay {
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.10), lineWidth: 0.5)
+                }
+                .shadow(color: .black.opacity(0.14), radius: 18, x: 0, y: 8)
+                .padding(.vertical, 8)
+                .padding(.leading, 8)
+                .padding(.trailing, 4)
+        } else {
+            content
+        }
     }
 }
 
