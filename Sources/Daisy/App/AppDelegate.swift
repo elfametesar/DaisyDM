@@ -43,14 +43,14 @@ struct DaisyApp: App {
                 .keyboardShortcut("p", modifiers: [.command, .shift])
             }
 
-            CommandMenu("Daisy DM") {
-                Button("Check for Stable Update…") {
+            CommandGroup(after: .appInfo) {
+                Button("Check for Stable Updates…") {
                     Task { @MainActor in
                         DaisyUpdateManager.shared.checkAndOffer(channel: .stable)
                     }
                 }
 
-                Button("Check for Beta Update…") {
+                Button("Check for Beta Updates…") {
                     Task { @MainActor in
                         DaisyUpdateManager.shared.checkAndOffer(channel: .beta)
                     }
