@@ -319,33 +319,30 @@ final class DaisyUpdateManager {
     }
 
     private func fetchBetaCandidate() async throws -> DaisyUpdateCandidate? {
-        var components = URLComponents(string: "https://api.github.com/repos/\(repository)/actions/runs")!
+        var components = URLComponents(string: "https://api.github.com/repos/\(repository)/releases")!
         components.queryItems = [
-            URLQueryItem(name: "workflow_id", value: "manual-build-release.yml"),
-            URLQueryItem(name: "branch", value: "main"),
-            URLQueryItem(name: "status", value: "completed"),
             URLQueryItem(name: "per_page", value: "20")
         ]
-        let runsURL = components.url!
-        let runs = try await getJSON(url: runsURL)
-        guard let workflowRuns = runs["workflow_runs"] as? [[String: Any]] else { return nil }
+        let releases = try await getJSONList(url: components.url!)
 
-        for run in workflowRuns {
-            guard (run["conclusion"] as? String) == "success",
-                  let runID = run["id"] as? Int else { continue }
+        for release in releases {
+            guard (release["prerelease"] as? Bool) == true,
+                  let tag = release["tag_name"] as? String,
+                  let version = normalizedVersion(tag),
+                  let assets = release["assets"] as? [[String: Any]] else { continue }
 
-            let artifactsURL = URL(string: "https://api.github.com/repos/\(repository)/actions/runs/\(runID)/artifacts")!
-            let artifacts = try await getJSON(url: artifactsURL)
-            guard let values = artifacts["artifacts"] as? [[String: Any]],
-                  let artifact = values.first(where: { ($0["name"] as? String)?.hasPrefix("daisy-dm-") == true }),
-                  let artifactName = artifact["name"] as? String,
-                  let artifactID = artifact["id"] as? Int,
-                  let version = normalizedVersion(String(artifactName.dropFirst("daisy-dm-".count))) else { continue }
+            let asset = assets.first { asset in
+                guard let name = asset["name"] as? String else { return false }
+                return name.hasPrefix("Daisy-DM-") && name.contains("-macOS-universal.zip")
+            }
+            guard let asset,
+                  let rawURL = asset["browser_download_url"] as? String,
+                  let downloadURL = URL(string: rawURL) else { continue }
 
-            let downloadURL = URL(string: "https://api.github.com/repos/\(repository)/actions/artifacts/\(artifactID)/zip")!
-            let pageURL = (run["html_url"] as? String).flatMap(URL.init(string:))
+            let pageURL = (release["html_url"] as? String).flatMap(URL.init(string:))
             return DaisyUpdateCandidate(version: version, downloadURL: downloadURL, channel: .beta, releasePageURL: pageURL)
         }
+
         return nil
     }
 
@@ -358,6 +355,20 @@ final class DaisyUpdateManager {
             throw UpdateError.httpStatus((response as? HTTPURLResponse)?.statusCode ?? -1)
         }
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw UpdateError.invalidResponse
+        }
+        return json
+    }
+
+    private func getJSONList(url: URL) async throws -> [[String: Any]] {
+        var request = URLRequest(url: url)
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        request.setValue("DaisyDM-Updater/1", forHTTPHeaderField: "User-Agent")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw UpdateError.httpStatus((response as? HTTPURLResponse)?.statusCode ?? -1)
+        }
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
             throw UpdateError.invalidResponse
         }
         return json
@@ -416,13 +427,8 @@ final class DaisyUpdateManager {
                 try runTool("/usr/bin/ditto", arguments: ["-x", "-k", archive.path, extracted.path])
 
                 let appArchive: URL
-                if candidate.channel == .stable {
-                    guard let found = findZip(in: extracted, matching: "-macOS-universal.zip") else { throw UpdateError.assetMissing }
-                    appArchive = found
-                } else {
-                    guard let found = findZip(in: extracted, matching: "-macOS-universal.zip") else { throw UpdateError.assetMissing }
-                    appArchive = found
-                }
+                guard let found = findZip(in: extracted, matching: "-macOS-universal.zip") else { throw UpdateError.assetMissing }
+                appArchive = found
 
                 let appExtracted = temp.appendingPathComponent("app", isDirectory: true)
                 try FileManager.default.createDirectory(at: appExtracted, withIntermediateDirectories: true)
