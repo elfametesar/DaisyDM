@@ -389,12 +389,8 @@ jobs:
           set -euo pipefail
 
           mapfile -t prerelease_tags < <(
-            gh release list \
-              --repo "$GITHUB_REPOSITORY" \
-              --prerelease \
-              --limit 100 \
-              --json tagName,isDraft \
-              --jq '.[] | select(.isDraft == false) | .tagName'
+            gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+              --jq '.[] | select(.prerelease == true and .draft == false) | .tag_name'
           )
 
           for old_tag in "${prerelease_tags[@]}"; do
