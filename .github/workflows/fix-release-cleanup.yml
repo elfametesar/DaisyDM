@@ -1,0 +1,45 @@
+name: Fix release cleanup
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Patch release cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64
+
+          path = Path('.github/workflows/manual-build-release.yml')
+          text = path.read_text()
+          start = text.index('      - name: Remove previous prereleases\n')
+          end = text.index('      - name: Create release\n', start)
+          encoded = 'Y2g...PLACEHOLDER'
+          raise SystemExit('placeholder')
+          PY
+
+      - name: Commit fix and remove workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .github/workflows/manual-build-release.yml
+          git commit -m 'fix: reliably remove old prereleases'
+          git rm .github/workflows/fix-release-cleanup.yml
+          git commit -m 'chore: remove one-time release cleanup fixer'
+          git push
