@@ -214,17 +214,7 @@ struct ContentView: View {
         .toolbar {
             ToolbarItemGroup {
                 Button(action: { isCompactList.toggle() }) { Label(isCompactList ? "Relaxed View" : "Compact View", systemImage: isCompactList ? "list.dash" : "list.bullet") }
-                .help(isCompactList ? "Switch to Relaxed View" : "Switch to Compact View")
-
-                Button(action: { isCompactSidebar.toggle() }) {
-                    Label(isCompactSidebar ? "Expand Sidebar" : "Icon Sidebar", systemImage: isCompactSidebar ? "sidebar.left" : "sidebar.leading")
-                }
-                .help(isCompactSidebar ? "Expand Sidebar" : "Shrink Sidebar to Icons")
-
-                Button(action: { showingDetailPanel.toggle() }) {
-                    Label(showingDetailPanel ? "Hide Details" : "Show Details", systemImage: showingDetailPanel ? "sidebar.trailing" : "sidebar.right")
-                }
-                .help(showingDetailPanel ? "Hide Details" : "Show Details")
+                    .help(isCompactList ? "Switch to Relaxed View" : "Switch to Compact View")
 
                 Menu {
                     Picker("Sort By", selection: $sortColumn) {
@@ -267,6 +257,13 @@ struct ContentView: View {
                     Button(action: { if let id = selectedItems.first { openWindow(value: id) } }) { Label("Progress", systemImage: "macwindow") }
                     .help("Show Progress Window")
                 }
+            }
+
+            ToolbarItem(placement: .primaryAction) {
+                Button(action: { showingDetailPanel.toggle() }) {
+                    Label(showingDetailPanel ? "Hide Details" : "Show Details", systemImage: showingDetailPanel ? "sidebar.trailing" : "sidebar.right")
+                }
+                .help(showingDetailPanel ? "Hide Details" : "Show Details")
             }
         }
     }
