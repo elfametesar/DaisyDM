@@ -140,6 +140,7 @@ struct ContentView: View {
         } detail: {
             contentAndDetailColumn
         }
+        .toolbar(removing: .sidebarToggle)
         .onReceive(NotificationCenter.default.publisher(for: .showAddDownload)) { _ in
             addDownloadPayload = AddDownloadPayload(text: "")
         }
@@ -191,7 +192,7 @@ struct ContentView: View {
     private var contentAndDetailColumn: some View {
         HSplitView {
             contentColumn
-                .frame(minWidth: 500, idealWidth: showingDetailPanel ? 680 : 900, maxWidth: .infinity)
+                .frame(minWidth: showingDetailPanel ? 500 : 320, idealWidth: showingDetailPanel ? 680 : 700, maxWidth: .infinity)
                 .layoutPriority(1)
 
             if showingDetailPanel {
