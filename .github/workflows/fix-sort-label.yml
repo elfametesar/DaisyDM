@@ -1,6 +1,10 @@
 name: Fix sort toolbar label
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/fix-sort-label.yml
   workflow_dispatch:
 
 permissions:
