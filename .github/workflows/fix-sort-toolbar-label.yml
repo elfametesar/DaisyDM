@@ -1,0 +1,67 @@
+name: Fix sort toolbar label
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/fix-sort-toolbar-label.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Patch Sort label layout
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('Sources/Daisy/UI/Screens/ContentView.swift')
+          text = path.read_text()
+
+          old = '''                } label: {
+                    Label("Sort", systemImage: "arrow.up.arrow.down")
+                }
+                .help("Sort Downloads")
+                .menuStyle(.button)
+                .labelStyle(.titleAndIcon)
+                .tint(.primary)'''
+
+          new = '''                } label: {
+                    VStack(spacing: 2) {
+                        Image(systemName: "arrow.up.arrow.down")
+                        Text("Sort")
+                            .font(.caption2)
+                    }
+                    .frame(minWidth: 44)
+                }
+                .help("Sort Downloads")
+                .menuStyle(.button)
+                .tint(.primary)'''
+
+          if old not in text:
+              raise SystemExit('expected Sort toolbar label block not found')
+
+          path.write_text(text.replace(old, new, 1))
+          PY
+
+      - name: Commit source fix and remove this workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add Sources/Daisy/UI/Screens/ContentView.swift
+          git commit -m 'fix: show Sort label below icon' || true
+          git rm .github/workflows/fix-sort-toolbar-label.yml
+          git commit -m 'chore: remove one-time sort label fixer'
+          git push origin main
