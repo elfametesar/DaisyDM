@@ -96,8 +96,8 @@ struct SidebarView: View {
             .background(tintBackground)
         }
         .frame(
-            minWidth: isCompactSidebar ? 210 : 0,
-            maxWidth: isCompactSidebar ? 210 : .infinity
+            minWidth: isCompactSidebar ? 105 : 0,
+            maxWidth: isCompactSidebar ? 105 : .infinity
         )
         .animation(.easeInOut(duration: 0.18), value: isCompactSidebar)
         .toolbar(removing: .sidebarToggle)
@@ -129,6 +129,7 @@ struct SidebarRow: View {
                         .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
                         .foregroundStyle(isSelected ? .primary : .secondary)
                         .lineLimit(1)
+                        .minimumScaleFactor(0.8)
                         .frame(maxWidth: .infinity)
                 }
                 .frame(maxWidth: .infinity, minHeight: 58)
