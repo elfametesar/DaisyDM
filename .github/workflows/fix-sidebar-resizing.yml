@@ -6,7 +6,6 @@ permissions:
   contents: write
 jobs:
   fix:
-    if: github.event.head_commit.message != 'fix: make sidebar fixed width'
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
