@@ -6,11 +6,12 @@ import UniformTypeIdentifiers
 @main
 struct DaisyApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
+    @AppStorage("showingDetailPanel") private var showingDetailPanel = true
 
     var body: some Scene {
         Window("Daisy", id: "main") {
             ContentView()
-                .frame(minWidth: 1300, minHeight: 550)
+                .frame(minWidth: showingDetailPanel ? 1300 : 425, minHeight: 550)
                 .onOpenURL { url in
                     if url.scheme == URLSchemeHandler.scheme {
                         URLSchemeHandler.handle(url)
