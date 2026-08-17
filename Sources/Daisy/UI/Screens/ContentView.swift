@@ -182,9 +182,9 @@ struct ContentView: View {
     private var sidebarColumn: some View {
         SidebarView(selected: $selectedFilter, engine: engine, onSettings: { showingSettings = true })
             .navigationSplitViewColumnWidth(
-                min: isCompactSidebar ? 105 : 170,
+                min: isCompactSidebar ? 105 : 190,
                 ideal: isCompactSidebar ? 105 : 190,
-                max: isCompactSidebar ? 105 : 220
+                max: isCompactSidebar ? 105 : 190
             )
     }
 
