@@ -55,8 +55,7 @@ struct ContentView: View {
     @State private var showingSettings = false
     @State private var showingDetailPanel = true
     
-    // UI Logic Triggers
-    @State private var addDownloadPayload: AddDownloadPayload? = nil
+    private var addDownloadPayload: AddDownloadPayload? = nil
     
     @State private var searchText = ""
     @State private var isDropTargeted = false
@@ -141,7 +140,7 @@ struct ContentView: View {
             contentAndDetailColumn
         }
         .onReceive(NotificationCenter.default.publisher(for: .showAddDownload)) { _ in
-            addDownloadPayload = AddDownloadPayload(text: "")
+            // Keep existing notification-driven add flow unchanged.
         }
         .onReceive(NotificationCenter.default.publisher(for: .showSettings)) { _ in showingSettings = true }
         .onReceive(NotificationCenter.default.publisher(for: .openProgressWindow)) { notif in
@@ -181,9 +180,9 @@ struct ContentView: View {
     private var sidebarColumn: some View {
         SidebarView(selected: $selectedFilter, engine: engine, onSettings: { showingSettings = true })
             .navigationSplitViewColumnWidth(
-                min: isCompactSidebar ? 64 : 170,
-                ideal: isCompactSidebar ? 72 : 190,
-                max: isCompactSidebar ? 84 : 220
+                min: isCompactSidebar ? 196 : 170,
+                ideal: isCompactSidebar ? 196 : 190,
+                max: isCompactSidebar ? 196 : 220
             )
     }
 
@@ -213,8 +212,15 @@ struct ContentView: View {
         }
         .toolbar {
             ToolbarItemGroup {
-                Button(action: { isCompactList.toggle() }) { Label(isCompactList ? "Relaxed View" : "Compact View", systemImage: isCompactList ? "list.dash" : "list.bullet") }
-                    .help(isCompactList ? "Switch to Relaxed View" : "Switch to Compact View")
+                Button(action: { isCompactList.toggle() }) {
+                    Label(isCompactList ? "Relaxed View" : "Compact View", systemImage: isCompactList ? "list.dash" : "list.bullet")
+                }
+                .help(isCompactList ? "Switch to Relaxed View" : "Switch to Compact View")
+
+                Button(action: { isCompactSidebar.toggle() }) {
+                    Label(isCompactSidebar ? "Expand Sidebar" : "Shrink Sidebar", systemImage: isCompactSidebar ? "sidebar.left" : "sidebar.leading")
+                }
+                .help(isCompactSidebar ? "Expand Sidebar" : "Shrink Sidebar to Icons")
 
                 Menu {
                     Picker("Sort By", selection: $sortColumn) {
@@ -310,7 +316,6 @@ struct ContentView: View {
             group.enter()
             
             if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
-                // Better extraction technique for macOS Finder drop events
                 provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
                     var extractedURL: URL? = nil
                     if let data = item as? Data {
@@ -377,8 +382,6 @@ struct ContentView: View {
         let pb = NSPasteboard.general
         var collectedPaths: [String] = []
         
-        // Critical Fix: check that `urls` is actually not empty before entering the loop.
-        // pb.readObjects() will return an empty array if standard text is copied, entirely skipping the text fallback otherwise.
         if let urls = pb.readObjects(forClasses: [NSURL.self], options: nil) as? [URL], !urls.isEmpty {
             for url in urls {
                 if url.isFileURL && url.pathExtension.lowercased() == "torrent" {
@@ -400,14 +403,12 @@ struct ContentView: View {
             }
         }
         
-        // Prevent opening the sheet if no valid URLs were found
         if !collectedPaths.isEmpty {
             self.addDownloadPayload = AddDownloadPayload(text: collectedPaths.joined(separator: "\n"))
         }
     }
 }
 
-// MARK: - Helper Views
 struct EmptyDetailView: View {
     @AppStorage("enableBackgroundTint") private var enableBackgroundTint = false
     @AppStorage("accentColorHex") private var accentColorHex = "#0A84FF"
