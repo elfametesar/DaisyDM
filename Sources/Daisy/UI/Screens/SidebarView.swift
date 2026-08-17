@@ -127,7 +127,7 @@ struct SidebarRow: View {
 
                     Text(filter.rawValue)
                         .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
-                        .foregroundStyle(isSelected ? .primary : .secondary)
+                        .foregroundStyle(isSelected ? Color(hex: accentColorHex).accessibleText : .secondary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
                         .frame(maxWidth: .infinity)
