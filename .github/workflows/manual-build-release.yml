@@ -379,6 +379,33 @@ jobs:
             exit 1
           fi
 
+      - name: Remove previous prereleases
+        if: ${{ inputs.prerelease }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CURRENT_TAG: ${{ needs.build.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          mapfile -t prerelease_tags < <(
+            gh release list \
+              --repo "$GITHUB_REPOSITORY" \
+              --prerelease \
+              --limit 100 \
+              --json tagName,isDraft \
+              --jq '.[] | select(.isDraft == false) | .tagName'
+          )
+
+          for old_tag in "${prerelease_tags[@]}"; do
+            [[ "$old_tag" == "$CURRENT_TAG" ]] && continue
+            echo "Deleting previous prerelease: $old_tag"
+            gh release delete "$old_tag" \
+              --repo "$GITHUB_REPOSITORY" \
+              --yes \
+              --cleanup-tag
+          done
+
       - name: Create release
         shell: bash
         env:
