@@ -100,6 +100,7 @@ struct SidebarView: View {
             maxWidth: isCompactSidebar ? 196 : .infinity
         )
         .animation(.easeInOut(duration: 0.18), value: isCompactSidebar)
+        .toolbar(removing: .sidebarToggle)
     }
 }
 
