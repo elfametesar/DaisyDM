@@ -55,7 +55,7 @@ struct ContentView: View {
     @State private var showingSettings = false
     @State private var showingDetailPanel = true
     
-    private var addDownloadPayload: AddDownloadPayload? = nil
+    @State private var addDownloadPayload: AddDownloadPayload? = nil
     
     @State private var searchText = ""
     @State private var isDropTargeted = false
@@ -140,7 +140,7 @@ struct ContentView: View {
             contentAndDetailColumn
         }
         .onReceive(NotificationCenter.default.publisher(for: .showAddDownload)) { _ in
-            // Keep existing notification-driven add flow unchanged.
+            addDownloadPayload = AddDownloadPayload(text: "")
         }
         .onReceive(NotificationCenter.default.publisher(for: .showSettings)) { _ in showingSettings = true }
         .onReceive(NotificationCenter.default.publisher(for: .openProgressWindow)) { notif in
@@ -306,7 +306,6 @@ struct ContentView: View {
         }
     }
     
-    // MARK: - Bulletproof Drag & Drop Handling
     private func handleProviders(_ providers: [NSItemProvider]) {
         let group = DispatchGroup()
         let lock = NSLock()
