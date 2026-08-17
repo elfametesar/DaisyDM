@@ -1,0 +1,63 @@
+name: Cleanup old prereleases
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Remove all but newest prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" > "$RUNNER_TEMP/releases.json"
+
+          python3 - "$RUNNER_TEMP/releases.json" <<'PY'
+          import json
+          import os
+          import subprocess
+          import sys
+
+          releases = json.loads(open(sys.argv[1]).read())
+          prereleases = [
+              r for r in releases
+              if r.get('prerelease') and not r.get('draft')
+          ]
+          prereleases.sort(key=lambda r: r.get('published_at') or r.get('created_at') or '', reverse=True)
+
+          for release in prereleases[1:]:
+              release_id = release['id']
+              tag = release['tag_name']
+              print(f'Deleting old prerelease {tag} (release {release_id})')
+              subprocess.run([
+                  'gh', 'api', '--method', 'DELETE',
+                  f'repos/{os.environ["GITHUB_REPOSITORY"]}/releases/{release_id}'
+              ], check=True)
+              subprocess.run([
+                  'gh', 'api', '--method', 'DELETE',
+                  f'repos/{os.environ["GITHUB_REPOSITORY"]}/git/refs/tags/{tag}'
+              ], check=False)
+
+          PY
+
+      - name: Remove this workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git pull --ff-only
+          git rm .github/workflows/cleanup-old-prereleases.yml
+          git commit -m 'chore: remove one-time prerelease cleanup workflow'
+          git push
