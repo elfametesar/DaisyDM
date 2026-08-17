@@ -470,35 +470,6 @@ struct ProgressWindowView: View {
     }
 }
 
-struct TabBarContextMenuDisabler: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView {
-        let view = NSView(frame: .zero)
-        view.postsFrameChangedNotifications = false
-        DispatchQueue.main.async {
-            disable(in: view.window)
-        }
-        return view
-    }
-
-    func updateNSView(_ nsView: NSView, context: Context) {
-        DispatchQueue.main.async {
-            disable(in: nsView.window)
-        }
-    }
-
-    private func disable(in window: NSWindow?) {
-        guard let content = window?.contentView else { return }
-        func walk(_ view: NSView) {
-            if let tabView = view as? NSTabView {
-                tabView.menu = nil
-            }
-            for subview in view.subviews {
-                walk(subview)
-            }
-        }
-        walk(content)
-    }
-}
 
 // MARK: - Subcomponents
 
