@@ -24,7 +24,6 @@ struct ProgressWindowView: View {
     @AppStorage("progressBarColorHex") private var progressBarColorHex = "#34C759"
     @AppStorage("alwaysPinProgressWindows") private var alwaysPinProgressWindows = false
 
-    // MARK: - THE FIX: Always fetch the live data instead of using the frozen snapshot
     private var liveItem: DownloadItem {
         engine.items.first(where: { $0.id == item.id }) ?? item
     }
@@ -60,6 +59,7 @@ struct ProgressWindowView: View {
         }
         .frame(width: 460)
         .fixedSize(horizontal: true, vertical: true)
+        .background(TabBarContextMenuDisabler())
         .background(VisualEffectView(material: .popover, blendingMode: .behindWindow)
             .ignoresSafeArea())
         .background(WindowAccessor(window: $window))
@@ -72,29 +72,18 @@ struct ProgressWindowView: View {
             if let monitor = eventMonitor {
                 NSEvent.removeMonitor(monitor)
             }
-            // If the WindowGroup swaps us out for FailedDownloadDialog
-            // mid-session (e.g. download transitioned to .failed) the
-            // NSWindow is reused; scrub the tray button so it doesn't
-            // linger into the next view.
             if let win = window { removeCustomTrayButton(from: win) }
         }
         .onReceive(timer) { _ in
             now = Date()
-            // Sync the tray button every tick in case SwiftUI's
-            // onChange misses a status transition (e.g. when the
-            // engine replaces items wholesale rather than mutating an
-            // existing item's status in place).
             updateTrayButtonVisibility()
         }
         .onChange(of: window) { _, _ in setupWindowSettings() }
-        // Hide the "Hide to Menu Bar" traffic-light button whenever the
-        // download reaches a terminal state — there's nothing to keep
-        // tracking in the tray once the item is failed or completed.
         .onChange(of: liveItem.status) { _, _ in updateTrayButtonVisibility() }
-        // NEW: Triggers every single time the window is focused/reopened, even if it was just hidden
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notif in
             if let obj = notif.object as? NSWindow, obj == window {
                 TrayViewModel.shared.removeFromTray(liveItem.id)
+                disableProgressTabContextMenu()
             }
         }
     }
@@ -103,11 +92,18 @@ struct ProgressWindowView: View {
         liveItem.status != .completed && liveItem.status != .failed
     }
 
-    /// Adds or removes the custom "Hide to Menu Bar" traffic-light
-    /// button based on the current download status. Using
-    /// removeFromSuperview (rather than isHidden) is important so the
-    /// view doesn't keep occupying the empty slot next to the zoom
-    /// button — that's what made the title bar look offset.
+    private func disableProgressTabContextMenu() {
+        guard let win = window, let content = win.contentView else { return }
+        func findTabView(_ view: NSView) -> NSTabView? {
+            if let tabView = view as? NSTabView { return tabView }
+            for subview in view.subviews {
+                if let tabView = findTabView(subview) { return tabView }
+            }
+            return nil
+        }
+        findTabView(content)?.menu = nil
+    }
+
     private func updateTrayButtonVisibility() {
         guard let win = window else { return }
         if canHideToTray {
@@ -117,11 +113,6 @@ struct ProgressWindowView: View {
         }
     }
 
-    /// Walks every window descendant and removes any stray
-    /// CustomMenuTrafficLight view. Belt-and-suspenders cleanup:
-    /// traffic-light buttons can be re-parented by AppKit during
-    /// fullscreen transitions, so checking only the zoom button's
-    /// superview sometimes misses the instance.
     private func removeCustomTrayButton(from win: NSWindow) {
         let customId = NSUserInterfaceItemIdentifier("CustomMenuTrafficLight")
         func sweep(_ view: NSView) {
@@ -134,8 +125,6 @@ struct ProgressWindowView: View {
             }
         }
         if let content = win.contentView { sweep(content) }
-        // The titlebar lives outside contentView on modern macOS. Walk
-        // from the zoom button's superview too.
         if let titlebar = win.standardWindowButton(.zoomButton)?.superview {
             sweep(titlebar)
         }
@@ -151,28 +140,22 @@ struct ProgressWindowView: View {
             win.isOpaque = false
             win.backgroundColor = .clear
             win.titlebarAppearsTransparent = true
-            
             win.makeKeyAndOrderFront(nil)
-            
             if alwaysPinProgressWindows || isPinned {
                 isPinned = true
                 win.level = .floating
             }
-            
+            disableProgressTabContextMenu()
             updateTrayButtonVisibility()
         }
     }
     
     private func injectTrafficLight(into win: NSWindow) {
-        // Don't add the button at all in terminal states — there's
-        // nothing to keep tracking in the tray for a
-        // failed/completed item.
         guard canHideToTray else { return }
         guard let zoomBtn = win.standardWindowButton(.zoomButton),
               let titlebar = zoomBtn.superview else { return }
-               
-        let customId = NSUserInterfaceItemIdentifier("CustomMenuTrafficLight")
         
+        let customId = NSUserInterfaceItemIdentifier("CustomMenuTrafficLight")
         if titlebar.subviews.contains(where: { $0.identifier == customId }) { return }
         
         let btnFrame = NSRect(
@@ -185,15 +168,12 @@ struct ProgressWindowView: View {
         let accentNSColor = NSColor(Color(hex: accentColorHex))
         let btn = HoverTrafficLightButton(frame: btnFrame, itemId: liveItem.id, accentColor: accentNSColor)
         btn.identifier = customId
-        
         btn.target = btn
         btn.action = #selector(HoverTrafficLightButton.performTrayAction)
         btn.toolTip = "Hide to Menu Bar"
-
         titlebar.addSubview(btn)
     }
     
-    // MARK: - Global Key Monitor (Space & Escape)
     private func setupEventMonitor() {
         eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             if event.keyCode == 53 {
@@ -219,14 +199,12 @@ struct ProgressWindowView: View {
         }
     }
 
-    // MARK: - Subfile Actions
     private func toggleSubFile(_ id: UUID) {
         guard let index = liveItem.subFiles.firstIndex(where: { $0.id == id }) else { return }
         var updated = liveItem.subFiles
         updated[index].isStopped.toggle()
         liveItem.subFiles = updated
-        
-        engine.items = engine.items // Force UI Update
+        engine.items = engine.items
         
         if liveItem.status == .stopped || liveItem.status == .failed {
             if !liveItem.subFiles[index].isStopped {
@@ -239,7 +217,6 @@ struct ProgressWindowView: View {
         }
     }
 
-    // MARK: - Status Tab
     var statusTab: some View {
         VStack(spacing: 0) {
             HStack(alignment: .top, spacing: 14) {
@@ -310,13 +287,11 @@ struct ProgressWindowView: View {
 
             if !liveItem.subFiles.isEmpty {
                 Divider().padding(.vertical, 10)
-                
                 VStack(alignment: .leading, spacing: 4) {
                     Text(liveItem.type == .batch ? "Batch Items" : "Files")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(.tertiary)
                         .padding(.horizontal, 16)
-                    
                     ScrollView(.vertical, showsIndicators: true) {
                         VStack(spacing: 10) {
                             ForEach(liveItem.subFiles) { file in
@@ -326,12 +301,10 @@ struct ProgressWindowView: View {
                                             .font(.system(size: 11))
                                             .lineLimit(1)
                                             .truncationMode(.middle)
-                                        
                                         GeometryReader { geo in
                                             ZStack(alignment: .leading) {
                                                 RoundedRectangle(cornerRadius: 2)
                                                     .fill(Color.primary.opacity(0.08))
-                                                
                                                 let fileProgress = file.totalBytes > 0 ? min(1.0, max(0.0, Double(file.downloadedBytes) / Double(file.totalBytes))) : 0.0
                                                 RoundedRectangle(cornerRadius: 2)
                                                     .fill(currentBarColor)
@@ -346,14 +319,12 @@ struct ProgressWindowView: View {
                                         Text(String(format: "%.1f%%", filePercentage))
                                             .font(.system(size: 10, weight: .semibold))
                                             .monospacedDigit()
-                                        
                                         Text(file.totalBytes > 0 ? "\(formatBytes(file.downloadedBytes)) / \(formatBytes(file.totalBytes))" : formatBytes(file.downloadedBytes))
                                             .font(.system(size: 9))
                                             .foregroundStyle(.secondary)
                                     }
                                     .frame(width: 80, alignment: .trailing)
                                     
-                                    // MARK: Subfile Controls
                                     let isFinished = file.totalBytes > 0 && file.downloadedBytes >= file.totalBytes
                                     if isFinished {
                                         Image(systemName: "checkmark.circle.fill")
@@ -362,7 +333,6 @@ struct ProgressWindowView: View {
                                             .frame(width: 44, alignment: .trailing)
                                     } else if liveItem.type == .torrent || liveItem.type == .batch {
                                         let isEffectivelyPaused = liveItem.status == .stopped || liveItem.status == .failed || liveItem.subFiles.first(where: { $0.id == file.id })?.isStopped == true
-                                        
                                         Button {
                                             toggleSubFile(file.id)
                                         } label: {
@@ -376,7 +346,6 @@ struct ProgressWindowView: View {
                                         Spacer().frame(width: 44)
                                     }
                                 }
-                                // Dynamically injecting the isStopped state ensures SwiftUI immediately refreshes the item instead of caching it
                                 .id("\(file.id)-\(file.downloadedBytes)-\(file.totalBytes)-\(liveItem.subFiles.first(where: { $0.id == file.id })?.isStopped == true)")
                             }
                         }
@@ -398,7 +367,6 @@ struct ProgressWindowView: View {
                 Text("Source")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(.tertiary)
-                
                 let lineHeight: CGFloat = 11 * 1.35
                 ScrollView(.vertical, showsIndicators: true) {
                     Text(liveItem.url.absoluteString)
@@ -423,37 +391,30 @@ struct ProgressWindowView: View {
                         Label("Pause", systemImage: "pause.fill")
                     }
                     .buttonStyle(ActionButtonStyle(prominent: true, hex: accentColorHex))
-                    
                     Button(action: { engine.stop(liveItem); dismiss() }) {
                         Label("Stop", systemImage: "stop.fill")
                     }
                     .buttonStyle(ActionButtonStyle(prominent: false, hex: accentColorHex))
-                    
                 } else if liveItem.status == .stopped || liveItem.status == .failed {
                     Button(action: { engine.resume(liveItem) }) {
                         Label("Resume", systemImage: "play.fill")
                     }
                     .buttonStyle(ActionButtonStyle(prominent: true, hex: accentColorHex))
-                    
                     Button(action: { engine.stop(liveItem); dismiss() }) {
                         Label("Stop", systemImage: "stop.fill")
                     }
                     .buttonStyle(ActionButtonStyle(prominent: false, hex: accentColorHex))
-                    
                 } else if liveItem.status == .completed {
                     Button(action: { NSWorkspace.shared.open(liveItem.destinationURL); dismiss() }) {
                         Label("Open File", systemImage: "doc.text.magnifyingglass")
                     }
                     .buttonStyle(ActionButtonStyle(prominent: true, hex: accentColorHex))
-                    
                     Button(action: { NSWorkspace.shared.activateFileViewerSelecting([liveItem.destinationURL]); dismiss() }) {
                         Label("Reveal in Finder", systemImage: "folder")
                     }
                     .buttonStyle(ActionButtonStyle(prominent: false, hex: accentColorHex))
                 }
-                
                 Spacer()
-                
                 Button(action: { dismiss() }) {
                     Label(liveItem.status == .completed ? "Close" : "Hide", systemImage: liveItem.status == .completed ? "xmark" : "eye.slash")
                 }
@@ -497,7 +458,6 @@ struct ProgressWindowView: View {
             let remSeconds = max(0, liveItem.hlsTotalSeconds - liveItem.hlsDownloadedSeconds)
             return formatDuration(remSeconds)
         }
-        
         guard liveItem.totalBytes > 0 else { return "0MB" }
         let rem = liveItem.totalBytes - liveItem.downloadedBytes
         guard rem > 0 else { return "0Mb" }
@@ -507,6 +467,36 @@ struct ProgressWindowView: View {
     func applyLimit(enabled: Bool, input: String) {
         if !enabled { engine.updateSpeedLimit(for: liveItem, limitKB: 0) }
         else if let val = Int(input), val > 0 { engine.updateSpeedLimit(for: liveItem, limitKB: val) }
+    }
+}
+
+struct TabBarContextMenuDisabler: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        view.postsFrameChangedNotifications = false
+        DispatchQueue.main.async {
+            disable(in: view.window)
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async {
+            disable(in: nsView.window)
+        }
+    }
+
+    private func disable(in window: NSWindow?) {
+        guard let content = window?.contentView else { return }
+        func walk(_ view: NSView) {
+            if let tabView = view as? NSTabView {
+                tabView.menu = nil
+            }
+            for subview in view.subviews {
+                walk(subview)
+            }
+        }
+        walk(content)
     }
 }
 
@@ -535,8 +525,6 @@ struct ActiveStatCell: View {
     }
 }
 
-// MARK: - Custom Move Drag Box
-
 struct DragOutBoxView: View {
     let fileURL: URL
     let accentColorHex: String
@@ -551,7 +539,6 @@ struct DragOutBoxView: View {
                     .font(.system(size: 16))
                     .foregroundColor(Color(hex: accentColorHex))
             }
-            
             VStack(alignment: .leading, spacing: 4) {
                 Text("Drag to Move File")
                     .font(.system(size: 12, weight: .semibold))
@@ -576,13 +563,11 @@ struct DragOutBoxView: View {
 
 struct MoveDragSourceView: NSViewRepresentable {
     let fileURL: URL
-    
     func makeNSView(context: Context) -> DragSourceNSView {
         let view = DragSourceNSView()
         view.fileURL = fileURL
         return view
     }
-    
     func updateNSView(_ nsView: DragSourceNSView, context: Context) {
         nsView.fileURL = fileURL
     }
@@ -591,53 +576,29 @@ struct MoveDragSourceView: NSViewRepresentable {
 class DragSourceNSView: NSView, NSDraggingSource {
     var fileURL: URL?
     var isDragging = false
-    
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        return bounds.contains(point) ? self : nil
-    }
-    
-    override func resetCursorRects() {
-        super.resetCursorRects()
-        addCursorRect(bounds, cursor: .openHand)
-    }
-    
-    override func mouseDown(with event: NSEvent) {
-        // AppKit requires catching mouseDown to route mouseDragged
-    }
-    
+    override func hitTest(_ point: NSPoint) -> NSView? { bounds.contains(point) ? self : nil }
+    override func resetCursorRects() { super.resetCursorRects(); addCursorRect(bounds, cursor: .openHand) }
+    override func mouseDown(with event: NSEvent) {}
     override func mouseDragged(with event: NSEvent) {
         guard !isDragging, let fileURL = fileURL else { return }
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return }
         isDragging = true
-        
         let icon = NSWorkspace.shared.icon(forFile: fileURL.path)
         icon.size = NSSize(width: 48, height: 48)
-        
         let dragPoint = convert(event.locationInWindow, from: nil)
         let dragFrame = NSRect(x: dragPoint.x - 24, y: dragPoint.y - 24, width: 48, height: 48)
-        
         let draggingItem = NSDraggingItem(pasteboardWriter: fileURL as NSURL)
         draggingItem.setDraggingFrame(dragFrame, contents: icon)
-        
         let session = beginDraggingSession(with: [draggingItem], event: event, source: self)
         session.animatesToStartingPositionsOnCancelOrFail = true
     }
-    
-    func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
-        return .every
-    }
-    
-    func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
-        isDragging = false
-    }
+    func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation { .every }
+    func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) { isDragging = false }
 }
-
-// MARK: - Native AppKit Button Class
 
 class HoverTrafficLightButton: NSButton {
     let itemId: UUID
     let accentColor: NSColor
-    
     init(frame frameRect: NSRect, itemId: UUID, accentColor: NSColor) {
         self.itemId = itemId
         self.accentColor = accentColor
@@ -645,28 +606,22 @@ class HoverTrafficLightButton: NSButton {
         wantsLayer = true
         isBordered = false
         title = ""
-        
         layer?.cornerRadius = frameRect.width / 2
         layer?.backgroundColor = accentColor.withAlphaComponent(0.6).cgColor
         layer?.borderWidth = 0.5
         layer?.borderColor = NSColor.black.withAlphaComponent(0.12).cgColor
-        
         let config = NSImage.SymbolConfiguration(pointSize: 8, weight: .bold)
         self.image = NSImage(systemSymbolName: "arrow.down.to.line", accessibilityDescription: nil)?.withSymbolConfiguration(config)
         self.contentTintColor = .clear
         self.imagePosition = .imageOnly
-        
         let tracking = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self, userInfo: nil)
         addTrackingArea(tracking)
     }
-    
     required init?(coder: NSCoder) { fatalError() }
-    
     @objc func performTrayAction() {
         TrayViewModel.shared.addToTray(itemId)
         self.window?.orderOut(nil)
     }
-    
     override func mouseEntered(with event: NSEvent) {
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = 0.15
@@ -674,7 +629,6 @@ class HoverTrafficLightButton: NSButton {
             self.animator().contentTintColor = NSColor(Color(nsColor: accentColor).accessibleText)
         }
     }
-    
     override func mouseExited(with event: NSEvent) {
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = 0.15
