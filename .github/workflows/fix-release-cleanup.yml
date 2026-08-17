@@ -28,8 +28,9 @@ jobs:
           text = path.read_text()
           start = text.index('      - name: Remove previous prereleases\n')
           end = text.index('      - name: Create release\n', start)
-          encoded = 'Y2g...PLACEHOLDER'
-          raise SystemExit('placeholder')
+          encoded = 'ICAgICAgLSBuYW1lOiBSZW1vdmUgcHJldmlvdXMgcHJlcmVsZWFzZXMKICAgICAgICBpZjogJHt7IGlucHV0cy5wcmVyZWxlYXNlIH19CiAgICAgICAgc2hlbGw6IGJhc2gKICAgICAgICBlbnY6CiAgICAgICAgICBHSF9UT0tFTjogJHt7IGdpdGh1Yi50b2tlbiB9fQogICAgICAgICAgQ1VSUkVOVF9UQUc6ICR7eyBuZWVkcy5idWlsZC5vdXRwdXRzLnRhZyB9fQogICAgICAgIHJ1bjogfAogICAgICAgICAgc2V0IC1ldW8gcGlwZWZhaWwKCiAgICAgICAgICBnaCBhcGkgInJlcG9zLyR7R0lUSFVCX1JFUE9TSVRPUll9L3JlbGVhc2VzP3Blcl9wYWdlPTEwMCIgPiAiJFJVTk5FUl9URU1QL3JlbGVhc2VzLmpzb24iCgogICAgICAgICAgcHl0aG9uMyAtICIkUlVOTkVSX1RFTVAvcmVsZWFzZXMuanNvbiIgPDwnUFkyJwogICAgICAgICAgaW1wb3J0IGpzb24KICAgICAgICAgIGltcG9ydCBvcwogICAgICAgICAgaW1wb3J0IHN1YnByb2Nlc3MKICAgICAgICAgIGltcG9ydCBzeXMKCiAgICAgICAgICByZWxlYXNlcyA9IGpzb24ubG9hZHMob3BlbihzeXMuYXJndlsxXSkucmVhZCgpKQogICAgICAgICAgZm9yIHJlbGVhc2UgaW4gcmVsZWFzZXM6CiAgICAgICAgICAgICAgaWYgbm90IHJlbGVhc2UuZ2V0KCdwcmVyZWxlYXNlJykgb3IgcmVsZWFzZS5nZXQoJ2RyYWZ0Jyk6CiAgICAgICAgICAgICAgICAgIGNvbnRpbnVlCiAgICAgICAgICAgICAgdGFnID0gcmVsZWFzZVsndGFnX25hbWUnXQogICAgICAgICAgICAgIGlmIHRhZyA9PSBvcy5lbnZpcm9uWydDVVJSRU5UX1RBRyddOgogICAgICAgICAgICAgICAgICBjb250aW51ZQogICAgICAgICAgICAgIHByaW50KGYiRGVsZXRpbmcgcHJldmlvdXMgcHJlcmVsZWFzZSB7dGFnfSIpCiAgICAgICAgICAgICAgc3VicHJvY2Vzcy5ydW4oWwogICAgICAgICAgICAgICAgICAnZ2gnLCAnYXBpJywgJy0tbWV0aG9kJywgJ0RFTEVURScsCiAgICAgICAgICAgICAgICAgIGYicmVwb3Mve29zLmVudmlyb25bJ0dJVEhVQl9SRVBPU0lUT1JZJ119L3JlbGVhc2VzL3tyZWxlYXNlWydpZCddfSIKICAgICAgICAgICAgICBdLCBjaGVjaz1UcnVlKQogICAgICAgICAgICAgIHN1YnByb2Nlc3MucnVuKFsKICAgICAgICAgICAgICAgICAgJ2doJywgJ2FwaScsICctLW1ldGhvZCcsICdERUxFVEUnLAogICAgICAgICAgICAgICAgICBmInJlcG9zL3tvcy5lbnZpcm9uWydHSVRIVUJfUkVQT1NJVE9SWSddfS9naXQvcmVmcy90YWdzL3t0YWd9IgogICAgICAgICAgICAgIF0sIGNoZWNrPUZhbHNlKQogICAgICAgICAgUFkyCgo='
+          replacement = base64.b64decode(encoded).decode()
+          path.write_text(text[:start] + replacement + text[end:])
           PY
 
       - name: Commit fix and remove workflow
