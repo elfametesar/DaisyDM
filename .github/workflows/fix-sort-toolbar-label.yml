@@ -26,31 +26,25 @@ jobs:
           from pathlib import Path
 
           path = Path('Sources/Daisy/UI/Screens/ContentView.swift')
-          text = path.read_text()
+          lines = path.read_text().splitlines()
 
-          old = '''                } label: {
-                    Label("Sort", systemImage: "arrow.up.arrow.down")
-                }
-                .help("Sort Downloads")
-                .menuStyle(.button)
-                .labelStyle(.titleAndIcon)
-                .tint(.primary)'''
+          for i, line in enumerate(lines):
+              if 'Label("Sort", systemImage: "arrow.up.arrow.down")' in line:
+                  indent = line[:len(line) - len(line.lstrip())]
+                  lines[i:i+1] = [
+                      indent + 'VStack(spacing: 2) {',
+                      indent + '    Image(systemName: "arrow.up.arrow.down")',
+                      indent + '    Text("Sort")',
+                      indent + '        .font(.caption2)',
+                      indent + '}',
+                      indent + '.frame(minWidth: 44)',
+                  ]
+                  break
+          else:
+              raise SystemExit('Sort label line not found')
 
-          new = '''                } label: {
-                    VStack(spacing: 2) {
-                        Image(systemName: "arrow.up.arrow.down")
-                        Text("Sort")
-                            .font(.caption2)
-                    }
-                    .frame(minWidth: 44)
-                }
-                .help("Sort Downloads")
-                .menuStyle(.button)
-                .tint(.primary)'''
-
-          if old not in text:
-              raise SystemExit('current Sort block does not match expected source')
-          path.write_text(text.replace(old, new, 1))
+          lines = [line for line in lines if '.labelStyle(.titleAndIcon)' not in line]
+          path.write_text('\n'.join(lines) + '\n')
           PY
 
       - name: Commit source fix and remove this workflow
