@@ -95,7 +95,10 @@ struct SidebarView: View {
             .background(.ultraThinMaterial)
             .background(tintBackground)
         }
-        .frame(width: isCompactSidebar ? 196 : nil, minWidth: isCompactSidebar ? 196 : 0, maxWidth: isCompactSidebar ? 196 : .infinity)
+        .frame(
+            minWidth: isCompactSidebar ? 196 : 0,
+            maxWidth: isCompactSidebar ? 196 : .infinity
+        )
         .animation(.easeInOut(duration: 0.18), value: isCompactSidebar)
     }
 }
