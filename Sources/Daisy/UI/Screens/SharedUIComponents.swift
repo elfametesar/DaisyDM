@@ -6,10 +6,35 @@ struct WindowAccessor: NSViewRepresentable {
     @Binding var window: NSWindow?
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
-        DispatchQueue.main.async { self.window = view.window }
+        DispatchQueue.main.async {
+            self.window = view.window
+            if let window = view.window {
+                disableTabBarContextMenus(in: window)
+            }
+        }
         return view
     }
-    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        if let window = nsView.window {
+            disableTabBarContextMenus(in: window)
+        }
+    }
+
+    private func disableTabBarContextMenus(in window: NSWindow) {
+        func visit(_ view: NSView) {
+            if let tabView = view as? NSTabView {
+                tabView.menu = nil
+            }
+            for subview in view.subviews {
+                visit(subview)
+            }
+        }
+
+        if let contentView = window.contentView {
+            visit(contentView)
+        }
+    }
 }
 
 // MARK: - Visual Effect View
