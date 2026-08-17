@@ -26,13 +26,12 @@ struct SidebarView: View {
 
         return VStack(spacing: 0) {
             ScrollView {
-                VStack(alignment: .center, spacing: isCompactSidebar ? 8 : 2) {
+                VStack(alignment: isCompactSidebar ? .center : .leading, spacing: isCompactSidebar ? 8 : 2) {
                     if !isCompactSidebar {
                         Text("LIBRARY")
                             .font(.system(size: 10, weight: .semibold))
                             .foregroundStyle(.tertiary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.leading, 10)
+                            .padding(.horizontal, 10)
                             .padding(.top, 16)
                             .padding(.bottom, 4)
                     }
@@ -51,7 +50,6 @@ struct SidebarView: View {
                     }
                 }
                 .frame(maxWidth: .infinity)
-                .padding(.horizontal, isCompactSidebar ? 0 : 8)
             }
             .background(tintBackground)
 
@@ -65,7 +63,7 @@ struct SidebarView: View {
                         Text("Settings")
                             .font(.system(size: 9.5, weight: .medium))
                     }
-                    .frame(maxWidth: .infinity, minHeight: 48)
+                    .frame(maxWidth: .infinity, minHeight: 50)
                 } else {
                     HStack {
                         Label("Settings", systemImage: "gearshape")
@@ -90,8 +88,24 @@ struct SidebarView: View {
             .background(.ultraThinMaterial)
             .background(tintBackground)
         }
-        .frame(minWidth: isCompactSidebar ? 184 : 0)
+        .frame(minWidth: isCompactSidebar ? 192 : 0)
         .animation(.easeInOut(duration: 0.18), value: isCompactSidebar)
+        .toolbar(removing: .sidebarToggle)
+        .toolbar {
+            ToolbarItem {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        isCompactSidebar.toggle()
+                    }
+                } label: {
+                    Label(
+                        isCompactSidebar ? "Expand Sidebar" : "Shrink Sidebar",
+                        systemImage: isCompactSidebar ? "sidebar.left" : "sidebar.leading"
+                    )
+                }
+                .help(isCompactSidebar ? "Expand Sidebar" : "Shrink Sidebar to Icons")
+            }
+        }
     }
 }
 
@@ -119,10 +133,10 @@ struct SidebarRow: View {
                                     ? Color(hex: accentColorHex)
                                     : (isHovering ? Color.primary.opacity(0.06) : Color.clear)
                             )
-                            .frame(width: 38, height: 38)
+                            .frame(width: 36, height: 36)
 
                         Image(systemName: filter.icon)
-                            .font(.system(size: 20, weight: .medium))
+                            .font(.system(size: 19, weight: .medium))
                             .foregroundStyle(dynamicTextColor)
                     }
 
@@ -130,10 +144,10 @@ struct SidebarRow: View {
                         .font(.system(size: 9.5, weight: .medium))
                         .foregroundStyle(isSelected ? Color(hex: accentColorHex) : .secondary)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.8)
+                        .minimumScaleFactor(0.75)
                         .frame(maxWidth: .infinity)
                 }
-                .frame(maxWidth: .infinity, minHeight: 58)
+                .frame(maxWidth: .infinity, minHeight: 54)
             } else {
                 HStack {
                     Image(systemName: filter.icon)
