@@ -53,73 +53,86 @@ struct TabBarContextMenuDisabler: NSViewRepresentable {
     }
 
     final class Coordinator {
-        private weak var view: NSView?
-        private var monitor: Any?
-
-        deinit {
-            if let monitor {
-                NSEvent.removeMonitor(monitor)
-            }
-        }
+        private weak var hostView: NSView?
+        private weak var shield: TabBarRightClickShieldView?
 
         func attach(to view: NSView) {
-            self.view = view
-            guard monitor == nil else {
-                installMenuSuppression()
+            hostView = view
+            guard let window = view.window,
+                  let content = window.contentView,
+                  let tabView = findTabView(in: content) else { return }
+
+            if let existing = tabView.subviews.first(where: { $0 is TabBarRightClickShieldView }) as? TabBarRightClickShieldView {
+                shield = existing
+                existing.updateFrame()
                 return
             }
 
-            monitor = NSEvent.addLocalMonitorForEvents(matching: .rightMouseDown) { [weak self] event in
-                guard let self,
-                      let ownerView = self.view,
-                      let window = ownerView.window,
-                      event.window === window,
-                      let root = window.contentView,
-                      let tabView = self.findTabView(in: root) else {
-                    return event
-                }
-
-                let point = root.convert(event.locationInWindow, from: nil)
-                if tabView.bounds.contains(tabView.convert(point, from: root)) {
-                    return nil
-                }
-
-                return event
-            }
-
-            installMenuSuppression()
-        }
-
-        private func installMenuSuppression() {
-            DispatchQueue.main.async { [weak self] in
-                guard let self,
-                      let window = self.view?.window,
-                      let content = window.contentView else { return }
-
-                self.walk(content) { view in
-                    view.menu = nil
-                }
-            }
+            let newShield = TabBarRightClickShieldView(frame: .zero)
+            shield = newShield
+            tabView.addSubview(newShield)
+            newShield.updateFrame()
         }
 
         private func findTabView(in view: NSView) -> NSTabView? {
-            if let tabView = view as? NSTabView {
-                return tabView
-            }
+            if let tabView = view as? NSTabView { return tabView }
             for subview in view.subviews {
-                if let tabView = findTabView(in: subview) {
-                    return tabView
-                }
+                if let tabView = findTabView(in: subview) { return tabView }
             }
             return nil
         }
+    }
+}
 
-        private func walk(_ view: NSView, _ body: (NSView) -> Void) {
-            body(view)
-            for subview in view.subviews {
-                walk(subview, body)
-            }
+private final class TabBarRightClickShieldView: NSView {
+    private let barHeight: CGFloat = 64
+
+    override var isFlipped: Bool { true }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard let event = NSApp.currentEvent else { return nil }
+        switch event.type {
+        case .rightMouseDown, .rightMouseUp, .otherMouseDown, .otherMouseUp:
+            return bounds.contains(point) ? self : nil
+        default:
+            return nil
         }
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        // Intentionally consume the event so NSTabView cannot open its tab customization menu.
+    }
+
+    override func rightMouseUp(with event: NSEvent) {
+        // Intentionally consume the event so NSTabView cannot open its tab customization menu.
+    }
+
+    override func otherMouseDown(with event: NSEvent) {
+        // Consume secondary-button events as well.
+    }
+
+    override func otherMouseUp(with event: NSEvent) {
+        // Consume secondary-button events as well.
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        nil
+    }
+
+    func updateFrame() {
+        guard let parent = superview else { return }
+        frame = NSRect(
+            x: 0,
+            y: 0,
+            width: parent.bounds.width,
+            height: min(barHeight, parent.bounds.height)
+        )
+        autoresizingMask = [.width, .minYMargin]
+    }
+
+    override func layout() {
+        super.layout()
+        updateFrame()
     }
 }
 
