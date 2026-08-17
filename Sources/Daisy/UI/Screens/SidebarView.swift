@@ -26,12 +26,11 @@ struct SidebarView: View {
 
         return VStack(spacing: 0) {
             ScrollView {
-                VStack(spacing: isCompactSidebar ? 14 : 4) {
+                VStack(alignment: isCompactSidebar ? .center : .leading, spacing: 2) {
                     if !isCompactSidebar {
                         Text("LIBRARY")
                             .font(.system(size: 10, weight: .semibold))
                             .foregroundStyle(.tertiary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal, 10)
                             .padding(.top, 16)
                             .padding(.bottom, 4)
@@ -50,8 +49,7 @@ struct SidebarView: View {
                         }
                     }
                 }
-                .frame(maxWidth: .infinity)
-                .padding(.top, isCompactSidebar ? 14 : 0)
+                .padding(.horizontal, isCompactSidebar ? 0 : 8)
             }
             .background(tintBackground)
 
@@ -74,6 +72,7 @@ struct SidebarView: View {
 
                 if !isCompactSidebar {
                     Spacer()
+
                     if engine.globalDownloadSpeed > 512 {
                         HStack(spacing: 4) {
                             Image(systemName: "arrow.down")
@@ -92,7 +91,7 @@ struct SidebarView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: isCompactSidebar ? .center : .leading)
-            .padding(10)
+            .padding(isCompactSidebar ? 10 : 12)
             .background(.ultraThinMaterial)
             .background(tintBackground)
         }
@@ -157,6 +156,11 @@ struct SidebarRow: View {
                 .foregroundStyle(dynamicTextColor)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(isSelected ? Color(hex: accentColorHex) : (isHovering ? Color.primary.opacity(0.06) : Color.clear))
+                )
+                .contentShape(Rectangle())
             }
         }
         .contentShape(Rectangle())
