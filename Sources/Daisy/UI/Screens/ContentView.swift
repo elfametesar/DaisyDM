@@ -233,11 +233,15 @@ struct ContentView: View {
                     Divider()
                     Toggle("Sort Ascending", isOn: $sortAscending)
                 } label: {
-                    Label("Sort", systemImage: "arrow.up.arrow.down")
+                    VStack(spacing: 2) {
+                        Image(systemName: "arrow.up.arrow.down")
+                        Text("Sort")
+                            .font(.caption2)
+                    }
+                    .frame(minWidth: 44)
                 }
                 .help("Sort Downloads")
                 .menuStyle(.button)
-                .labelStyle(.titleAndIcon)
                 .tint(.primary)
 
                 Button { NotificationCenter.default.post(name: .showAddDownload, object: nil) } label: { Label("New Download", systemImage: "plus") }
