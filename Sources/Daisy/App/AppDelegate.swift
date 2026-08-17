@@ -11,7 +11,7 @@ struct DaisyApp: App {
     var body: some Scene {
         Window("Daisy", id: "main") {
             ContentView()
-                .frame(minWidth: showingDetailPanel ? 1300 : 425, minHeight: 550)
+                .frame(minWidth: showingDetailPanel ? 1300 : 900, minHeight: 550)
                 .onOpenURL { url in
                     if url.scheme == URLSchemeHandler.scheme {
                         URLSchemeHandler.handle(url)
