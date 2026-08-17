@@ -53,6 +53,7 @@ struct ContentView: View {
     @State private var selectedFilter: SidebarFilter = .all
     @State private var selectedItems: Set<UUID> = []
     @State private var showingSettings = false
+    @State private var showingDetailPanel = true
     
     // UI Logic Triggers
     @State private var addDownloadPayload: AddDownloadPayload? = nil
@@ -65,6 +66,7 @@ struct ContentView: View {
     @State private var duplicateAddRequest: DuplicateAddRequest? = nil
     
     @AppStorage("isCompactList") private var isCompactList = false
+    @AppStorage("isCompactSidebar") private var isCompactSidebar = false
     @AppStorage("accentColorHex") private var accentColorHex = "#0A84FF"
     
     @AppStorage("askBeforeRemoving") private var askBeforeRemoving = true
@@ -135,10 +137,8 @@ struct ContentView: View {
     private var mainLayout: some View {
         NavigationSplitView {
             sidebarColumn
-        } content: {
-            contentColumn
         } detail: {
-            detailColumn
+            contentAndDetailColumn
         }
         .onReceive(NotificationCenter.default.publisher(for: .showAddDownload)) { _ in
             addDownloadPayload = AddDownloadPayload(text: "")
@@ -180,7 +180,26 @@ struct ContentView: View {
     @ViewBuilder
     private var sidebarColumn: some View {
         SidebarView(selected: $selectedFilter, engine: engine, onSettings: { showingSettings = true })
-            .navigationSplitViewColumnWidth(min: 170, ideal: 190, max: 220)
+            .navigationSplitViewColumnWidth(
+                min: isCompactSidebar ? 64 : 170,
+                ideal: isCompactSidebar ? 72 : 190,
+                max: isCompactSidebar ? 84 : 220
+            )
+    }
+
+    @ViewBuilder
+    private var contentAndDetailColumn: some View {
+        HSplitView {
+            contentColumn
+                .frame(minWidth: 500, idealWidth: showingDetailPanel ? 680 : 900, maxWidth: .infinity)
+                .layoutPriority(1)
+
+            if showingDetailPanel {
+                detailColumn
+                    .frame(minWidth: 430, idealWidth: 450, maxWidth: .infinity)
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: showingDetailPanel)
     }
 
     @ViewBuilder
@@ -192,12 +211,21 @@ struct ContentView: View {
                 search: $searchText
             ) { items in requestRemove(items: items) }
         }
-        .navigationSplitViewColumnWidth(min: 500, ideal: 680)
         .toolbar {
             ToolbarItemGroup {
                 Button(action: { isCompactList.toggle() }) { Label(isCompactList ? "Relaxed View" : "Compact View", systemImage: isCompactList ? "list.dash" : "list.bullet") }
                 .help(isCompactList ? "Switch to Relaxed View" : "Switch to Compact View")
-                
+
+                Button(action: { isCompactSidebar.toggle() }) {
+                    Label(isCompactSidebar ? "Expand Sidebar" : "Icon Sidebar", systemImage: isCompactSidebar ? "sidebar.left" : "sidebar.leading")
+                }
+                .help(isCompactSidebar ? "Expand Sidebar" : "Shrink Sidebar to Icons")
+
+                Button(action: { showingDetailPanel.toggle() }) {
+                    Label(showingDetailPanel ? "Hide Details" : "Show Details", systemImage: showingDetailPanel ? "sidebar.trailing" : "sidebar.right")
+                }
+                .help(showingDetailPanel ? "Hide Details" : "Show Details")
+
                 Menu {
                     Picker("Sort By", selection: $sortColumn) {
                         Text("Date Modified").tag(SortColumn.dateModified)
@@ -259,7 +287,6 @@ struct ContentView: View {
                 EmptyDetailView()
             }
         }
-        .navigationSplitViewColumnWidth(min: 430, ideal: 450)
     }
 
     private func processAddRequest(urls: [URL], destination: URL? = nil, connections: Int = 16) {
