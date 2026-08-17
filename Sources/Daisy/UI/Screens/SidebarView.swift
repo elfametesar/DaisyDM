@@ -30,7 +30,7 @@ struct SidebarView: View {
 
         return VStack(spacing: 0) {
             ScrollView {
-                VStack(alignment: isCompactSidebar ? .center : .leading, spacing: 2) {
+                VStack(alignment: isCompactSidebar ? .center : .leading, spacing: 4) {
                     if !isCompactSidebar {
                         Text("LIBRARY")
                             .font(.system(size: 10, weight: .semibold))
@@ -53,7 +53,7 @@ struct SidebarView: View {
                         }
                     }
                 }
-                .padding(.horizontal, isCompactSidebar ? 6 : 8)
+                .padding(.horizontal, isCompactSidebar ? 10 : 8)
             }
             .background(tintBackground)
 
@@ -63,7 +63,8 @@ struct SidebarView: View {
                 Button(action: onSettings) {
                     if isCompactSidebar {
                         Image(systemName: "gearshape")
-                            .frame(width: 20, height: 20)
+                            .font(.system(size: 20, weight: .medium))
+                            .frame(width: 28, height: 28)
                     } else {
                         Label("Settings", systemImage: "gearshape")
                     }
@@ -88,16 +89,17 @@ struct SidebarView: View {
                 } else if engine.globalDownloadSpeed > 512 {
                     Spacer(minLength: 0)
                     Image(systemName: "arrow.down")
-                        .font(.system(size: 10, weight: .bold))
+                        .font(.system(size: 13, weight: .bold))
                         .foregroundStyle(Color(hex: accentColorHex))
                         .help(formatBytes(Int64(engine.globalDownloadSpeed)) + "/s")
                 }
             }
             .frame(maxWidth: .infinity, alignment: isCompactSidebar ? .center : .leading)
-            .padding(isCompactSidebar ? 10 : 12)
+            .padding(isCompactSidebar ? 12 : 12)
             .background(.ultraThinMaterial)
             .background(tintBackground)
         }
+        .frame(minWidth: isCompactSidebar ? 168 : 0)
         .animation(.easeInOut(duration: 0.18), value: isCompactSidebar)
     }
 }
@@ -118,7 +120,8 @@ struct SidebarRow: View {
     var body: some View {
         HStack {
             Image(systemName: filter.icon)
-                .frame(width: 18, alignment: .center)
+                .font(.system(size: isCompact ? 23 : 13, weight: isCompact ? .medium : .regular))
+                .frame(width: isCompact ? 28 : 18, alignment: .center)
             
             if !isCompact {
                 Text(filter.rawValue)
@@ -140,10 +143,10 @@ struct SidebarRow: View {
         .font(.system(size: 13))
         .foregroundStyle(dynamicTextColor)
         .frame(maxWidth: .infinity, alignment: isCompact ? .center : .leading)
-        .padding(.horizontal, isCompact ? 4 : 10)
-        .padding(.vertical, 10)
+        .padding(.horizontal, isCompact ? 8 : 10)
+        .padding(.vertical, isCompact ? 12 : 10)
         .background(
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: isCompact ? 14 : 12)
                 .fill(isSelected ? Color(hex: accentColorHex) : (isHovering ? Color.primary.opacity(0.06) : Color.clear))
         )
         .contentShape(Rectangle())
