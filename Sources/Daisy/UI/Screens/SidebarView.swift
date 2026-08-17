@@ -49,7 +49,7 @@ struct SidebarView: View {
                         }
                     }
                 }
-                .padding(.horizontal, isCompactSidebar ? 0 : 8)
+                .padding(.horizontal, isCompactSidebar ? 6 : 8)
             }
             .background(tintBackground)
 
@@ -122,19 +122,20 @@ struct SidebarRow: View {
                 VStack(spacing: 4) {
                     Image(systemName: filter.icon)
                         .font(.system(size: 19, weight: .medium))
-                        .frame(width: 38, height: 38)
-                        .background(
-                            Circle()
-                                .fill(isSelected ? Color(hex: accentColorHex) : (isHovering ? Color.primary.opacity(0.06) : Color.clear))
-                        )
+                        .foregroundStyle(isSelected ? Color(hex: accentColorHex).accessibleText : .primary)
 
                     Text(filter.rawValue)
                         .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
-                        .foregroundStyle(dynamicTextColor)
+                        .foregroundStyle(isSelected ? .primary : .secondary)
                         .lineLimit(1)
                         .frame(maxWidth: .infinity)
                 }
-                .frame(maxWidth: .infinity)
+                .frame(maxWidth: .infinity, minHeight: 58)
+                .padding(.vertical, 4)
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(isSelected ? Color(hex: accentColorHex) : (isHovering ? Color.primary.opacity(0.06) : Color.clear))
+                )
             } else {
                 HStack {
                     Image(systemName: filter.icon)
