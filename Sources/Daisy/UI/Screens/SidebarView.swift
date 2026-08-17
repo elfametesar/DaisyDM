@@ -96,8 +96,8 @@ struct SidebarView: View {
             .background(tintBackground)
         }
         .frame(
-            minWidth: isCompactSidebar ? 196 : 0,
-            maxWidth: isCompactSidebar ? 196 : .infinity
+            minWidth: isCompactSidebar ? 210 : 0,
+            maxWidth: isCompactSidebar ? 210 : .infinity
         )
         .animation(.easeInOut(duration: 0.18), value: isCompactSidebar)
         .toolbar(removing: .sidebarToggle)
