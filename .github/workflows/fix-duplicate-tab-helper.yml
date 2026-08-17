@@ -1,0 +1,46 @@
+name: Remove duplicate tab helper
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.event.head_commit.message != 'fix: remove duplicate tab helper'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Remove duplicate helper from ProgressWindowView
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('Sources/Daisy/UI/Screens/ProgressWindowView.swift')
+          text = path.read_text()
+
+          start = text.find('\nstruct TabBarContextMenuDisabler: NSViewRepresentable {')
+          if start == -1:
+              raise SystemExit('duplicate TabBarContextMenuDisabler declaration not found')
+
+          end_marker = '\n\n// MARK: - Subcomponents'
+          end = text.find(end_marker, start)
+          if end == -1:
+              raise SystemExit('helper end marker not found')
+
+          text = text[:start] + text[end:]
+          path.write_text(text)
+          PY
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/fix-duplicate-tab-helper.yml
+          git add Sources/Daisy/UI/Screens/ProgressWindowView.swift
+          git commit -m 'fix: remove duplicate tab helper'
+          git push
