@@ -1,0 +1,48 @@
+name: Fix progress tab context menu
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.event.head_commit.message != 'fix: disable progress tab right click'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Disable native tab-bar right click
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('Sources/Daisy/UI/Screens/ProgressWindowView.swift')
+          text = path.read_text()
+
+          marker = '''        .fixedSize(horizontal: true, vertical: true)\n        .background(VisualEffectView(material: .popover, blendingMode: .behindWindow)'''
+          replacement = '''        .fixedSize(horizontal: true, vertical: true)\n        .background(TabBarContextMenuDisabler())\n        .background(VisualEffectView(material: .popover, blendingMode: .behindWindow)'''
+
+          if 'TabBarContextMenuDisabler()' not in text:
+              if marker not in text:
+                  raise SystemExit('expected ProgressWindowView body marker not found')
+              text = text.replace(marker, replacement, 1)
+
+          helper = Path('Sources/Daisy/UI/Screens/TabBarContextMenuDisabler.swift')
+          helper.write_text(r'''import AppKit\nimport SwiftUI\n\nstruct TabBarContextMenuDisabler: NSViewRepresentable {\n    func makeCoordinator() -> Coordinator { Coordinator() }\n\n    func makeNSView(context: Context) -> NSView {\n        let view = NSView(frame: .zero)\n        view.isHidden = true\n        context.coordinator.attach(to: view)\n        return view\n    }\n\n    func updateNSView(_ nsView: NSView, context: Context) {\n        context.coordinator.attach(to: nsView)\n    }\n\n    final class Coordinator {\n        private weak var view: NSView?\n        private var monitor: Any?\n\n        deinit {\n            if let monitor { NSEvent.removeMonitor(monitor) }\n        }\n\n        func attach(to view: NSView) {\n            self.view = view\n            if monitor == nil {\n                monitor = NSEvent.addLocalMonitorForEvents(matching: .rightMouseDown) { [weak self] event in\n                    guard let self, let window = self.view?.window, event.window === window,\n                          let root = window.contentView else { return event }\n\n                    let point = root.convert(event.locationInWindow, from: nil)\n                    guard let tabView = self.findTabView(in: root), tabView.frame.contains(point) else { return event }\n\n                    return nil\n                }\n            }\n\n            DispatchQueue.main.async { [weak self, weak view] in\n                guard let self, let view, let window = view.window, let content = window.contentView else { return }\n                self.removeMenus(in: content)\n            }\n        }\n\n        private func findTabView(in view: NSView) -> NSTabView? {\n            if let tabView = view as? NSTabView { return tabView }\n            for subview in view.subviews {\n                if let tabView = findTabView(in: subview) { return tabView }\n            }\n            return nil\n        }\n\n        private func removeMenus(in view: NSView) {\n            view.menu = nil\n            for subview in view.subviews {\n                removeMenus(in: subview)\n            }\n        }\n    }\n}\n''')
+
+          # Convert escaped literal newlines in the raw helper above.
+          helper.write_text(helper.read_text().replace('\\n', '\n'))
+
+          path.write_text(text)
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/fix-progress-tab-context-menu.yml
+          git add Sources/Daisy/UI/Screens/ProgressWindowView.swift Sources/Daisy/UI/Screens/TabBarContextMenuDisabler.swift
+          git commit -m 'fix: disable progress tab right click'
+          git push
