@@ -24,19 +24,23 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
+          import re
 
           path = Path('Sources/Daisy/UI/Screens/ContentView.swift')
           text = path.read_text()
 
-          old = '''                } label: {
-                    Label("Sort", systemImage: "arrow.up.arrow.down")
-                }
-                .help("Sort Downloads")
-                .menuStyle(.button)
-                .labelStyle(.titleAndIcon)
-                .tint(.primary)'''
+          pattern = re.compile(
+              r'''(?P<indent>\s*)\}\s+label:\s*\{\s*'
+              r'''Label\("Sort", systemImage: "arrow\.up\.arrow\.down"\)'''
+              r'''(?P<rest>.*?)\n(?P=indent)\}\s*\n'
+              r'''(?P=indent)\.help\("Sort Downloads"\)\s*\n'
+              r'''(?P=indent)\.menuStyle\(\.button\)\s*\n'
+              r'''(?:\s*\.labelStyle\(\.titleAndIcon\)\s*\n)?'
+              r'''(?P=indent)\.tint\(\.primary\)''',
+              re.DOTALL,
+          )
 
-          new = '''                } label: {
+          replacement = '''                } label: {
                     VStack(spacing: 2) {
                         Image(systemName: "arrow.up.arrow.down")
                         Text("Sort")
@@ -48,10 +52,11 @@ jobs:
                 .menuStyle(.button)
                 .tint(.primary)'''
 
-          if old not in text:
-              raise SystemExit('expected Sort toolbar label block not found')
+          new_text, count = pattern.subn(replacement, text, count=1)
+          if count != 1:
+              raise SystemExit('could not find Sort toolbar label block')
 
-          path.write_text(text.replace(old, new, 1))
+          path.write_text(new_text)
           PY
 
       - name: Commit source fix and remove this workflow
