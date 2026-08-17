@@ -12,6 +12,10 @@ jobs:
   cleanup:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Remove all but newest prerelease
         env:
           GH_TOKEN: ${{ github.token }}
@@ -28,10 +32,7 @@ jobs:
           import sys
 
           releases = json.loads(open(sys.argv[1]).read())
-          prereleases = [
-              r for r in releases
-              if r.get('prerelease') and not r.get('draft')
-          ]
+          prereleases = [r for r in releases if r.get('prerelease') and not r.get('draft')]
           prereleases.sort(key=lambda r: r.get('published_at') or r.get('created_at') or '', reverse=True)
 
           for release in prereleases[1:]:
@@ -46,18 +47,73 @@ jobs:
                   'gh', 'api', '--method', 'DELETE',
                   f'repos/{os.environ["GITHUB_REPOSITORY"]}/git/refs/tags/{tag}'
               ], check=False)
-
           PY
 
-      - name: Remove this workflow
+      - name: Fix future prerelease cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('.github/workflows/manual-build-release.yml')
+          text = path.read_text()
+          start = text.index('      - name: Remove previous prereleases\n')
+          end = text.index('      - name: Create release\n', start)
+
+          replacement = '''      - name: Remove previous prereleases
+        if: ${{ inputs.prerelease }}
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          CURRENT_TAG: ${{ needs.build.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" > "$RUNNER_TEMP/releases.json"
+
+          python3 - "$RUNNER_TEMP/releases.json" <<'PY2'
+          import json
+          import os
+          import subprocess
+          import sys
+
+          releases = json.loads(open(sys.argv[1]).read())
+          for release in releases:
+              if not release.get('prerelease') or release.get('draft'):
+                  continue
+              if release['tag_name'] == os.environ['CURRENT_TAG']:
+                  continue
+              print(f"Deleting previous prerelease {release['tag_name']}")
+              subprocess.run([
+                  'gh', 'api', '--method', 'DELETE',
+                  f"repos/{os.environ['GITHUB_REPOSITORY']}/releases/{release['id']}"
+              ], check=True)
+              subprocess.run([
+                  'gh', 'api', '--method', 'DELETE',
+                  f"repos/{os.environ['GITHUB_REPOSITORY']}/git/refs/tags/{release['tag_name']}"
+              ], check=False)
+          PY2
+
+'''
+          path.write_text(text[:start] + replacement + text[end:])
+          PY
+
+      - name: Commit release workflow fix
         shell: bash
         run: |
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git pull --ff-only
+          git add .github/workflows/manual-build-release.yml
+          if ! git diff --cached --quiet; then
+            git commit -m 'fix: reliably remove old prereleases'
+          fi
+
+      - name: Remove this workflow
+        shell: bash
+        run: |
+          set -euo pipefail
           git rm .github/workflows/cleanup-old-prereleases.yml
           git commit -m 'chore: remove one-time prerelease cleanup workflow'
           git push
