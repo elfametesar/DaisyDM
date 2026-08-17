@@ -1,0 +1,40 @@
+name: One-off sidebar visibility fix
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.event.head_commit.message != 'fix: prevent sidebar hiding'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Remove sidebar hide command
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('Sources/Daisy/App/AppDelegate.swift')
+          text = path.read_text()
+          marker = '        .commands {\n'
+          insertion = '        .commands {\n            CommandGroup(replacing: .sidebar) { }\n'
+          if 'CommandGroup(replacing: .sidebar) { }' not in text:
+              if marker not in text:
+                  raise SystemExit('commands block not found')
+              text = text.replace(marker, insertion, 1)
+              path.write_text(text)
+          PY
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/one-off-sidebar-visibility-fix.yml
+          git add Sources/Daisy/App/AppDelegate.swift
+          git commit -m 'fix: prevent sidebar hiding'
+          git push
