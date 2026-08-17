@@ -26,11 +26,12 @@ struct SidebarView: View {
 
         return VStack(spacing: 0) {
             ScrollView {
-                VStack(alignment: isCompactSidebar ? .center : .leading, spacing: isCompactSidebar ? 8 : 2) {
+                VStack(spacing: isCompactSidebar ? 14 : 4) {
                     if !isCompactSidebar {
                         Text("LIBRARY")
                             .font(.system(size: 10, weight: .semibold))
                             .foregroundStyle(.tertiary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal, 10)
                             .padding(.top, 16)
                             .padding(.bottom, 4)
@@ -50,62 +51,53 @@ struct SidebarView: View {
                     }
                 }
                 .frame(maxWidth: .infinity)
+                .padding(.top, isCompactSidebar ? 14 : 0)
             }
             .background(tintBackground)
 
             Divider()
 
-            Button(action: onSettings) {
-                if isCompactSidebar {
-                    VStack(spacing: 3) {
+            HStack {
+                Button(action: onSettings) {
+                    if isCompactSidebar {
                         Image(systemName: "gearshape")
                             .font(.system(size: 18, weight: .medium))
-                        Text("Settings")
-                            .font(.system(size: 9.5, weight: .medium))
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 50)
-                } else {
-                    HStack {
+                            .frame(width: 24, height: 24)
+                    } else {
                         Label("Settings", systemImage: "gearshape")
-                        Spacer()
-                        if engine.globalDownloadSpeed > 512 {
-                            HStack(spacing: 4) {
-                                Image(systemName: "arrow.down")
-                                    .font(.system(size: 10, weight: .bold))
-                                Text(formatBytes(Int64(engine.globalDownloadSpeed)) + "/s")
-                                    .font(.system(size: 11, design: .monospaced))
-                            }
-                            .foregroundStyle(Color(hex: accentColorHex))
-                        }
                     }
-                    .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
-                    .padding(.horizontal, 12)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .font(.system(size: 12))
+                .help(isCompactSidebar ? "Settings" : "")
+
+                if !isCompactSidebar {
+                    Spacer()
+                    if engine.globalDownloadSpeed > 512 {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.down")
+                                .font(.system(size: 10, weight: .bold))
+                            Text(formatBytes(Int64(engine.globalDownloadSpeed)) + "/s")
+                                .font(.system(size: 11, design: .monospaced))
+                        }
+                        .foregroundStyle(Color(hex: accentColorHex))
+                    }
+                } else if engine.globalDownloadSpeed > 512 {
+                    Spacer(minLength: 0)
+                    Image(systemName: "arrow.down")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(Color(hex: accentColorHex))
+                        .help(formatBytes(Int64(engine.globalDownloadSpeed)) + "/s")
                 }
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-            .help("Settings")
+            .frame(maxWidth: .infinity, alignment: isCompactSidebar ? .center : .leading)
+            .padding(10)
             .background(.ultraThinMaterial)
             .background(tintBackground)
         }
-        .frame(minWidth: isCompactSidebar ? 192 : 0)
+        .frame(width: isCompactSidebar ? 196 : nil, minWidth: isCompactSidebar ? 196 : 0, maxWidth: isCompactSidebar ? 196 : .infinity)
         .animation(.easeInOut(duration: 0.18), value: isCompactSidebar)
-        .toolbar(removing: .sidebarToggle)
-        .toolbar {
-            ToolbarItem {
-                Button {
-                    withAnimation(.easeInOut(duration: 0.18)) {
-                        isCompactSidebar.toggle()
-                    }
-                } label: {
-                    Label(
-                        isCompactSidebar ? "Expand Sidebar" : "Shrink Sidebar",
-                        systemImage: isCompactSidebar ? "sidebar.left" : "sidebar.leading"
-                    )
-                }
-                .help(isCompactSidebar ? "Expand Sidebar" : "Shrink Sidebar to Icons")
-            }
-        }
     }
 }
 
@@ -118,42 +110,36 @@ struct SidebarRow: View {
 
     @State private var isHovering = false
 
-    private var dynamicTextColor: Color {
+    var dynamicTextColor: Color {
         isSelected ? Color(hex: accentColorHex).accessibleText : .primary
     }
 
     var body: some View {
         Group {
             if isCompact {
-                VStack(spacing: 3) {
-                    ZStack {
-                        Circle()
-                            .fill(
-                                isSelected
-                                    ? Color(hex: accentColorHex)
-                                    : (isHovering ? Color.primary.opacity(0.06) : Color.clear)
-                            )
-                            .frame(width: 36, height: 36)
-
-                        Image(systemName: filter.icon)
-                            .font(.system(size: 19, weight: .medium))
-                            .foregroundStyle(dynamicTextColor)
-                    }
+                VStack(spacing: 4) {
+                    Image(systemName: filter.icon)
+                        .font(.system(size: 19, weight: .medium))
+                        .frame(width: 38, height: 38)
+                        .background(
+                            Circle()
+                                .fill(isSelected ? Color(hex: accentColorHex) : (isHovering ? Color.primary.opacity(0.06) : Color.clear))
+                        )
 
                     Text(filter.rawValue)
-                        .font(.system(size: 9.5, weight: .medium))
-                        .foregroundStyle(isSelected ? Color(hex: accentColorHex) : .secondary)
+                        .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
+                        .foregroundStyle(dynamicTextColor)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.75)
                         .frame(maxWidth: .infinity)
                 }
-                .frame(maxWidth: .infinity, minHeight: 54)
+                .frame(maxWidth: .infinity)
             } else {
                 HStack {
                     Image(systemName: filter.icon)
                         .frame(width: 18, alignment: .center)
 
                     Text(filter.rawValue)
+
                     Spacer()
 
                     if count > 0 {
@@ -171,11 +157,6 @@ struct SidebarRow: View {
                 .foregroundStyle(dynamicTextColor)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 10)
-                .background(
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(isSelected ? Color(hex: accentColorHex) : (isHovering ? Color.primary.opacity(0.06) : Color.clear))
-                )
-                .contentShape(Rectangle())
             }
         }
         .contentShape(Rectangle())
