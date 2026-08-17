@@ -55,6 +55,7 @@ struct ContentView: View {
     @State private var showingSettings = false
     @State private var showingDetailPanel = true
     
+    // UI Logic Triggers
     @State private var addDownloadPayload: AddDownloadPayload? = nil
     
     @State private var searchText = ""
@@ -180,9 +181,9 @@ struct ContentView: View {
     private var sidebarColumn: some View {
         SidebarView(selected: $selectedFilter, engine: engine, onSettings: { showingSettings = true })
             .navigationSplitViewColumnWidth(
-                min: isCompactSidebar ? 196 : 170,
-                ideal: isCompactSidebar ? 196 : 190,
-                max: isCompactSidebar ? 196 : 220
+                min: isCompactSidebar ? 210 : 170,
+                ideal: isCompactSidebar ? 210 : 190,
+                max: isCompactSidebar ? 210 : 220
             )
     }
 
@@ -291,7 +292,7 @@ struct ContentView: View {
             }
         }
     }
-
+    
     private func processAddRequest(urls: [URL], destination: URL? = nil, connections: Int = 16) {
         if urls.count == 1 {
             let u = urls[0]
@@ -305,7 +306,7 @@ struct ContentView: View {
             engine.addDownload(urls: urls, destination: destination, connections: connections)
         }
     }
-    
+
     private func handleProviders(_ providers: [NSItemProvider]) {
         let group = DispatchGroup()
         let lock = NSLock()
