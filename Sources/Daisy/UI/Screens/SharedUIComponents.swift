@@ -37,6 +37,92 @@ struct WindowAccessor: NSViewRepresentable {
     }
 }
 
+// MARK: - Progress tab-bar context menu disabler
+struct TabBarContextMenuDisabler: NSViewRepresentable {
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        view.isHidden = true
+        context.coordinator.attach(to: view)
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        context.coordinator.attach(to: nsView)
+    }
+
+    final class Coordinator {
+        private weak var view: NSView?
+        private var monitor: Any?
+
+        deinit {
+            if let monitor {
+                NSEvent.removeMonitor(monitor)
+            }
+        }
+
+        func attach(to view: NSView) {
+            self.view = view
+            guard monitor == nil else {
+                installMenuSuppression()
+                return
+            }
+
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .rightMouseDown) { [weak self] event in
+                guard let self,
+                      let ownerView = self.view,
+                      let window = ownerView.window,
+                      event.window === window,
+                      let root = window.contentView,
+                      let tabView = self.findTabView(in: root) else {
+                    return event
+                }
+
+                let point = root.convert(event.locationInWindow, from: nil)
+                if tabView.bounds.contains(tabView.convert(point, from: root)) {
+                    return nil
+                }
+
+                return event
+            }
+
+            installMenuSuppression()
+        }
+
+        private func installMenuSuppression() {
+            DispatchQueue.main.async { [weak self] in
+                guard let self,
+                      let window = self.view?.window,
+                      let content = window.contentView else { return }
+
+                self.walk(content) { view in
+                    view.menu = nil
+                }
+            }
+        }
+
+        private func findTabView(in view: NSView) -> NSTabView? {
+            if let tabView = view as? NSTabView {
+                return tabView
+            }
+            for subview in view.subviews {
+                if let tabView = findTabView(in: subview) {
+                    return tabView
+                }
+            }
+            return nil
+        }
+
+        private func walk(_ view: NSView, _ body: (NSView) -> Void) {
+            body(view)
+            for subview in view.subviews {
+                walk(subview, body)
+            }
+        }
+    }
+}
+
 // MARK: - Visual Effect View
 struct VisualEffectView: NSViewRepresentable {
     let material: NSVisualEffectView.Material
