@@ -54,27 +54,24 @@ struct ContentView: View {
     @State private var selectedItems: Set<UUID> = []
     @State private var showingSettings = false
     @AppStorage("showingDetailPanel") private var showingDetailPanel = true
-    
-    // UI Logic Triggers
+
     @State private var addDownloadPayload: AddDownloadPayload? = nil
-    
     @State private var searchText = ""
     @State private var isDropTargeted = false
     @State private var itemsToRemove: RemovalContext? = nil
-    
     @State private var showingDuplicateAlert = false
     @State private var duplicateAddRequest: DuplicateAddRequest? = nil
-    
+
     @AppStorage("isCompactList") private var isCompactList = false
     @AppStorage("isCompactSidebar") private var isCompactSidebar = false
     @AppStorage("accentColorHex") private var accentColorHex = "#0A84FF"
-    
+
     @AppStorage("askBeforeRemoving") private var askBeforeRemoving = true
     @AppStorage("defaultRemoveAction") private var defaultRemoveAction = "keep"
-    
+
     @AppStorage("sortColumn") private var sortColumn: SortColumn = .dateAdded
     @AppStorage("sortAscending") private var sortAscending: Bool = false
-    
+
     var customAccent: Color { Color(hex: accentColorHex) }
 
     @Environment(\.openWindow) private var openWindow
@@ -135,12 +132,15 @@ struct ContentView: View {
     }
 
     private var mainLayout: some View {
-        NavigationSplitView(columnVisibility: .constant(.all)) {
+        HStack(spacing: 0) {
             sidebarColumn
-        } detail: {
+                .frame(width: isCompactSidebar ? 105 : 190)
+
+            Divider()
+
             contentAndDetailColumn
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .toolbar(removing: .sidebarToggle)
         .onReceive(NotificationCenter.default.publisher(for: .showAddDownload)) { _ in
             addDownloadPayload = AddDownloadPayload(text: "")
         }
@@ -160,7 +160,7 @@ struct ContentView: View {
             let oldSet = Set(oldIds)
             let newSet = Set(newIds)
             let addedIds = newSet.subtracting(oldSet)
-            
+
             if !addedIds.isEmpty {
                 selectedItems = addedIds
             } else {
@@ -181,11 +181,6 @@ struct ContentView: View {
     @ViewBuilder
     private var sidebarColumn: some View {
         SidebarView(selected: $selectedFilter, engine: engine, onSettings: { showingSettings = true })
-            .navigationSplitViewColumnWidth(
-                min: isCompactSidebar ? 105 : 190,
-                ideal: isCompactSidebar ? 105 : 190,
-                max: isCompactSidebar ? 105 : 190
-            )
     }
 
     @ViewBuilder
@@ -275,7 +270,7 @@ struct ContentView: View {
             }
         }
     }
-    
+
     @ViewBuilder
     private var detailColumn: some View {
         Group {
@@ -293,7 +288,7 @@ struct ContentView: View {
             }
         }
     }
-    
+
     private func processAddRequest(urls: [URL], destination: URL? = nil, connections: Int = 16) {
         if urls.count == 1 {
             let u = urls[0]
@@ -312,10 +307,10 @@ struct ContentView: View {
         let group = DispatchGroup()
         let lock = NSLock()
         var collectedPaths: [String] = []
-        
+
         for provider in providers {
             group.enter()
-            
+
             if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
                 provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
                     var extractedURL: URL? = nil
@@ -324,7 +319,7 @@ struct ContentView: View {
                     } else if let url = item as? URL {
                         extractedURL = url
                     }
-                    
+
                     if let url = extractedURL, url.pathExtension.lowercased() == "torrent" {
                         lock.lock()
                         collectedPaths.append(url.path(percentEncoded: false))
@@ -360,7 +355,7 @@ struct ContentView: View {
                 group.leave()
             }
         }
-        
+
         group.notify(queue: .main) {
             if !collectedPaths.isEmpty {
                 self.addDownloadPayload = AddDownloadPayload(text: collectedPaths.joined(separator: "\n"))
@@ -382,7 +377,7 @@ struct ContentView: View {
     private func handlePaste() {
         let pb = NSPasteboard.general
         var collectedPaths: [String] = []
-        
+
         if let urls = pb.readObjects(forClasses: [NSURL.self], options: nil) as? [URL], !urls.isEmpty {
             for url in urls {
                 if url.isFileURL && url.pathExtension.lowercased() == "torrent" {
@@ -403,7 +398,7 @@ struct ContentView: View {
                 }
             }
         }
-        
+
         if !collectedPaths.isEmpty {
             self.addDownloadPayload = AddDownloadPayload(text: collectedPaths.joined(separator: "\n"))
         }
