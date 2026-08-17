@@ -53,7 +53,7 @@ struct ContentView: View {
     @State private var selectedFilter: SidebarFilter = .all
     @State private var selectedItems: Set<UUID> = []
     @State private var showingSettings = false
-    @State private var showingDetailPanel = true
+    @AppStorage("showingDetailPanel") private var showingDetailPanel = true
     
     // UI Logic Triggers
     @State private var addDownloadPayload: AddDownloadPayload? = nil
@@ -135,7 +135,7 @@ struct ContentView: View {
     }
 
     private var mainLayout: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: .constant(.all)) {
             sidebarColumn
         } detail: {
             contentAndDetailColumn
