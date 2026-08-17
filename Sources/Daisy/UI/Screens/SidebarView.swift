@@ -9,10 +9,6 @@ struct SidebarView: View {
     @AppStorage("enableBackgroundTint") private var enableBackgroundTint = false
     @AppStorage("isCompactSidebar") private var isCompactSidebar = false
 
-    /// Pre-compute all filter counts in a single pass over engine.items so
-    /// the sidebar body does not run N filter predicates * M items on every
-    /// SwiftUI evaluation. Recomputing on every frame during the split-view
-    /// width animation was the main source of jank.
     private var counts: [SidebarFilter: Int] {
         var result: [SidebarFilter: Int] = [:]
         for filter in SidebarFilter.allCases { result[filter] = 0 }
@@ -30,12 +26,13 @@ struct SidebarView: View {
 
         return VStack(spacing: 0) {
             ScrollView {
-                VStack(alignment: isCompactSidebar ? .center : .leading, spacing: 4) {
+                VStack(alignment: .center, spacing: isCompactSidebar ? 8 : 2) {
                     if !isCompactSidebar {
                         Text("LIBRARY")
                             .font(.system(size: 10, weight: .semibold))
                             .foregroundStyle(.tertiary)
-                            .padding(.horizontal, 10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.leading, 10)
                             .padding(.top, 16)
                             .padding(.bottom, 4)
                     }
@@ -53,53 +50,47 @@ struct SidebarView: View {
                         }
                     }
                 }
-                .padding(.horizontal, isCompactSidebar ? 10 : 8)
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, isCompactSidebar ? 0 : 8)
             }
             .background(tintBackground)
 
             Divider()
 
-            HStack {
-                Button(action: onSettings) {
-                    if isCompactSidebar {
+            Button(action: onSettings) {
+                if isCompactSidebar {
+                    VStack(spacing: 3) {
                         Image(systemName: "gearshape")
-                            .font(.system(size: 20, weight: .medium))
-                            .frame(width: 28, height: 28)
-                    } else {
+                            .font(.system(size: 18, weight: .medium))
+                        Text("Settings")
+                            .font(.system(size: 9.5, weight: .medium))
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 48)
+                } else {
+                    HStack {
                         Label("Settings", systemImage: "gearshape")
-                    }
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .font(.system(size: 12))
-                .help(isCompactSidebar ? "Settings" : "")
-
-                if !isCompactSidebar {
-                    Spacer()
-
-                    if engine.globalDownloadSpeed > 512 {
-                        HStack(spacing: 4) {
-                            Image(systemName: "arrow.down")
-                                .font(.system(size: 10, weight: .bold))
-                            Text(formatBytes(Int64(engine.globalDownloadSpeed)) + "/s")
-                                .font(.system(size: 11, design: .monospaced))
+                        Spacer()
+                        if engine.globalDownloadSpeed > 512 {
+                            HStack(spacing: 4) {
+                                Image(systemName: "arrow.down")
+                                    .font(.system(size: 10, weight: .bold))
+                                Text(formatBytes(Int64(engine.globalDownloadSpeed)) + "/s")
+                                    .font(.system(size: 11, design: .monospaced))
+                            }
+                            .foregroundStyle(Color(hex: accentColorHex))
                         }
-                        .foregroundStyle(Color(hex: accentColorHex))
                     }
-                } else if engine.globalDownloadSpeed > 512 {
-                    Spacer(minLength: 0)
-                    Image(systemName: "arrow.down")
-                        .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(Color(hex: accentColorHex))
-                        .help(formatBytes(Int64(engine.globalDownloadSpeed)) + "/s")
+                    .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+                    .padding(.horizontal, 12)
                 }
             }
-            .frame(maxWidth: .infinity, alignment: isCompactSidebar ? .center : .leading)
-            .padding(isCompactSidebar ? 12 : 12)
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .help("Settings")
             .background(.ultraThinMaterial)
             .background(tintBackground)
         }
-        .frame(minWidth: isCompactSidebar ? 168 : 0)
+        .frame(minWidth: isCompactSidebar ? 184 : 0)
         .animation(.easeInOut(duration: 0.18), value: isCompactSidebar)
     }
 }
@@ -110,45 +101,69 @@ struct SidebarRow: View {
     let isSelected: Bool
     let accentColorHex: String
     let isCompact: Bool
-    
+
     @State private var isHovering = false
 
-    var dynamicTextColor: Color {
+    private var dynamicTextColor: Color {
         isSelected ? Color(hex: accentColorHex).accessibleText : .primary
     }
 
     var body: some View {
-        HStack {
-            Image(systemName: filter.icon)
-                .font(.system(size: isCompact ? 23 : 13, weight: isCompact ? .medium : .regular))
-                .frame(width: isCompact ? 28 : 18, alignment: .center)
-            
-            if !isCompact {
-                Text(filter.rawValue)
-                
-                Spacer()
-                
-                if count > 0 {
-                    Text("\(count)")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(isSelected ? dynamicTextColor : .secondary)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 1)
-                        .background(
-                            Capsule().fill(isSelected ? dynamicTextColor.opacity(0.25) : Color.primary.opacity(0.08))
-                        )
+        Group {
+            if isCompact {
+                VStack(spacing: 3) {
+                    ZStack {
+                        Circle()
+                            .fill(
+                                isSelected
+                                    ? Color(hex: accentColorHex)
+                                    : (isHovering ? Color.primary.opacity(0.06) : Color.clear)
+                            )
+                            .frame(width: 38, height: 38)
+
+                        Image(systemName: filter.icon)
+                            .font(.system(size: 20, weight: .medium))
+                            .foregroundStyle(dynamicTextColor)
+                    }
+
+                    Text(filter.rawValue)
+                        .font(.system(size: 9.5, weight: .medium))
+                        .foregroundStyle(isSelected ? Color(hex: accentColorHex) : .secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                        .frame(maxWidth: .infinity)
                 }
+                .frame(maxWidth: .infinity, minHeight: 58)
+            } else {
+                HStack {
+                    Image(systemName: filter.icon)
+                        .frame(width: 18, alignment: .center)
+
+                    Text(filter.rawValue)
+                    Spacer()
+
+                    if count > 0 {
+                        Text("\(count)")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(isSelected ? dynamicTextColor : .secondary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 1)
+                            .background(
+                                Capsule().fill(isSelected ? dynamicTextColor.opacity(0.25) : Color.primary.opacity(0.08))
+                            )
+                    }
+                }
+                .font(.system(size: 13))
+                .foregroundStyle(dynamicTextColor)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(isSelected ? Color(hex: accentColorHex) : (isHovering ? Color.primary.opacity(0.06) : Color.clear))
+                )
+                .contentShape(Rectangle())
             }
         }
-        .font(.system(size: 13))
-        .foregroundStyle(dynamicTextColor)
-        .frame(maxWidth: .infinity, alignment: isCompact ? .center : .leading)
-        .padding(.horizontal, isCompact ? 8 : 10)
-        .padding(.vertical, isCompact ? 12 : 10)
-        .background(
-            RoundedRectangle(cornerRadius: isCompact ? 14 : 12)
-                .fill(isSelected ? Color(hex: accentColorHex) : (isHovering ? Color.primary.opacity(0.06) : Color.clear))
-        )
         .contentShape(Rectangle())
         .onHover { hovering in
             withAnimation(.easeInOut(duration: 0.15)) {
